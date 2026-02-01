@@ -17,9 +17,8 @@ dist
 dist-ssr
 *.local
 
-# Uploaded images
-*.jpg
-*.jpeg
+# Uploaded images (except public folder)
+/D2ADjzf7_400x400*.jpg
 
 # Editor directories and files
 .vscode/*

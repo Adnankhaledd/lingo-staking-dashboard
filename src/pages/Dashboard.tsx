@@ -264,7 +264,7 @@ export function Dashboard() {
         {/* Footer */}
         <footer className="text-center py-8 border-t border-white/5">
           <div className="flex items-center justify-center gap-2 mb-2">
-            <img src="/lingo-logo.svg" alt="Lingo" className="w-6 h-6 rounded-md" />
+            <img src="/lingo-logo.jpg" alt="Lingo" className="w-6 h-6 rounded-md object-cover" />
             <span className="text-sm font-medium text-white/50">Lingo Staking Analytics</span>
           </div>
           <p className="text-xs text-white/30">

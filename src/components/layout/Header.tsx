@@ -16,9 +16,9 @@ export function Header({ lastUpdated, onRefresh, isRefreshing }: HeaderProps) {
           <div className="flex items-center gap-3">
             <div className="relative">
               <img
-                src="/lingo-logo.svg"
+                src="/lingo-logo.jpg"
                 alt="Lingo"
-                className="w-10 h-10 rounded-xl shadow-lg shadow-[#7B61FF]/30"
+                className="w-10 h-10 rounded-xl shadow-lg shadow-[#7B61FF]/30 object-cover"
               />
               <div className="absolute -inset-1 rounded-xl bg-[#7B61FF] opacity-20 blur-lg -z-10" />
             </div>
