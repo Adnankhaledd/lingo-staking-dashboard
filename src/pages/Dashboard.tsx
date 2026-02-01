@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable } from '../components/cards';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, HeatmapChart } from '../components/charts';
@@ -21,42 +21,42 @@ import {
 } from '../utils/dataTransformers';
 
 export function Dashboard() {
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
-
   // Fetch data from Dune Analytics
   const {
     data: totalStakedData,
     isLoading: loadingTotalStaked,
-    refetch: refetchTotalStaked,
   } = useDuneQuery<TotalStakedRow>(DUNE_QUERIES.TOTAL_STAKED_TREND);
 
   const {
     data: weeklyStats,
     isLoading: loadingWeeklyStats,
-    refetch: refetchWeeklyStats,
   } = useDuneQuery<WeeklyStatsRow>(DUNE_QUERIES.WEEKLY_STATS);
 
   const {
     data: weeklyNewStakers,
     isLoading: loadingNewStakers,
-    refetch: refetchNewStakers,
   } = useDuneQuery<WeeklyNewStakersRow>(DUNE_QUERIES.WEEKLY_NEW_STAKERS);
 
   const {
     data: cohortRetention,
     isLoading: loadingRetention,
-    refetch: refetchRetention,
   } = useDuneQuery<CohortRetentionRow>(DUNE_QUERIES.COHORT_RETENTION);
 
   const {
     data: topStakers,
     isLoading: loadingTopStakers,
-    refetch: refetchTopStakers,
   } = useDuneQuery<TopStakerRow>(DUNE_QUERIES.TOP_STAKERS, { limit: 50 });
 
   // Combined loading state
   const isLoading = loadingTotalStaked || loadingWeeklyStats || loadingNewStakers || loadingRetention;
-  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Last updated is when data was fetched (current time on load)
+  const lastUpdated = useMemo(() => {
+    if (!isLoading && totalStakedData) {
+      return new Date();
+    }
+    return null;
+  }, [isLoading, totalStakedData]);
 
   // Transform data for display
   const kpiData = useMemo(
@@ -84,38 +84,24 @@ export function Dashboard() {
     [totalStakedData]
   );
 
-  // Refresh handler
-  const handleRefresh = useCallback(async () => {
-    setIsRefreshing(true);
-    await Promise.all([
-      refetchTotalStaked(),
-      refetchWeeklyStats(),
-      refetchNewStakers(),
-      refetchRetention(),
-      refetchTopStakers(),
-    ]);
-    setLastUpdated(new Date());
-    setIsRefreshing(false);
-  }, [refetchTotalStaked, refetchWeeklyStats, refetchNewStakers, refetchRetention, refetchTopStakers]);
-
   // Export handlers
-  const handleExportTrend = useCallback(() => {
+  const handleExportTrend = () => {
     if (stakingTrendData.length > 0) {
       exportToCSV(stakingTrendData, 'lingo_staking_trend');
     }
-  }, [stakingTrendData]);
+  };
 
-  const handleExportNewVsReturning = useCallback(() => {
+  const handleExportNewVsReturning = () => {
     if (newVsReturningData.length > 0) {
       exportToCSV(newVsReturningData, 'lingo_new_vs_returning');
     }
-  }, [newVsReturningData]);
+  };
 
-  const handleExportMonthly = useCallback(() => {
+  const handleExportMonthly = () => {
     if (monthlyData.length > 0) {
       exportToCSV(monthlyData, 'lingo_monthly_comparison');
     }
-  }, [monthlyData]);
+  };
 
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
@@ -127,11 +113,7 @@ export function Dashboard() {
       </div>
 
       {/* Header */}
-      <Header
-        lastUpdated={lastUpdated}
-        onRefresh={handleRefresh}
-        isRefreshing={isRefreshing || isLoading}
-      />
+      <Header lastUpdated={lastUpdated} />
 
       {/* Main Content */}
       <main className="relative w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
@@ -155,8 +137,7 @@ export function Dashboard() {
             title="Total LINGO Staked"
             subtitle="Cumulative staking volume over time"
             onExport={handleExportTrend}
-            onRefresh={handleRefresh}
-            isLoading={isRefreshing || loadingTotalStaked}
+            isLoading={loadingTotalStaked}
           >
             {stakingTrendData.length > 0 ? (
               <AreaChartComponent
@@ -183,7 +164,7 @@ export function Dashboard() {
             title="New vs Returning Stakers"
             subtitle="Weekly breakdown of staker types"
             onExport={handleExportNewVsReturning}
-            isLoading={isRefreshing || loadingNewStakers}
+            isLoading={loadingNewStakers}
           >
             {newVsReturningData.length > 0 ? (
               <BarChartComponent
@@ -218,7 +199,7 @@ export function Dashboard() {
             title="Monthly Staking Growth"
             subtitle="Month-over-month total staked"
             onExport={handleExportMonthly}
-            isLoading={isRefreshing || loadingTotalStaked}
+            isLoading={loadingTotalStaked}
           >
             {monthlyData.length > 0 ? (
               <SimpleBarChart
@@ -241,7 +222,7 @@ export function Dashboard() {
           <ChartCard
             title="Cohort Retention"
             subtitle="User retention rates by weekly cohorts"
-            isLoading={isRefreshing || loadingRetention}
+            isLoading={loadingRetention}
           >
             {retentionData.length > 0 ? (
               <HeatmapChart data={retentionData} />

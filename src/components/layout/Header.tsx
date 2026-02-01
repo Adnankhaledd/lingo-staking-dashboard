@@ -1,13 +1,11 @@
-import { RefreshCw, Clock } from 'lucide-react';
+import { Clock } from 'lucide-react';
 import { formatDateTime } from '../../utils/formatters';
 
 interface HeaderProps {
   lastUpdated: Date | null;
-  onRefresh: () => void;
-  isRefreshing: boolean;
 }
 
-export function Header({ lastUpdated, onRefresh, isRefreshing }: HeaderProps) {
+export function Header({ lastUpdated }: HeaderProps) {
   return (
     <header className="sticky top-0 z-50 glass border-b border-white/5">
       <div className="w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-4">
@@ -36,19 +34,9 @@ export function Header({ lastUpdated, onRefresh, isRefreshing }: HeaderProps) {
             {lastUpdated && (
               <div className="hidden md:flex items-center gap-2 text-xs text-white/40 bg-white/5 px-3 py-1.5 rounded-lg">
                 <Clock className="w-3.5 h-3.5" />
-                <span>{formatDateTime(lastUpdated)}</span>
+                <span>Updated {formatDateTime(lastUpdated)}</span>
               </div>
             )}
-
-            {/* Refresh Button */}
-            <button
-              onClick={onRefresh}
-              disabled={isRefreshing}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D4FF]/10 to-[#7B61FF]/10 hover:from-[#00D4FF]/20 hover:to-[#7B61FF]/20 border border-[#00D4FF]/20 hover:border-[#00D4FF]/40 text-white/80 hover:text-white transition-all duration-200 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span className="text-sm font-medium hidden sm:inline">Refresh</span>
-            </button>
 
             {/* Status Indicator */}
             <div className="flex items-center gap-2 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20">

@@ -1,12 +1,11 @@
 import type { ReactNode } from 'react';
-import { Download, RefreshCw } from 'lucide-react';
+import { Download } from 'lucide-react';
 
 interface ChartCardProps {
   title: string;
   subtitle?: string;
   children: ReactNode;
   onExport?: () => void;
-  onRefresh?: () => void;
   isLoading?: boolean;
   className?: string;
 }
@@ -16,7 +15,6 @@ export function ChartCard({
   subtitle,
   children,
   onExport,
-  onRefresh,
   isLoading,
   className = '',
 }: ChartCardProps) {
@@ -30,27 +28,15 @@ export function ChartCard({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          {onRefresh && (
-            <button
-              onClick={onRefresh}
-              disabled={isLoading}
-              className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
-              title="Refresh data"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
-          )}
-          {onExport && (
-            <button
-              onClick={onExport}
-              className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/70 transition-colors"
-              title="Export to CSV"
-            >
-              <Download className="w-4 h-4" />
-            </button>
-          )}
-        </div>
+        {onExport && (
+          <button
+            onClick={onExport}
+            className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/70 transition-colors"
+            title="Export to CSV"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <div className="relative">
