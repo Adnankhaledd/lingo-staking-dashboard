@@ -5,14 +5,8 @@ interface TotalFeesCardProps {
   isLoading?: boolean;
 }
 
-function formatLargeNumber(num: number): string {
-  if (num >= 1_000_000) {
-    return (num / 1_000_000).toFixed(2) + 'M';
-  }
-  if (num >= 1_000) {
-    return (num / 1_000).toFixed(2) + 'K';
-  }
-  return num.toFixed(2);
+function formatFullNumber(num: number): string {
+  return Math.round(num).toLocaleString('en-US');
 }
 
 export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
@@ -35,49 +29,33 @@ export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
       />
 
       {/* Content */}
-      <div className="relative z-10 p-8 lg:p-10">
-        <div className="flex items-center justify-between">
-          <div>
-            {/* Label */}
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/20">
-                <DollarSign className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-sm font-medium text-white/70 uppercase tracking-wider">
-                Total Trading Fees Collected
+      <div className="relative z-10 p-8 lg:p-12">
+        <div className="flex flex-col items-center text-center">
+          {/* Label */}
+          <div className="flex items-center gap-2 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/20">
+              <DollarSign className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-sm font-medium text-white/70 uppercase tracking-wider">
+              Total Trading Fees Collected
+            </span>
+          </div>
+
+          {/* Value */}
+          {isLoading ? (
+            <div className="skeleton h-20 w-80 rounded-xl bg-white/10" />
+          ) : (
+            <div className="flex items-baseline gap-3 justify-center">
+              <span className="text-5xl sm:text-6xl lg:text-7xl xl:text-8xl font-bold text-white tracking-tight">
+                ${formatFullNumber(totalFees)}
               </span>
             </div>
+          )}
 
-            {/* Value */}
-            {isLoading ? (
-              <div className="skeleton h-16 w-64 rounded-xl bg-white/10" />
-            ) : (
-              <div className="flex items-baseline gap-2">
-                <span className="text-5xl lg:text-6xl xl:text-7xl font-bold text-white tracking-tight">
-                  ${formatLargeNumber(totalFees)}
-                </span>
-                <span className="text-2xl lg:text-3xl font-medium text-white/60">
-                  USD
-                </span>
-              </div>
-            )}
-
-            {/* Subtitle */}
-            <p className="mt-4 text-sm text-white/50">
-              Accumulated from all staking transactions
-            </p>
-          </div>
-
-          {/* Decorative element */}
-          <div className="hidden lg:block">
-            <div className="w-32 h-32 rounded-full border-4 border-white/10 flex items-center justify-center">
-              <div className="w-24 h-24 rounded-full border-4 border-white/20 flex items-center justify-center">
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#00D4FF]/50 to-[#7B61FF]/50 flex items-center justify-center backdrop-blur-sm">
-                  <DollarSign className="w-8 h-8 text-white" />
-                </div>
-              </div>
-            </div>
-          </div>
+          {/* Subtitle */}
+          <p className="mt-6 text-sm text-white/50">
+            Accumulated from trading fees
+          </p>
         </div>
       </div>
 
