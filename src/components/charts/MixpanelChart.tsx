@@ -7,12 +7,12 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import type { MonthlyMetric } from '../../hooks/useMixpanelData';
+import type { DailyMetric } from '../../hooks/useMixpanelData';
 
 interface MixpanelChartProps {
   title: string;
   subtitle?: string;
-  data: MonthlyMetric[];
+  data: DailyMetric[];
   color?: string;
   isLoading?: boolean;
 }
@@ -54,10 +54,12 @@ export function MixpanelChart({
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
             <XAxis
-              dataKey="month"
+              dataKey="date"
               stroke="rgba(255,255,255,0.5)"
-              tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }}
+              tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 11 }}
               axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+              interval="preserveStartEnd"
+              tickMargin={8}
             />
             <YAxis
               stroke="rgba(255,255,255,0.5)"
@@ -77,7 +79,7 @@ export function MixpanelChart({
               }}
               labelStyle={{ color: 'rgba(255, 255, 255, 0.7)' }}
               itemStyle={{ color: color }}
-              formatter={(value) => value != null ? [value.toLocaleString(), 'Count'] : ['0', 'Count']}
+              formatter={(value) => value != null ? [value.toLocaleString(), 'Users'] : ['0', 'Users']}
             />
             <Area
               type="monotone"
