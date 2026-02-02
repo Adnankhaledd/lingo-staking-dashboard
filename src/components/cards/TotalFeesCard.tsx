@@ -28,6 +28,15 @@ export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
         }}
       />
 
+      {/* Mascot on the right side */}
+      <div className="absolute right-4 lg:right-12 bottom-0 w-32 h-32 sm:w-40 sm:h-40 lg:w-52 lg:h-52 z-10 opacity-90 pointer-events-none">
+        <img
+          src="/mascot.jpg"
+          alt="Lingo Mascot"
+          className="w-full h-full object-contain drop-shadow-2xl"
+        />
+      </div>
+
       {/* Content */}
       <div className="relative z-10 p-8 lg:p-12">
         <div className="flex flex-col items-center text-center">
