@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 
-const MIXPANEL_API_SECRET = '010125f09fef119ad08d0eb062be12b6';
-const PROJECT_ID = '3623820';
-const REPORT_ID = '75454495';
+// Use API proxy to avoid CORS issues
+const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
 
 interface DAUReportResponse {
   series: {
@@ -37,105 +36,55 @@ export interface MixpanelMetrics {
   avgDAU: number;
 }
 
-// Fetch DAU from the saved report
+// Fetch DAU from the API proxy
 async function fetchDAUReport(): Promise<DAUReportResponse> {
-  const response = await fetch(
-    `https://eu.mixpanel.com/api/2.0/insights?project_id=${PROJECT_ID}&bookmark_id=${REPORT_ID}`,
-    {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': `Basic ${btoa(MIXPANEL_API_SECRET + ':')}`,
-      },
-    }
-  );
+  const response = await fetch(`${API_BASE}/api/mixpanel?type=dau`);
 
   if (!response.ok) {
-    throw new Error(`Mixpanel API error: ${response.status}`);
+    throw new Error(`API error: ${response.status}`);
   }
 
   return response.json();
 }
 
-// Fetch WAU (weekly unique users)
+// Fetch WAU from the API proxy
 async function fetchWAU(): Promise<number> {
-  const today = new Date();
-  const lastWeek = new Date(today);
-  lastWeek.setDate(lastWeek.getDate() - 7);
-
-  const params = new URLSearchParams({
-    project_id: PROJECT_ID,
-    event: JSON.stringify(['Wallet Connected']),
-    type: 'unique',
-    unit: 'week',
-    from_date: lastWeek.toISOString().split('T')[0],
-    to_date: today.toISOString().split('T')[0],
-  });
-
-  const response = await fetch(
-    `https://eu.mixpanel.com/api/2.0/events?${params}`,
-    {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': `Basic ${btoa(MIXPANEL_API_SECRET + ':')}`,
-      },
-    }
-  );
+  const response = await fetch(`${API_BASE}/api/mixpanel?type=wau`);
 
   if (!response.ok) {
-    throw new Error(`Mixpanel API error: ${response.status}`);
+    throw new Error(`API error: ${response.status}`);
   }
 
   const data: EventsResponse = await response.json();
-  const values = Object.values(data.data.values['Wallet Connected'] || {});
+  const values = Object.values(data.data?.values?.['Wallet Connected'] || {});
   return values.reduce((sum, val) => sum + val, 0);
 }
 
-// Fetch MAU (monthly unique users)
+// Fetch MAU from the API proxy
 async function fetchMAU(): Promise<number> {
-  const today = new Date();
-  const lastMonth = new Date(today);
-  lastMonth.setDate(lastMonth.getDate() - 30);
-
-  const params = new URLSearchParams({
-    project_id: PROJECT_ID,
-    event: JSON.stringify(['Wallet Connected']),
-    type: 'unique',
-    unit: 'month',
-    from_date: lastMonth.toISOString().split('T')[0],
-    to_date: today.toISOString().split('T')[0],
-  });
-
-  const response = await fetch(
-    `https://eu.mixpanel.com/api/2.0/events?${params}`,
-    {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': `Basic ${btoa(MIXPANEL_API_SECRET + ':')}`,
-      },
-    }
-  );
+  const response = await fetch(`${API_BASE}/api/mixpanel?type=mau`);
 
   if (!response.ok) {
-    throw new Error(`Mixpanel API error: ${response.status}`);
+    throw new Error(`API error: ${response.status}`);
   }
 
   const data: EventsResponse = await response.json();
-  const values = Object.values(data.data.values['Wallet Connected'] || {});
+  const values = Object.values(data.data?.values?.['Wallet Connected'] || {});
   return values.reduce((sum, val) => sum + val, 0);
 }
 
 function transformDAUData(data: DAUReportResponse): DailyMetric[] {
-  const dauSeries = data.series['A. DAU'] || {};
+  const dauSeries = data.series?.['A. DAU'] || {};
 
   return Object.entries(dauSeries)
     .map(([dateStr, value]) => ({
       date: formatDate(dateStr),
       value,
     }))
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    .sort((a, b) => {
+      // Sort by original date string to maintain chronological order
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
 }
 
 function formatDate(isoStr: string): string {
