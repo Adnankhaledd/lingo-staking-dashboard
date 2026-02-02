@@ -115,6 +115,9 @@ export const DUNE_QUERIES = {
 
   // Top 50 stakers
   TOP_STAKERS: '6632385',
+
+  // Trading fees per month
+  TRADING_FEES: '6288543',
 } as const;
 
 // Type definitions for Dune query responses
@@ -168,4 +171,13 @@ export interface TopStakerRow {
   lingo_staked: number;
   usd_value: number;
   pct_of_total: number;
+}
+
+export interface TradingFeesRow {
+  month: string;
+  total_lingo: number;
+  avg_price_usd: number;
+  usd_value: number;
+  cumulative_lingo: number;
+  cumulative_usd: number;
 }

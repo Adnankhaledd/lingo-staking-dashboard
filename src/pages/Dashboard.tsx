@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { Header } from '../components/layout';
-import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable } from '../components/cards';
+import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, HeatmapChart } from '../components/charts';
-import { formatNumber, formatWeekDate, exportToCSV } from '../utils/formatters';
+import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
   useDuneQuery,
   DUNE_QUERIES,
@@ -11,6 +11,7 @@ import {
   type WeeklyNewStakersRow,
   type CohortRetentionRow,
   type TopStakerRow,
+  type TradingFeesRow,
 } from '../hooks/useDuneQuery';
 import {
   calculateKPIs,
@@ -18,6 +19,9 @@ import {
   transformNewStakersData,
   transformRetentionData,
   calculateMonthlyComparison,
+  transformMonthlyFeesData,
+  transformCumulativeFeesData,
+  getTotalFees,
 } from '../utils/dataTransformers';
 
 export function Dashboard() {
@@ -46,6 +50,11 @@ export function Dashboard() {
     data: topStakers,
     isLoading: loadingTopStakers,
   } = useDuneQuery<TopStakerRow>(DUNE_QUERIES.TOP_STAKERS, { limit: 50 });
+
+  const {
+    data: tradingFees,
+    isLoading: loadingFees,
+  } = useDuneQuery<TradingFeesRow>(DUNE_QUERIES.TRADING_FEES);
 
   // Combined loading state
   const isLoading = loadingTotalStaked || loadingWeeklyStats || loadingNewStakers || loadingRetention;
@@ -84,6 +93,22 @@ export function Dashboard() {
     [totalStakedData]
   );
 
+  // Fees data
+  const monthlyFeesData = useMemo(
+    () => transformMonthlyFeesData(tradingFees),
+    [tradingFees]
+  );
+
+  const cumulativeFeesData = useMemo(
+    () => transformCumulativeFeesData(tradingFees),
+    [tradingFees]
+  );
+
+  const totalFees = useMemo(
+    () => getTotalFees(tradingFees),
+    [tradingFees]
+  );
+
   // Export handlers
   const handleExportTrend = () => {
     if (stakingTrendData.length > 0) {
@@ -103,6 +128,18 @@ export function Dashboard() {
     }
   };
 
+  const handleExportFees = () => {
+    if (monthlyFeesData.length > 0) {
+      exportToCSV(monthlyFeesData, 'lingo_monthly_fees');
+    }
+  };
+
+  const handleExportCumulativeFees = () => {
+    if (cumulativeFeesData.length > 0) {
+      exportToCSV(cumulativeFeesData, 'lingo_cumulative_fees');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
       {/* Background gradient effects - Lingo style */}
@@ -117,6 +154,11 @@ export function Dashboard() {
 
       {/* Main Content */}
       <main className="relative w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
+        {/* Total Fees Hero Card */}
+        <section className="mb-10">
+          <TotalFeesCard totalFees={totalFees} isLoading={loadingFees} />
+        </section>
+
         {/* KPI Cards */}
         <section className="mb-10">
           <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
@@ -128,6 +170,60 @@ export function Dashboard() {
               : kpiData.map((kpi, index) => (
                   <KPICard key={kpi.label} data={kpi} index={index} />
                 ))}
+          </div>
+        </section>
+
+        {/* Fees Charts */}
+        <section className="mb-10">
+          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+            Trading Fees
+          </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Monthly Fees */}
+            <ChartCard
+              title="Monthly Trading Fees"
+              subtitle="Fees collected per month in USD"
+              onExport={handleExportFees}
+              isLoading={loadingFees}
+            >
+              {monthlyFeesData.length > 0 ? (
+                <SimpleBarChart
+                  data={monthlyFeesData}
+                  dataKey="fees"
+                  xAxisKey="month"
+                  color="#7B61FF"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  {loadingFees ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            {/* Cumulative Fees */}
+            <ChartCard
+              title="Cumulative Trading Fees"
+              subtitle="Total accumulated fees over time"
+              onExport={handleExportCumulativeFees}
+              isLoading={loadingFees}
+            >
+              {cumulativeFeesData.length > 0 ? (
+                <AreaChartComponent
+                  data={cumulativeFeesData}
+                  dataKey="cumulative"
+                  xAxisKey="month"
+                  color="#7B61FF"
+                  gradientId="cumulativeFeesGradient"
+                  height={280}
+                  formatValue={(value) => formatCurrency(value)}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  {loadingFees ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
           </div>
         </section>
 

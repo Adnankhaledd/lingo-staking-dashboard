@@ -3,6 +3,7 @@ import type {
   WeeklyStatsRow,
   WeeklyNewStakersRow,
   CohortRetentionRow,
+  TradingFeesRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData, RetentionCohortData } from '../types';
 
@@ -213,4 +214,47 @@ export function calculateMonthlyComparison(data: TotalStakedRow[] | null) {
       growth: Math.round(growth * 10) / 10,
     };
   });
+}
+
+/**
+ * Transform trading fees data for monthly fees chart
+ */
+export function transformMonthlyFeesData(data: TradingFeesRow[] | null) {
+  if (!data) return [];
+
+  return data.map(row => {
+    const date = new Date(parseDuneDate(row.month));
+    const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+    return {
+      month: monthName,
+      fees: row.usd_value,
+      lingo: row.total_lingo,
+    };
+  });
+}
+
+/**
+ * Transform trading fees data for cumulative fees chart
+ */
+export function transformCumulativeFeesData(data: TradingFeesRow[] | null) {
+  if (!data) return [];
+
+  return data.map(row => {
+    const date = new Date(parseDuneDate(row.month));
+    const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+    return {
+      month: monthName,
+      cumulative: row.cumulative_usd,
+    };
+  });
+}
+
+/**
+ * Get total fees from the latest cumulative value
+ */
+export function getTotalFees(data: TradingFeesRow[] | null): number {
+  if (!data || data.length === 0) return 0;
+  return data[data.length - 1].cumulative_usd;
 }
