@@ -1,7 +1,10 @@
 import { useMemo } from 'react';
+import { Wallet, Users, Gift, Eye, ShoppingCart, TrendingUp } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
+import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, HeatmapChart } from '../components/charts';
+import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
   useDuneQuery,
@@ -13,6 +16,7 @@ import {
   type TopStakerRow,
   type TradingFeesRow,
 } from '../hooks/useDuneQuery';
+import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
   calculateKPIs,
   transformStakingTrendData,
@@ -55,6 +59,12 @@ export function Dashboard() {
     data: tradingFees,
     isLoading: loadingFees,
   } = useDuneQuery<TradingFeesRow>(DUNE_QUERIES.TRADING_FEES);
+
+  // Mixpanel data
+  const {
+    data: mixpanelData,
+    isLoading: loadingMixpanel,
+  } = useMixpanelData();
 
   // Combined loading state
   const isLoading = loadingTotalStaked || loadingWeeklyStats || loadingNewStakers || loadingRetention;
@@ -227,6 +237,77 @@ export function Dashboard() {
           </div>
         </section>
 
+        {/* User Engagement Section - Mixpanel */}
+        <section className="mb-10">
+          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+            User Engagement
+          </h2>
+
+          {/* Mixpanel KPI Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-5">
+            <MixpanelKPICard
+              title="Wallet Connections"
+              value={mixpanelData?.totals.walletConnections ?? 0}
+              icon={Wallet}
+              color="#00D4FF"
+              isLoading={loadingMixpanel}
+            />
+            <MixpanelKPICard
+              title="Staking Completed"
+              value={mixpanelData?.totals.stakingDone ?? 0}
+              icon={TrendingUp}
+              color="#7B61FF"
+              isLoading={loadingMixpanel}
+            />
+            <MixpanelKPICard
+              title="New Registrations"
+              value={mixpanelData?.totals.newRegistrations ?? 0}
+              icon={Users}
+              color="#10B981"
+              isLoading={loadingMixpanel}
+            />
+            <MixpanelKPICard
+              title="Claims Done"
+              value={mixpanelData?.totals.claimsDone ?? 0}
+              icon={Gift}
+              color="#F59E0B"
+              isLoading={loadingMixpanel}
+            />
+            <MixpanelKPICard
+              title="Page Views"
+              value={mixpanelData?.totals.stakingPageViews ?? 0}
+              icon={Eye}
+              color="#EC4899"
+              isLoading={loadingMixpanel}
+            />
+            <MixpanelKPICard
+              title="Buy LINGO"
+              value={mixpanelData?.totals.buyLingo ?? 0}
+              icon={ShoppingCart}
+              color="#8B5CF6"
+              isLoading={loadingMixpanel}
+            />
+          </div>
+
+          {/* Mixpanel Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <MixpanelChart
+              title="Monthly Wallet Connections"
+              subtitle="Unique wallets connected per month"
+              data={mixpanelData?.walletConnections ?? []}
+              color="#00D4FF"
+              isLoading={loadingMixpanel}
+            />
+            <MixpanelChart
+              title="New User Registrations"
+              subtitle="New accounts created per month"
+              data={mixpanelData?.newRegistrations ?? []}
+              color="#10B981"
+              isLoading={loadingMixpanel}
+            />
+          </div>
+        </section>
+
         {/* Staking Trend Chart */}
         <section className="mb-10">
           <ChartCard
@@ -345,7 +426,7 @@ export function Dashboard() {
             <span className="text-sm font-medium text-white/50">Lingo Staking Analytics</span>
           </div>
           <p className="text-xs text-white/30">
-            Powered by Dune Analytics
+            Powered by Dune Analytics & Mixpanel
           </p>
         </footer>
       </main>
