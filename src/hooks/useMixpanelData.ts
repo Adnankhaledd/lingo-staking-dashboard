@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
+const CACHE_KEY = 'mixpanel_data_cache';
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DAUReportResponse {
   series: {
@@ -26,14 +28,50 @@ export interface DailyMetric {
 }
 
 export interface MixpanelMetrics {
-  // DAU trend (daily)
   dauTrend: DailyMetric[];
-  // Current values
   currentDAU: number;
   currentWAU: number;
   currentMAU: number;
-  // Average DAU over period
   avgDAU: number;
+}
+
+interface CachedData {
+  data: MixpanelMetrics;
+  timestamp: number;
+}
+
+// Check if cache is valid
+function getCachedData(): MixpanelMetrics | null {
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (!cached) return null;
+
+    const parsed: CachedData = JSON.parse(cached);
+    const now = Date.now();
+
+    if (now - parsed.timestamp < CACHE_DURATION) {
+      console.log('Using cached Mixpanel data');
+      return parsed.data;
+    }
+
+    console.log('Mixpanel cache expired');
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Save to cache
+function setCachedData(data: MixpanelMetrics): void {
+  try {
+    const cacheEntry: CachedData = {
+      data,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheEntry));
+  } catch (e) {
+    console.warn('Failed to cache Mixpanel data:', e);
+  }
 }
 
 // Fetch DAU from the API proxy
@@ -82,7 +120,6 @@ function transformDAUData(data: DAUReportResponse): DailyMetric[] {
       value,
     }))
     .sort((a, b) => {
-      // Sort by original date string to maintain chronological order
       return new Date(a.date).getTime() - new Date(b.date).getTime();
     });
 }
@@ -103,7 +140,15 @@ export function useMixpanelData() {
         setIsLoading(true);
         setError(null);
 
-        // Fetch all data in parallel
+        // Check cache first
+        const cachedData = getCachedData();
+        if (cachedData) {
+          setData(cachedData);
+          setIsLoading(false);
+          return;
+        }
+
+        // Fetch fresh data
         const [dauReport, wau, mau] = await Promise.all([
           fetchDAUReport(),
           fetchWAU(),
@@ -111,11 +156,7 @@ export function useMixpanelData() {
         ]);
 
         const dauTrend = transformDAUData(dauReport);
-
-        // Get current DAU (most recent day)
         const currentDAU = dauTrend.length > 0 ? dauTrend[dauTrend.length - 1].value : 0;
-
-        // Calculate average DAU
         const avgDAU = dauTrend.length > 0
           ? Math.round(dauTrend.reduce((sum, d) => sum + d.value, 0) / dauTrend.length)
           : 0;
@@ -128,6 +169,8 @@ export function useMixpanelData() {
           avgDAU,
         };
 
+        // Save to cache
+        setCachedData(metrics);
         setData(metrics);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch Mixpanel data');

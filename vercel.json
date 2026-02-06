@@ -17,5 +17,11 @@
         { "key": "Access-Control-Allow-Methods", "value": "GET, OPTIONS" }
       ]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/refresh-dune",
+      "schedule": "0 6 * * 1"
+    }
   ]
 }

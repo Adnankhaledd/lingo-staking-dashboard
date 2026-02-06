@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const DUNE_API_BASE = 'https://api.dune.com/api/v1';
+const CACHE_PREFIX = 'dune_cache_';
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DuneResponse<T> {
   execution_id: string;
@@ -18,6 +20,11 @@ interface DuneResponse<T> {
   error?: string;
 }
 
+interface CachedData<T> {
+  data: T[];
+  timestamp: number;
+}
+
 interface UseDuneQueryOptions {
   enabled?: boolean;
   limit?: number;
@@ -28,6 +35,40 @@ interface UseDuneQueryReturn<T> {
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
+}
+
+// Get cached data if valid
+function getCachedData<T>(queryId: string | number): T[] | null {
+  try {
+    const cached = localStorage.getItem(`${CACHE_PREFIX}${queryId}`);
+    if (!cached) return null;
+
+    const parsed: CachedData<T> = JSON.parse(cached);
+    const now = Date.now();
+
+    if (now - parsed.timestamp < CACHE_DURATION) {
+      console.log(`Using cached Dune data for query ${queryId}`);
+      return parsed.data;
+    }
+
+    console.log(`Dune cache expired for query ${queryId}`);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Save data to cache
+function setCachedData<T>(queryId: string | number, data: T[]): void {
+  try {
+    const cacheEntry: CachedData<T> = {
+      data,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(`${CACHE_PREFIX}${queryId}`, JSON.stringify(cacheEntry));
+  } catch (e) {
+    console.warn('Failed to cache Dune data:', e);
+  }
 }
 
 export function useDuneQuery<T>(
@@ -41,11 +82,21 @@ export function useDuneQuery<T>(
 
   const apiKey = import.meta.env.VITE_DUNE_API_KEY;
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (forceRefresh = false) => {
     if (!apiKey) {
       setError('Dune API key not configured');
       setIsLoading(false);
       return;
+    }
+
+    // Check cache first (unless force refresh)
+    if (!forceRefresh) {
+      const cachedData = getCachedData<T>(queryId);
+      if (cachedData) {
+        setData(cachedData);
+        setIsLoading(false);
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -75,7 +126,11 @@ export function useDuneQuery<T>(
         throw new Error('Query execution not finished');
       }
 
-      setData(result.result?.rows ?? []);
+      const rows = result.result?.rows ?? [];
+
+      // Cache the data
+      setCachedData(queryId, rows);
+      setData(rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       setData(null);
@@ -90,7 +145,7 @@ export function useDuneQuery<T>(
     }
   }, [enabled, fetchData]);
 
-  return { data, isLoading, error, refetch: fetchData };
+  return { data, isLoading, error, refetch: () => fetchData(true) };
 }
 
 // Query IDs from Dune
