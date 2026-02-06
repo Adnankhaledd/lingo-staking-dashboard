@@ -5,7 +5,7 @@ import type {
   CohortRetentionRow,
   TradingFeesRow,
 } from '../hooks/useDuneQuery';
-import type { KPIData, RetentionCohortData } from '../types';
+import type { KPIData } from '../types';
 
 /**
  * Parse Dune date string to ISO format
@@ -148,29 +148,67 @@ export function transformNewStakersData(
 }
 
 /**
- * Transform cohort retention data for heatmap
+ * Transform cohort retention data - grouped by month
  */
-export function transformRetentionData(data: CohortRetentionRow[] | null): RetentionCohortData[] {
+export interface MonthlyRetentionData {
+  month: string;
+  cohortSize: number;
+  retained: number;
+  diamondHands: number;
+  churned: number;
+}
+
+export function transformRetentionData(data: CohortRetentionRow[] | null): MonthlyRetentionData[] {
   if (!data) return [];
 
-  // Take the last 8 cohorts for display
-  const recentCohorts = data.slice(-8);
+  // Group by month
+  const monthlyMap = new Map<string, {
+    cohortSize: number;
+    retained: number[];
+    diamondHands: number[];
+    churned: number[];
+  }>();
 
-  return recentCohorts.map((row, index) => {
-    const retained = parseFloat(row.pct_retained);
-    const diamondHands = parseFloat(row.pct_diamond_hands);
+  data.forEach(row => {
+    const date = new Date(parseDuneDate(row.cohort_week));
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
-    // Simulate week-over-week decay for the heatmap
-    // Week 0 is 100%, then we calculate based on retention patterns
-    return {
-      cohort: `Week ${index + 1}`,
-      week0: 100,
-      week1: Math.round(retained),
-      week2: Math.round(retained * 0.85),
-      week3: Math.round(retained * 0.75),
-      week4Plus: Math.round(diamondHands),
-    };
+    if (!monthlyMap.has(monthKey)) {
+      monthlyMap.set(monthKey, {
+        cohortSize: 0,
+        retained: [],
+        diamondHands: [],
+        churned: [],
+      });
+    }
+
+    const entry = monthlyMap.get(monthKey)!;
+    entry.cohortSize += row.cohort_size;
+    entry.retained.push(parseFloat(row.pct_retained));
+    entry.diamondHands.push(parseFloat(row.pct_diamond_hands));
+    entry.churned.push(parseFloat(row.pct_churned));
   });
+
+  // Convert to array and calculate averages
+  return Array.from(monthlyMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([monthKey, data]) => {
+      const [year, month] = monthKey.split('-');
+      const date = new Date(parseInt(year), parseInt(month) - 1);
+      const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+      const avgRetained = data.retained.reduce((a, b) => a + b, 0) / data.retained.length;
+      const avgDiamondHands = data.diamondHands.reduce((a, b) => a + b, 0) / data.diamondHands.length;
+      const avgChurned = data.churned.reduce((a, b) => a + b, 0) / data.churned.length;
+
+      return {
+        month: monthName,
+        cohortSize: data.cohortSize,
+        retained: Math.round(avgRetained * 10) / 10,
+        diamondHands: Math.round(avgDiamondHands * 10) / 10,
+        churned: Math.round(avgChurned * 10) / 10,
+      };
+    });
 }
 
 /**

@@ -3,7 +3,7 @@ import { Users, Calendar, CalendarDays, CalendarRange } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
-import { AreaChartComponent, BarChartComponent, SimpleBarChart, HeatmapChart } from '../components/charts';
+import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable } from '../components/charts';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -371,20 +371,14 @@ export function Dashboard() {
           </ChartCard>
         </section>
 
-        {/* Retention Heatmap */}
+        {/* Monthly Retention */}
         <section className="mb-10">
           <ChartCard
-            title="Cohort Retention"
-            subtitle="User retention rates by weekly cohorts"
+            title="Monthly Cohort Retention"
+            subtitle="Percentage of users still staking by cohort month"
             isLoading={loadingRetention}
           >
-            {retentionData.length > 0 ? (
-              <HeatmapChart data={retentionData} />
-            ) : (
-              <div className="h-[200px] flex items-center justify-center text-white/40">
-                {loadingRetention ? 'Loading...' : 'No data available'}
-              </div>
-            )}
+            <RetentionTable data={retentionData} isLoading={loadingRetention} />
           </ChartCard>
         </section>
 
