@@ -373,9 +373,75 @@ export function Dashboard() {
 
         {/* Monthly Retention */}
         <section className="mb-10">
+          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+            Staker Retention
+          </h2>
+
+          {/* Retention KPI Cards */}
+          {retentionData.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+              {/* Recent Retention (last 3 months) */}
+              <div className="glass-card rounded-2xl p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-white/50">Recent Retention (3 months)</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className={`text-3xl font-bold ${
+                    (() => {
+                      const recent = retentionData.slice(-3);
+                      const totalNew = recent.reduce((s, d) => s + d.newStakers, 0);
+                      const totalStill = recent.reduce((s, d) => s + d.stillStaking, 0);
+                      const pct = totalNew > 0 ? (totalStill / totalNew) * 100 : 0;
+                      return pct >= 85 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 65 ? 'text-yellow-400' : 'text-orange-400';
+                    })()
+                  }`}>
+                    {(() => {
+                      const recent = retentionData.slice(-3);
+                      const totalNew = recent.reduce((s, d) => s + d.newStakers, 0);
+                      const totalStill = recent.reduce((s, d) => s + d.stillStaking, 0);
+                      return totalNew > 0 ? ((totalStill / totalNew) * 100).toFixed(1) : '0';
+                    })()}%
+                  </span>
+                  <span className="text-sm text-white/40">
+                    {(() => {
+                      const recent = retentionData.slice(-3);
+                      return `${recent.reduce((s, d) => s + d.stillStaking, 0).toLocaleString()} / ${recent.reduce((s, d) => s + d.newStakers, 0).toLocaleString()} stakers`;
+                    })()}
+                  </span>
+                </div>
+              </div>
+
+              {/* All-time Retention */}
+              <div className="glass-card rounded-2xl p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-white/50">All-Time Retention</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className={`text-3xl font-bold ${
+                    (() => {
+                      const totalNew = retentionData.reduce((s, d) => s + d.newStakers, 0);
+                      const totalStill = retentionData.reduce((s, d) => s + d.stillStaking, 0);
+                      const pct = totalNew > 0 ? (totalStill / totalNew) * 100 : 0;
+                      return pct >= 85 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 65 ? 'text-yellow-400' : 'text-orange-400';
+                    })()
+                  }`}>
+                    {(() => {
+                      const totalNew = retentionData.reduce((s, d) => s + d.newStakers, 0);
+                      const totalStill = retentionData.reduce((s, d) => s + d.stillStaking, 0);
+                      return totalNew > 0 ? ((totalStill / totalNew) * 100).toFixed(1) : '0';
+                    })()}%
+                  </span>
+                  <span className="text-sm text-white/40">
+                    {retentionData.reduce((s, d) => s + d.stillStaking, 0).toLocaleString()} / {retentionData.reduce((s, d) => s + d.newStakers, 0).toLocaleString()} stakers
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <ChartCard
-            title="Monthly Cohort Retention"
-            subtitle="Percentage of users still staking by cohort month"
+            title="Monthly Cohort Breakdown"
+            subtitle="Users who started staking each month and how many are still active"
             isLoading={loadingRetention}
           >
             <RetentionTable data={retentionData} isLoading={loadingRetention} />
