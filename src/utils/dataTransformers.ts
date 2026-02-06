@@ -148,25 +148,22 @@ export function transformNewStakersData(
 }
 
 /**
- * Transform cohort retention data - grouped by month
+ * Transform cohort retention data - grouped by month with weighted retention
  */
 export interface MonthlyRetentionData {
   month: string;
-  cohortSize: number;
-  retained: number;
-  diamondHands: number;
-  churned: number;
+  newStakers: number;
+  stillStaking: number;
+  retentionPct: number;
 }
 
 export function transformRetentionData(data: CohortRetentionRow[] | null): MonthlyRetentionData[] {
   if (!data) return [];
 
-  // Group by month
+  // Group by month with weighted calculation
   const monthlyMap = new Map<string, {
-    cohortSize: number;
-    retained: number[];
-    diamondHands: number[];
-    churned: number[];
+    totalUsers: number;
+    retainedUsers: number;
   }>();
 
   data.forEach(row => {
@@ -175,21 +172,20 @@ export function transformRetentionData(data: CohortRetentionRow[] | null): Month
 
     if (!monthlyMap.has(monthKey)) {
       monthlyMap.set(monthKey, {
-        cohortSize: 0,
-        retained: [],
-        diamondHands: [],
-        churned: [],
+        totalUsers: 0,
+        retainedUsers: 0,
       });
     }
 
     const entry = monthlyMap.get(monthKey)!;
-    entry.cohortSize += row.cohort_size;
-    entry.retained.push(parseFloat(row.pct_retained));
-    entry.diamondHands.push(parseFloat(row.pct_diamond_hands));
-    entry.churned.push(parseFloat(row.pct_churned));
+    const retainedPct = parseFloat(row.pct_retained);
+    const retainedUsers = Math.round(row.cohort_size * retainedPct / 100);
+
+    entry.totalUsers += row.cohort_size;
+    entry.retainedUsers += retainedUsers;
   });
 
-  // Convert to array and calculate averages
+  // Convert to array with true weighted retention
   return Array.from(monthlyMap.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([monthKey, data]) => {
@@ -197,16 +193,15 @@ export function transformRetentionData(data: CohortRetentionRow[] | null): Month
       const date = new Date(parseInt(year), parseInt(month) - 1);
       const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 
-      const avgRetained = data.retained.reduce((a, b) => a + b, 0) / data.retained.length;
-      const avgDiamondHands = data.diamondHands.reduce((a, b) => a + b, 0) / data.diamondHands.length;
-      const avgChurned = data.churned.reduce((a, b) => a + b, 0) / data.churned.length;
+      const retentionPct = data.totalUsers > 0
+        ? Math.round((data.retainedUsers / data.totalUsers) * 1000) / 10
+        : 0;
 
       return {
         month: monthName,
-        cohortSize: data.cohortSize,
-        retained: Math.round(avgRetained * 10) / 10,
-        diamondHands: Math.round(avgDiamondHands * 10) / 10,
-        churned: Math.round(avgChurned * 10) / 10,
+        newStakers: data.totalUsers,
+        stillStaking: data.retainedUsers,
+        retentionPct,
       };
     });
 }
