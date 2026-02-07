@@ -284,26 +284,50 @@ export function Dashboard() {
             </div>
           </div>
 
-          {/* APY Claims Chart */}
-          <ChartCard
-            title="Monthly APY Claims"
-            subtitle="Number of APY reward claims per month"
-            isLoading={loadingAPYClaims}
-          >
-            {apyClaimsData.length > 0 ? (
-              <SimpleBarChart
-                data={apyClaimsData}
-                dataKey="claims"
-                xAxisKey="month"
-                color="#00D4FF"
-                height={280}
-              />
-            ) : (
-              <div className="h-[280px] flex items-center justify-center text-white/40">
-                {loadingAPYClaims ? 'Loading...' : 'No data available'}
-              </div>
-            )}
-          </ChartCard>
+          {/* APY Claims Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Claims Count */}
+            <ChartCard
+              title="Monthly Claims Count"
+              subtitle="Number of APY reward claims per month"
+              isLoading={loadingAPYClaims}
+            >
+              {apyClaimsData.length > 0 ? (
+                <SimpleBarChart
+                  data={apyClaimsData}
+                  dataKey="claims"
+                  xAxisKey="month"
+                  color="#00D4FF"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            {/* LINGO Amount Claimed */}
+            <ChartCard
+              title="Monthly LINGO Claimed"
+              subtitle="Amount of LINGO claimed per month"
+              isLoading={loadingAPYClaims}
+            >
+              {apyClaimsData.length > 0 ? (
+                <SimpleBarChart
+                  data={apyClaimsData}
+                  dataKey="lingo"
+                  xAxisKey="month"
+                  color="#7B61FF"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
         </section>
 
         {/* Active Users Section - Mixpanel */}
