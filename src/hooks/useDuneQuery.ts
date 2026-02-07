@@ -173,6 +173,9 @@ export const DUNE_QUERIES = {
 
   // Trading fees per month
   TRADING_FEES: '6288543',
+
+  // APY Contract claims per month
+  APY_CLAIMS: '6606898',
 } as const;
 
 // Type definitions for Dune query responses
@@ -235,4 +238,12 @@ export interface TradingFeesRow {
   usd_value: number;
   cumulative_lingo: number;
   cumulative_usd: number;
+}
+
+export interface APYClaimsRow {
+  month: string;
+  num_transfers: number;
+  lingo_out: number;
+  usd_value: number;
+  avg_transfer_size: number;
 }

@@ -4,6 +4,7 @@ import type {
   WeeklyNewStakersRow,
   CohortRetentionRow,
   TradingFeesRow,
+  APYClaimsRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -290,4 +291,39 @@ export function transformCumulativeFeesData(data: TradingFeesRow[] | null) {
 export function getTotalFees(data: TradingFeesRow[] | null): number {
   if (!data || data.length === 0) return 0;
   return data[data.length - 1].cumulative_usd;
+}
+
+/**
+ * Transform APY claims data for chart
+ */
+export function transformAPYClaimsData(data: APYClaimsRow[] | null) {
+  if (!data) return [];
+
+  return data.map(row => {
+    const date = new Date(parseDuneDate(row.month));
+    const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+    return {
+      month: monthName,
+      claims: row.num_transfers,
+      lingo: row.lingo_out,
+      usd: row.usd_value,
+      avgClaim: row.avg_transfer_size,
+    };
+  });
+}
+
+/**
+ * Get total APY claims stats
+ */
+export function getAPYClaimsTotals(data: APYClaimsRow[] | null) {
+  if (!data || data.length === 0) {
+    return { totalClaims: 0, totalLingo: 0, totalUsd: 0 };
+  }
+
+  return {
+    totalClaims: data.reduce((sum, row) => sum + row.num_transfers, 0),
+    totalLingo: data.reduce((sum, row) => sum + row.lingo_out, 0),
+    totalUsd: data.reduce((sum, row) => sum + row.usd_value, 0),
+  };
 }

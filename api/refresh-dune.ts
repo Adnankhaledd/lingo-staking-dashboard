@@ -11,6 +11,7 @@ const QUERY_IDS = [
   '6528806', // COHORT_RETENTION
   '6632385', // TOP_STAKERS
   '6288543', // TRADING_FEES
+  '6606898', // APY_CLAIMS
 ];
 
 async function executeQuery(queryId: string): Promise<{ queryId: string; success: boolean; error?: string }> {

@@ -15,6 +15,7 @@ import {
   type CohortRetentionRow,
   type TopStakerRow,
   type TradingFeesRow,
+  type APYClaimsRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -26,6 +27,8 @@ import {
   transformMonthlyFeesData,
   transformCumulativeFeesData,
   getTotalFees,
+  transformAPYClaimsData,
+  getAPYClaimsTotals,
 } from '../utils/dataTransformers';
 
 export function Dashboard() {
@@ -59,6 +62,11 @@ export function Dashboard() {
     data: tradingFees,
     isLoading: loadingFees,
   } = useDuneQuery<TradingFeesRow>(DUNE_QUERIES.TRADING_FEES);
+
+  const {
+    data: apyClaims,
+    isLoading: loadingAPYClaims,
+  } = useDuneQuery<APYClaimsRow>(DUNE_QUERIES.APY_CLAIMS);
 
   // Mixpanel data
   const {
@@ -117,6 +125,17 @@ export function Dashboard() {
   const totalFees = useMemo(
     () => getTotalFees(tradingFees),
     [tradingFees]
+  );
+
+  // APY Claims data
+  const apyClaimsData = useMemo(
+    () => transformAPYClaimsData(apyClaims),
+    [apyClaims]
+  );
+
+  const apyClaimsTotals = useMemo(
+    () => getAPYClaimsTotals(apyClaims),
+    [apyClaims]
   );
 
   // Export handlers
@@ -235,6 +254,56 @@ export function Dashboard() {
               )}
             </ChartCard>
           </div>
+        </section>
+
+        {/* APY Claims Section */}
+        <section className="mb-10">
+          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+            APY Contract Claims
+          </h2>
+
+          {/* APY Claims KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+            <div className="glass-card rounded-2xl p-6">
+              <span className="text-sm text-white/50">Total Claims</span>
+              <div className="text-2xl font-bold text-white mt-1">
+                {loadingAPYClaims ? '...' : apyClaimsTotals.totalClaims.toLocaleString()}
+              </div>
+            </div>
+            <div className="glass-card rounded-2xl p-6">
+              <span className="text-sm text-white/50">Total LINGO Claimed</span>
+              <div className="text-2xl font-bold text-cyan-400 mt-1">
+                {loadingAPYClaims ? '...' : Math.round(apyClaimsTotals.totalLingo).toLocaleString()}
+              </div>
+            </div>
+            <div className="glass-card rounded-2xl p-6">
+              <span className="text-sm text-white/50">Total USD Value</span>
+              <div className="text-2xl font-bold text-emerald-400 mt-1">
+                {loadingAPYClaims ? '...' : `$${Math.round(apyClaimsTotals.totalUsd).toLocaleString()}`}
+              </div>
+            </div>
+          </div>
+
+          {/* APY Claims Chart */}
+          <ChartCard
+            title="Monthly APY Claims"
+            subtitle="Number of APY reward claims per month"
+            isLoading={loadingAPYClaims}
+          >
+            {apyClaimsData.length > 0 ? (
+              <SimpleBarChart
+                data={apyClaimsData}
+                dataKey="claims"
+                xAxisKey="month"
+                color="#00D4FF"
+                height={280}
+              />
+            ) : (
+              <div className="h-[280px] flex items-center justify-center text-white/40">
+                {loadingAPYClaims ? 'Loading...' : 'No data available'}
+              </div>
+            )}
+          </ChartCard>
         </section>
 
         {/* Active Users Section - Mixpanel */}
