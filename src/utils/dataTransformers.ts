@@ -5,6 +5,7 @@ import type {
   CohortRetentionRow,
   TradingFeesRow,
   APYClaimsRow,
+  MonthlyStakingFlowRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -326,4 +327,23 @@ export function getAPYClaimsTotals(data: APYClaimsRow[] | null) {
     totalLingo: data.reduce((sum, row) => sum + row.lingo_out, 0),
     totalUsd: data.reduce((sum, row) => sum + row.usd_value, 0),
   };
+}
+
+/**
+ * Transform monthly staking flow data for chart
+ */
+export function transformMonthlyStakingFlowData(data: MonthlyStakingFlowRow[] | null) {
+  if (!data) return [];
+
+  return data.map(row => {
+    const date = new Date(parseDuneDate(row.month));
+    const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+    return {
+      month: monthName,
+      staked: Math.round(row.staked),
+      unstaked: Math.round(row.unstaked),
+      netFlow: Math.round(row.net_flow),
+    };
+  });
 }

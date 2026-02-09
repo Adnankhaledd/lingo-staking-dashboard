@@ -176,6 +176,9 @@ export const DUNE_QUERIES = {
 
   // APY Contract claims per month
   APY_CLAIMS: '6606898',
+
+  // Monthly staking flow (staked/unstaked/net)
+  MONTHLY_STAKING_FLOW: '6535334',
 } as const;
 
 // Type definitions for Dune query responses
@@ -246,4 +249,11 @@ export interface APYClaimsRow {
   lingo_out: number;
   usd_value: number;
   avg_transfer_size: number;
+}
+
+export interface MonthlyStakingFlowRow {
+  month: string;
+  staked: number;
+  unstaked: number;
+  net_flow: number;
 }

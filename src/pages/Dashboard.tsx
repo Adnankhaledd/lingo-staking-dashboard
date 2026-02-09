@@ -16,6 +16,7 @@ import {
   type TopStakerRow,
   type TradingFeesRow,
   type APYClaimsRow,
+  type MonthlyStakingFlowRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -29,6 +30,7 @@ import {
   getTotalFees,
   transformAPYClaimsData,
   getAPYClaimsTotals,
+  transformMonthlyStakingFlowData,
 } from '../utils/dataTransformers';
 
 export function Dashboard() {
@@ -67,6 +69,11 @@ export function Dashboard() {
     data: apyClaims,
     isLoading: loadingAPYClaims,
   } = useDuneQuery<APYClaimsRow>(DUNE_QUERIES.APY_CLAIMS);
+
+  const {
+    data: monthlyStakingFlow,
+    isLoading: loadingStakingFlow,
+  } = useDuneQuery<MonthlyStakingFlowRow>(DUNE_QUERIES.MONTHLY_STAKING_FLOW);
 
   // Mixpanel data
   const {
@@ -136,6 +143,12 @@ export function Dashboard() {
   const apyClaimsTotals = useMemo(
     () => getAPYClaimsTotals(apyClaims),
     [apyClaims]
+  );
+
+  // Monthly staking flow data
+  const stakingFlowData = useMemo(
+    () => transformMonthlyStakingFlowData(monthlyStakingFlow),
+    [monthlyStakingFlow]
   );
 
   // Export handlers
@@ -256,80 +269,6 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* APY Claims Section */}
-        <section className="mb-10">
-          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
-            APY Contract Claims
-          </h2>
-
-          {/* APY Claims KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-            <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-white/50">Total Claims</span>
-              <div className="text-2xl font-bold text-white mt-1">
-                {loadingAPYClaims ? '...' : apyClaimsTotals.totalClaims.toLocaleString()}
-              </div>
-            </div>
-            <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-white/50">Total LINGO Claimed</span>
-              <div className="text-2xl font-bold text-cyan-400 mt-1">
-                {loadingAPYClaims ? '...' : Math.round(apyClaimsTotals.totalLingo).toLocaleString()}
-              </div>
-            </div>
-            <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-white/50">Total USD Value</span>
-              <div className="text-2xl font-bold text-emerald-400 mt-1">
-                {loadingAPYClaims ? '...' : `$${Math.round(apyClaimsTotals.totalUsd).toLocaleString()}`}
-              </div>
-            </div>
-          </div>
-
-          {/* APY Claims Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Claims Count */}
-            <ChartCard
-              title="Monthly Claims Count"
-              subtitle="Number of APY reward claims per month"
-              isLoading={loadingAPYClaims}
-            >
-              {apyClaimsData.length > 0 ? (
-                <SimpleBarChart
-                  data={apyClaimsData}
-                  dataKey="claims"
-                  xAxisKey="month"
-                  color="#00D4FF"
-                  height={280}
-                />
-              ) : (
-                <div className="h-[280px] flex items-center justify-center text-white/40">
-                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
-
-            {/* LINGO Amount Claimed */}
-            <ChartCard
-              title="Monthly LINGO Claimed"
-              subtitle="Amount of LINGO claimed per month"
-              isLoading={loadingAPYClaims}
-            >
-              {apyClaimsData.length > 0 ? (
-                <SimpleBarChart
-                  data={apyClaimsData}
-                  dataKey="lingo"
-                  xAxisKey="month"
-                  color="#7B61FF"
-                  height={280}
-                />
-              ) : (
-                <div className="h-[280px] flex items-center justify-center text-white/40">
-                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
-          </div>
-        </section>
-
         {/* Active Users Section - Mixpanel */}
         <section className="mb-10">
           <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
@@ -378,30 +317,54 @@ export function Dashboard() {
           />
         </section>
 
-        {/* Staking Trend Chart */}
+        {/* Staking Charts */}
         <section className="mb-10">
-          <ChartCard
-            title="Total LINGO Staked"
-            subtitle="Cumulative staking volume over time"
-            onExport={handleExportTrend}
-            isLoading={loadingTotalStaked}
-          >
-            {stakingTrendData.length > 0 ? (
-              <AreaChartComponent
-                data={stakingTrendData}
-                dataKey="volume"
-                xAxisKey="date"
-                color="#00D4FF"
-                gradientId="stakingTrendGradient"
-                height={320}
-                formatValue={(value) => formatNumber(value) + ' LINGO'}
-              />
-            ) : (
-              <div className="h-[320px] flex items-center justify-center text-white/40">
-                {loadingTotalStaked ? 'Loading...' : 'No data available'}
-              </div>
-            )}
-          </ChartCard>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Total LINGO Staked */}
+            <ChartCard
+              title="Total LINGO Staked"
+              subtitle="Cumulative staking volume over time"
+              onExport={handleExportTrend}
+              isLoading={loadingTotalStaked}
+            >
+              {stakingTrendData.length > 0 ? (
+                <AreaChartComponent
+                  data={stakingTrendData}
+                  dataKey="volume"
+                  xAxisKey="date"
+                  color="#00D4FF"
+                  gradientId="stakingTrendGradient"
+                  height={320}
+                  formatValue={(value) => formatNumber(value) + ' LINGO'}
+                />
+              ) : (
+                <div className="h-[320px] flex items-center justify-center text-white/40">
+                  {loadingTotalStaked ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            {/* Monthly Net Flow */}
+            <ChartCard
+              title="Monthly Net Flow"
+              subtitle="Net LINGO staked minus unstaked per month"
+              isLoading={loadingStakingFlow}
+            >
+              {stakingFlowData.length > 0 ? (
+                <SimpleBarChart
+                  data={stakingFlowData}
+                  dataKey="netFlow"
+                  xAxisKey="month"
+                  color="#10B981"
+                  height={320}
+                />
+              ) : (
+                <div className="h-[320px] flex items-center justify-center text-white/40">
+                  {loadingStakingFlow ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
         </section>
 
         {/* Two Column Layout */}
@@ -539,6 +502,80 @@ export function Dashboard() {
           >
             <RetentionTable data={retentionData} isLoading={loadingRetention} />
           </ChartCard>
+        </section>
+
+        {/* APY Claims Section */}
+        <section className="mb-10">
+          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+            APY Contract Claims
+          </h2>
+
+          {/* APY Claims KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+            <div className="glass-card rounded-2xl p-6">
+              <span className="text-sm text-white/50">Total Claims</span>
+              <div className="text-2xl font-bold text-white mt-1">
+                {loadingAPYClaims ? '...' : apyClaimsTotals.totalClaims.toLocaleString()}
+              </div>
+            </div>
+            <div className="glass-card rounded-2xl p-6">
+              <span className="text-sm text-white/50">Total LINGO Claimed</span>
+              <div className="text-2xl font-bold text-cyan-400 mt-1">
+                {loadingAPYClaims ? '...' : Math.round(apyClaimsTotals.totalLingo).toLocaleString()}
+              </div>
+            </div>
+            <div className="glass-card rounded-2xl p-6">
+              <span className="text-sm text-white/50">Total USD Value</span>
+              <div className="text-2xl font-bold text-emerald-400 mt-1">
+                {loadingAPYClaims ? '...' : `$${Math.round(apyClaimsTotals.totalUsd).toLocaleString()}`}
+              </div>
+            </div>
+          </div>
+
+          {/* APY Claims Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Claims Count */}
+            <ChartCard
+              title="Monthly Claims Count"
+              subtitle="Number of APY reward claims per month"
+              isLoading={loadingAPYClaims}
+            >
+              {apyClaimsData.length > 0 ? (
+                <SimpleBarChart
+                  data={apyClaimsData}
+                  dataKey="claims"
+                  xAxisKey="month"
+                  color="#00D4FF"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            {/* LINGO Amount Claimed */}
+            <ChartCard
+              title="Monthly LINGO Claimed"
+              subtitle="Amount of LINGO claimed per month"
+              isLoading={loadingAPYClaims}
+            >
+              {apyClaimsData.length > 0 ? (
+                <SimpleBarChart
+                  data={apyClaimsData}
+                  dataKey="lingo"
+                  xAxisKey="month"
+                  color="#7B61FF"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
         </section>
 
         {/* Top Stakers Table */}
