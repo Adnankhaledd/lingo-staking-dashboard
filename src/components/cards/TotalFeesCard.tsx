@@ -1,7 +1,11 @@
 import { DollarSign } from 'lucide-react';
 
 interface TotalFeesCardProps {
-  totalFees: number;
+  totalFees: {
+    tradingTotal: number;
+    lpTotal: number;
+    grandTotal: number;
+  };
   isLoading?: boolean;
 }
 
@@ -37,7 +41,7 @@ export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
               <DollarSign className="w-5 h-5 text-white" />
             </div>
             <span className="text-sm font-medium text-white/70 uppercase tracking-wider">
-              Total Trading Fees Collected
+              Total Fees Collected
             </span>
           </div>
 
@@ -47,15 +51,26 @@ export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
           ) : (
             <div className="flex items-baseline gap-3 justify-center">
               <span className="text-5xl sm:text-6xl lg:text-7xl xl:text-8xl font-bold text-white tracking-tight">
-                ${formatFullNumber(totalFees)}
+                ${formatFullNumber(totalFees.grandTotal)}
               </span>
             </div>
           )}
 
-          {/* Subtitle */}
-          <p className="mt-6 text-sm text-white/50">
-            Accumulated from trading fees
-          </p>
+          {/* Breakdown */}
+          {!isLoading && (
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-[#7B61FF]" />
+                <span className="text-white/70">Trading Fees:</span>
+                <span className="text-white font-semibold">${formatFullNumber(totalFees.tradingTotal)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-[#00D4FF]" />
+                <span className="text-white/70">LP Fees:</span>
+                <span className="text-white font-semibold">${formatFullNumber(totalFees.lpTotal)}</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

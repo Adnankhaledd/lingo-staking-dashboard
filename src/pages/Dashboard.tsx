@@ -18,6 +18,7 @@ import {
   type APYClaimsRow,
   type MonthlyStakingFlowRow,
   type WeeklyStakesRow,
+  type LPFeesRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -26,9 +27,9 @@ import {
   transformNewStakersData,
   transformRetentionData,
   calculateMonthlyComparison,
-  transformMonthlyFeesData,
-  transformCumulativeFeesData,
-  getTotalFees,
+  transformCombinedFeesData,
+  transformCombinedCumulativeFeesData,
+  getTotalCombinedFees,
   transformAPYClaimsData,
   getAPYClaimsTotals,
   transformMonthlyStakingFlowData,
@@ -82,6 +83,11 @@ export function Dashboard() {
     isLoading: loadingWeeklyStakes,
   } = useDuneQuery<WeeklyStakesRow>(DUNE_QUERIES.WEEKLY_STAKES);
 
+  const {
+    data: lpFees,
+    isLoading: loadingLPFees,
+  } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
+
   // Mixpanel data
   const {
     data: mixpanelData,
@@ -125,20 +131,22 @@ export function Dashboard() {
     [totalStakedData]
   );
 
-  // Fees data
+  // Combined fees data (Trading + LP)
+  const combinedFeesLoading = loadingFees || loadingLPFees;
+
   const monthlyFeesData = useMemo(
-    () => transformMonthlyFeesData(tradingFees),
-    [tradingFees]
+    () => transformCombinedFeesData(tradingFees, lpFees),
+    [tradingFees, lpFees]
   );
 
   const cumulativeFeesData = useMemo(
-    () => transformCumulativeFeesData(tradingFees),
-    [tradingFees]
+    () => transformCombinedCumulativeFeesData(tradingFees, lpFees),
+    [tradingFees, lpFees]
   );
 
-  const totalFees = useMemo(
-    () => getTotalFees(tradingFees),
-    [tradingFees]
+  const totalFeesData = useMemo(
+    () => getTotalCombinedFees(tradingFees, lpFees),
+    [tradingFees, lpFees]
   );
 
   // APY Claims data
@@ -211,7 +219,7 @@ export function Dashboard() {
       <main className="relative w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
         {/* Total Fees Hero Card */}
         <section className="mb-10">
-          <TotalFeesCard totalFees={totalFees} isLoading={loadingFees} />
+          <TotalFeesCard totalFees={totalFeesData} isLoading={combinedFeesLoading} />
         </section>
 
         {/* KPI Cards */}
@@ -231,37 +239,49 @@ export function Dashboard() {
         {/* Fees Charts */}
         <section className="mb-10">
           <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
-            Trading Fees
+            Trading & LP Fees
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Monthly Fees */}
+            {/* Monthly Fees - Stacked */}
             <ChartCard
-              title="Monthly Trading Fees"
-              subtitle="Fees collected per month in USD"
+              title="Monthly Fees Breakdown"
+              subtitle="Trading fees + Liquidity pool fees per month"
               onExport={handleExportFees}
-              isLoading={loadingFees}
+              isLoading={combinedFeesLoading}
             >
               {monthlyFeesData.length > 0 ? (
-                <SimpleBarChart
+                <BarChartComponent
                   data={monthlyFeesData}
-                  dataKey="fees"
                   xAxisKey="month"
-                  color="#7B61FF"
+                  bars={[
+                    {
+                      dataKey: 'tradingFees',
+                      name: 'Trading Fees',
+                      color: '#7B61FF',
+                      stackId: 'fees',
+                    },
+                    {
+                      dataKey: 'lpFees',
+                      name: 'LP Fees',
+                      color: '#00D4FF',
+                      stackId: 'fees',
+                    },
+                  ]}
                   height={280}
                 />
               ) : (
                 <div className="h-[280px] flex items-center justify-center text-white/40">
-                  {loadingFees ? 'Loading...' : 'No data available'}
+                  {combinedFeesLoading ? 'Loading...' : 'No data available'}
                 </div>
               )}
             </ChartCard>
 
             {/* Cumulative Fees */}
             <ChartCard
-              title="Cumulative Trading Fees"
+              title="Cumulative Fees"
               subtitle="Total accumulated fees over time"
               onExport={handleExportCumulativeFees}
-              isLoading={loadingFees}
+              isLoading={combinedFeesLoading}
             >
               {cumulativeFeesData.length > 0 ? (
                 <AreaChartComponent
@@ -275,7 +295,7 @@ export function Dashboard() {
                 />
               ) : (
                 <div className="h-[280px] flex items-center justify-center text-white/40">
-                  {loadingFees ? 'Loading...' : 'No data available'}
+                  {combinedFeesLoading ? 'Loading...' : 'No data available'}
                 </div>
               )}
             </ChartCard>

@@ -182,6 +182,9 @@ export const DUNE_QUERIES = {
 
   // Weekly stake events and unique stakers
   WEEKLY_STAKES: '6693660',
+
+  // Liquidity pool fees per month
+  LP_FEES: '6693715',
 } as const;
 
 // Type definitions for Dune query responses
@@ -265,4 +268,11 @@ export interface WeeklyStakesRow {
   week: string;
   total_stake_events: number;
   unique_wallets_staked: number;
+}
+
+export interface LPFeesRow {
+  month: string;
+  fees_usd: number;
+  trades: number;
+  volume_usd: number;
 }

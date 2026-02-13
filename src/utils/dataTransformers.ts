@@ -7,6 +7,7 @@ import type {
   APYClaimsRow,
   MonthlyStakingFlowRow,
   WeeklyStakesRow,
+  LPFeesRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -370,4 +371,104 @@ export function transformWeeklyStakesData(data: WeeklyStakesRow[] | null) {
       uniqueStakers: row.unique_wallets_staked,
     };
   });
+}
+
+/**
+ * Transform combined trading fees + LP fees data for monthly chart
+ */
+export function transformCombinedFeesData(
+  tradingFees: TradingFeesRow[] | null,
+  lpFees: LPFeesRow[] | null
+) {
+  // Create a map of all months
+  const monthlyMap = new Map<string, { tradingFees: number; lpFees: number }>();
+
+  // Add trading fees
+  if (tradingFees) {
+    tradingFees.forEach(row => {
+      const date = new Date(parseDuneDate(row.month));
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+      if (!monthlyMap.has(monthKey)) {
+        monthlyMap.set(monthKey, { tradingFees: 0, lpFees: 0 });
+      }
+      monthlyMap.get(monthKey)!.tradingFees = row.usd_value;
+    });
+  }
+
+  // Add LP fees
+  if (lpFees) {
+    lpFees.forEach(row => {
+      const date = new Date(parseDuneDate(row.month));
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+      if (!monthlyMap.has(monthKey)) {
+        monthlyMap.set(monthKey, { tradingFees: 0, lpFees: 0 });
+      }
+      monthlyMap.get(monthKey)!.lpFees = row.fees_usd;
+    });
+  }
+
+  // Convert to array sorted by month
+  return Array.from(monthlyMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([monthKey, data]) => {
+      const [year, month] = monthKey.split('-');
+      const date = new Date(parseInt(year), parseInt(month) - 1);
+      const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+      return {
+        month: monthName,
+        tradingFees: Math.round(data.tradingFees * 100) / 100,
+        lpFees: Math.round(data.lpFees * 100) / 100,
+        totalFees: Math.round((data.tradingFees + data.lpFees) * 100) / 100,
+      };
+    });
+}
+
+/**
+ * Transform combined cumulative fees data
+ */
+export function transformCombinedCumulativeFeesData(
+  tradingFees: TradingFeesRow[] | null,
+  lpFees: LPFeesRow[] | null
+) {
+  const combinedData = transformCombinedFeesData(tradingFees, lpFees);
+
+  let cumulativeTrading = 0;
+  let cumulativeLP = 0;
+
+  return combinedData.map(row => {
+    cumulativeTrading += row.tradingFees;
+    cumulativeLP += row.lpFees;
+
+    return {
+      month: row.month,
+      cumulativeTrading: Math.round(cumulativeTrading * 100) / 100,
+      cumulativeLP: Math.round(cumulativeLP * 100) / 100,
+      cumulative: Math.round((cumulativeTrading + cumulativeLP) * 100) / 100,
+    };
+  });
+}
+
+/**
+ * Get total combined fees
+ */
+export function getTotalCombinedFees(
+  tradingFees: TradingFeesRow[] | null,
+  lpFees: LPFeesRow[] | null
+): { tradingTotal: number; lpTotal: number; grandTotal: number } {
+  const tradingTotal = tradingFees
+    ? tradingFees.reduce((sum, row) => sum + row.usd_value, 0)
+    : 0;
+
+  const lpTotal = lpFees
+    ? lpFees.reduce((sum, row) => sum + row.fees_usd, 0)
+    : 0;
+
+  return {
+    tradingTotal: Math.round(tradingTotal * 100) / 100,
+    lpTotal: Math.round(lpTotal * 100) / 100,
+    grandTotal: Math.round((tradingTotal + lpTotal) * 100) / 100,
+  };
 }
