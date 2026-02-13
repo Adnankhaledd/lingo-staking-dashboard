@@ -17,6 +17,7 @@ import {
   type TradingFeesRow,
   type APYClaimsRow,
   type MonthlyStakingFlowRow,
+  type WeeklyStakesRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -31,6 +32,7 @@ import {
   transformAPYClaimsData,
   getAPYClaimsTotals,
   transformMonthlyStakingFlowData,
+  transformWeeklyStakesData,
 } from '../utils/dataTransformers';
 
 export function Dashboard() {
@@ -74,6 +76,11 @@ export function Dashboard() {
     data: monthlyStakingFlow,
     isLoading: loadingStakingFlow,
   } = useDuneQuery<MonthlyStakingFlowRow>(DUNE_QUERIES.MONTHLY_STAKING_FLOW);
+
+  const {
+    data: weeklyStakes,
+    isLoading: loadingWeeklyStakes,
+  } = useDuneQuery<WeeklyStakesRow>(DUNE_QUERIES.WEEKLY_STAKES);
 
   // Mixpanel data
   const {
@@ -149,6 +156,12 @@ export function Dashboard() {
   const stakingFlowData = useMemo(
     () => transformMonthlyStakingFlowData(monthlyStakingFlow),
     [monthlyStakingFlow]
+  );
+
+  // Weekly stakes data
+  const weeklyStakesData = useMemo(
+    () => transformWeeklyStakesData(weeklyStakes),
+    [weeklyStakes]
   );
 
   // Export handlers
@@ -404,7 +417,40 @@ export function Dashboard() {
             )}
           </ChartCard>
 
-          {/* Monthly Comparison */}
+          {/* Weekly Stake Activity */}
+          <ChartCard
+            title="Weekly Stake Activity"
+            subtitle="Total stake events vs unique wallets"
+            isLoading={loadingWeeklyStakes}
+          >
+            {weeklyStakesData.length > 0 ? (
+              <BarChartComponent
+                data={weeklyStakesData}
+                xAxisKey="week"
+                bars={[
+                  {
+                    dataKey: 'stakeEvents',
+                    name: 'Stake Events',
+                    color: '#00D4FF',
+                  },
+                  {
+                    dataKey: 'uniqueStakers',
+                    name: 'Unique Wallets',
+                    color: '#10B981',
+                  },
+                ]}
+                height={300}
+              />
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-white/40">
+                {loadingWeeklyStakes ? 'Loading...' : 'No data available'}
+              </div>
+            )}
+          </ChartCard>
+        </section>
+
+        {/* Monthly Growth */}
+        <section className="mb-10">
           <ChartCard
             title="Monthly Staking Growth"
             subtitle="Month-over-month total staked"

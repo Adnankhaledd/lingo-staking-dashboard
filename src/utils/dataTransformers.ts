@@ -6,6 +6,7 @@ import type {
   TradingFeesRow,
   APYClaimsRow,
   MonthlyStakingFlowRow,
+  WeeklyStakesRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -344,6 +345,29 @@ export function transformMonthlyStakingFlowData(data: MonthlyStakingFlowRow[] | 
       staked: Math.round(row.staked),
       unstaked: Math.round(row.unstaked),
       netFlow: Math.round(row.net_flow),
+    };
+  });
+}
+
+/**
+ * Transform weekly stakes data for chart
+ */
+export function transformWeeklyStakesData(data: WeeklyStakesRow[] | null) {
+  if (!data) return [];
+
+  // Sort by week ascending and take recent weeks
+  const sorted = [...data].sort((a, b) =>
+    parseDuneDate(a.week).localeCompare(parseDuneDate(b.week))
+  );
+
+  return sorted.map(row => {
+    const date = new Date(parseDuneDate(row.week));
+    const weekLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    return {
+      week: weekLabel,
+      stakeEvents: row.total_stake_events,
+      uniqueStakers: row.unique_wallets_staked,
     };
   });
 }

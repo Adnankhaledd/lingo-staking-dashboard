@@ -13,6 +13,7 @@ const QUERY_IDS = [
   '6288543', // TRADING_FEES
   '6606898', // APY_CLAIMS
   '6535334', // MONTHLY_STAKING_FLOW
+  '6693660', // WEEKLY_STAKES
 ];
 
 async function executeQuery(queryId: string): Promise<{ queryId: string; success: boolean; error?: string }> {

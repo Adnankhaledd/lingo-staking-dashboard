@@ -179,6 +179,9 @@ export const DUNE_QUERIES = {
 
   // Monthly staking flow (staked/unstaked/net)
   MONTHLY_STAKING_FLOW: '6535334',
+
+  // Weekly stake events and unique stakers
+  WEEKLY_STAKES: '6693660',
 } as const;
 
 // Type definitions for Dune query responses
@@ -256,4 +259,10 @@ export interface MonthlyStakingFlowRow {
   staked: number;
   unstaked: number;
   net_flow: number;
+}
+
+export interface WeeklyStakesRow {
+  week: string;
+  total_stake_events: number;
+  unique_wallets_staked: number;
 }
