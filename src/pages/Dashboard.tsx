@@ -258,13 +258,16 @@ export function Dashboard() {
                       dataKey: 'tradingFees',
                       name: 'Trading Fees',
                       color: '#7B61FF',
-                      stackId: 'fees',
                     },
                     {
                       dataKey: 'lpFees',
                       name: 'LP Fees',
                       color: '#00D4FF',
-                      stackId: 'fees',
+                    },
+                    {
+                      dataKey: 'totalFees',
+                      name: 'Total',
+                      color: '#10B981',
                     },
                   ]}
                   height={280}
