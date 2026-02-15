@@ -41,6 +41,7 @@ export function Dashboard() {
   const {
     data: totalStakedData,
     isLoading: loadingTotalStaked,
+    executedAt: totalStakedExecutedAt,
   } = useDuneQuery<TotalStakedRow>(DUNE_QUERIES.TOTAL_STAKED_TREND);
 
   const {
@@ -51,11 +52,13 @@ export function Dashboard() {
   const {
     data: weeklyNewStakers,
     isLoading: loadingNewStakers,
+    executedAt: newStakersExecutedAt,
   } = useDuneQuery<WeeklyNewStakersRow>(DUNE_QUERIES.WEEKLY_NEW_STAKERS);
 
   const {
     data: cohortRetention,
     isLoading: loadingRetention,
+    executedAt: retentionExecutedAt,
   } = useDuneQuery<CohortRetentionRow>(DUNE_QUERIES.COHORT_RETENTION);
 
   const {
@@ -66,26 +69,31 @@ export function Dashboard() {
   const {
     data: tradingFees,
     isLoading: loadingFees,
+    executedAt: tradingFeesExecutedAt,
   } = useDuneQuery<TradingFeesRow>(DUNE_QUERIES.TRADING_FEES);
 
   const {
     data: apyClaims,
     isLoading: loadingAPYClaims,
+    executedAt: apyClaimsExecutedAt,
   } = useDuneQuery<APYClaimsRow>(DUNE_QUERIES.APY_CLAIMS);
 
   const {
     data: monthlyStakingFlow,
     isLoading: loadingStakingFlow,
+    executedAt: stakingFlowExecutedAt,
   } = useDuneQuery<MonthlyStakingFlowRow>(DUNE_QUERIES.MONTHLY_STAKING_FLOW);
 
   const {
     data: weeklyStakes,
     isLoading: loadingWeeklyStakes,
+    executedAt: weeklyStakesExecutedAt,
   } = useDuneQuery<WeeklyStakesRow>(DUNE_QUERIES.WEEKLY_STAKES);
 
   const {
     data: lpFees,
     isLoading: loadingLPFees,
+    executedAt: lpFeesExecutedAt,
   } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
 
   // Mixpanel data
@@ -248,6 +256,7 @@ export function Dashboard() {
               subtitle="Trading fees + Liquidity pool fees per month"
               onExport={handleExportFees}
               isLoading={combinedFeesLoading}
+              lastUpdated={tradingFeesExecutedAt || lpFeesExecutedAt}
             >
               {monthlyFeesData.length > 0 ? (
                 <BarChartComponent
@@ -285,6 +294,7 @@ export function Dashboard() {
               subtitle="Total accumulated fees over time"
               onExport={handleExportCumulativeFees}
               isLoading={combinedFeesLoading}
+              lastUpdated={tradingFeesExecutedAt || lpFeesExecutedAt}
             >
               {cumulativeFeesData.length > 0 ? (
                 <AreaChartComponent
@@ -362,6 +372,7 @@ export function Dashboard() {
               subtitle="Cumulative staking volume over time"
               onExport={handleExportTrend}
               isLoading={loadingTotalStaked}
+              lastUpdated={totalStakedExecutedAt}
             >
               {stakingTrendData.length > 0 ? (
                 <AreaChartComponent
@@ -385,6 +396,7 @@ export function Dashboard() {
               title="Monthly Net Flow"
               subtitle="Net LINGO staked minus unstaked per month"
               isLoading={loadingStakingFlow}
+              lastUpdated={stakingFlowExecutedAt}
             >
               {stakingFlowData.length > 0 ? (
                 <SimpleBarChart
@@ -411,6 +423,7 @@ export function Dashboard() {
             subtitle="Weekly breakdown of staker types"
             onExport={handleExportNewVsReturning}
             isLoading={loadingNewStakers}
+            lastUpdated={newStakersExecutedAt}
           >
             {newVsReturningData.length > 0 ? (
               <BarChartComponent
@@ -445,6 +458,7 @@ export function Dashboard() {
             title="Weekly Stake Activity"
             subtitle="Total stake events vs unique wallets"
             isLoading={loadingWeeklyStakes}
+            lastUpdated={weeklyStakesExecutedAt}
           >
             {weeklyStakesData.length > 0 ? (
               <BarChartComponent
@@ -479,6 +493,7 @@ export function Dashboard() {
             subtitle="Month-over-month total staked"
             onExport={handleExportMonthly}
             isLoading={loadingTotalStaked}
+            lastUpdated={totalStakedExecutedAt}
           >
             {monthlyData.length > 0 ? (
               <SimpleBarChart
@@ -568,6 +583,7 @@ export function Dashboard() {
             title="Monthly Cohort Breakdown"
             subtitle="Users who started staking each month and how many are still active"
             isLoading={loadingRetention}
+            lastUpdated={retentionExecutedAt}
           >
             <RetentionTable data={retentionData} isLoading={loadingRetention} />
           </ChartCard>
@@ -608,6 +624,7 @@ export function Dashboard() {
               title="Monthly Claims Count"
               subtitle="Number of APY reward claims per month"
               isLoading={loadingAPYClaims}
+              lastUpdated={apyClaimsExecutedAt}
             >
               {apyClaimsData.length > 0 ? (
                 <SimpleBarChart
@@ -629,6 +646,7 @@ export function Dashboard() {
               title="Monthly LINGO Claimed"
               subtitle="Amount of LINGO claimed per month"
               isLoading={loadingAPYClaims}
+              lastUpdated={apyClaimsExecutedAt}
             >
               {apyClaimsData.length > 0 ? (
                 <SimpleBarChart

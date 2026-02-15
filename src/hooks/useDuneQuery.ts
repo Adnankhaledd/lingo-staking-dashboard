@@ -9,6 +9,7 @@ interface DuneResponse<T> {
   query_id: number;
   is_execution_finished: boolean;
   state: string;
+  execution_ended_at?: string;
   result?: {
     rows: T[];
     metadata: {
@@ -23,6 +24,7 @@ interface DuneResponse<T> {
 interface CachedData<T> {
   data: T[];
   timestamp: number;
+  executedAt?: string;
 }
 
 interface UseDuneQueryOptions {
@@ -34,11 +36,12 @@ interface UseDuneQueryReturn<T> {
   data: T[] | null;
   isLoading: boolean;
   error: string | null;
+  executedAt: string | null;
   refetch: () => Promise<void>;
 }
 
 // Get cached data if valid
-function getCachedData<T>(queryId: string | number): T[] | null {
+function getCachedData<T>(queryId: string | number): { data: T[]; executedAt?: string } | null {
   try {
     const cached = localStorage.getItem(`${CACHE_PREFIX}${queryId}`);
     if (!cached) return null;
@@ -48,7 +51,7 @@ function getCachedData<T>(queryId: string | number): T[] | null {
 
     if (now - parsed.timestamp < CACHE_DURATION) {
       console.log(`Using cached Dune data for query ${queryId}`);
-      return parsed.data;
+      return { data: parsed.data, executedAt: parsed.executedAt };
     }
 
     console.log(`Dune cache expired for query ${queryId}`);
@@ -59,11 +62,12 @@ function getCachedData<T>(queryId: string | number): T[] | null {
 }
 
 // Save data to cache
-function setCachedData<T>(queryId: string | number, data: T[]): void {
+function setCachedData<T>(queryId: string | number, data: T[], executedAt?: string): void {
   try {
     const cacheEntry: CachedData<T> = {
       data,
       timestamp: Date.now(),
+      executedAt,
     };
     localStorage.setItem(`${CACHE_PREFIX}${queryId}`, JSON.stringify(cacheEntry));
   } catch (e) {
@@ -79,6 +83,7 @@ export function useDuneQuery<T>(
   const [data, setData] = useState<T[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [executedAt, setExecutedAt] = useState<string | null>(null);
 
   const apiKey = import.meta.env.VITE_DUNE_API_KEY;
 
@@ -91,9 +96,10 @@ export function useDuneQuery<T>(
 
     // Check cache first (unless force refresh)
     if (!forceRefresh) {
-      const cachedData = getCachedData<T>(queryId);
-      if (cachedData) {
-        setData(cachedData);
+      const cached = getCachedData<T>(queryId);
+      if (cached) {
+        setData(cached.data);
+        setExecutedAt(cached.executedAt ?? null);
         setIsLoading(false);
         return;
       }
@@ -127,10 +133,12 @@ export function useDuneQuery<T>(
       }
 
       const rows = result.result?.rows ?? [];
+      const queryExecutedAt = result.execution_ended_at;
 
-      // Cache the data
-      setCachedData(queryId, rows);
+      // Cache the data with execution time
+      setCachedData(queryId, rows, queryExecutedAt);
       setData(rows);
+      setExecutedAt(queryExecutedAt ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       setData(null);
@@ -145,7 +153,7 @@ export function useDuneQuery<T>(
     }
   }, [enabled, fetchData]);
 
-  return { data, isLoading, error, refetch: () => fetchData(true) };
+  return { data, isLoading, error, executedAt, refetch: () => fetchData(true) };
 }
 
 // Query IDs from Dune

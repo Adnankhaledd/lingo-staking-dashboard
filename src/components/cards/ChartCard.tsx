@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Download } from 'lucide-react';
+import { Download, Clock } from 'lucide-react';
 
 interface ChartCardProps {
   title: string;
@@ -8,6 +8,23 @@ interface ChartCardProps {
   onExport?: () => void;
   isLoading?: boolean;
   className?: string;
+  lastUpdated?: string | null;
+}
+
+function formatLastUpdated(isoDate: string): string {
+  const date = new Date(isoDate);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export function ChartCard({
@@ -17,6 +34,7 @@ export function ChartCard({
   onExport,
   isLoading,
   className = '',
+  lastUpdated,
 }: ChartCardProps) {
   return (
     <div className={`glass rounded-2xl p-6 ${className}`}>
@@ -28,15 +46,23 @@ export function ChartCard({
           )}
         </div>
 
-        {onExport && (
-          <button
-            onClick={onExport}
-            className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/70 transition-colors"
-            title="Export to CSV"
-          >
-            <Download className="w-4 h-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {lastUpdated && (
+            <div className="flex items-center gap-1 text-xs text-white/30" title={`Query executed: ${new Date(lastUpdated).toLocaleString()}`}>
+              <Clock className="w-3 h-3" />
+              <span>{formatLastUpdated(lastUpdated)}</span>
+            </div>
+          )}
+          {onExport && (
+            <button
+              onClick={onExport}
+              className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/70 transition-colors"
+              title="Export to CSV"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="relative">
