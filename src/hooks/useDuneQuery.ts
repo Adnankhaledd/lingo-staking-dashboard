@@ -49,6 +49,12 @@ function getCachedData<T>(queryId: string | number): { data: T[]; executedAt?: s
     const parsed: CachedData<T> = JSON.parse(cached);
     const now = Date.now();
 
+    // Invalidate old cache entries that don't have executedAt
+    if (!parsed.executedAt) {
+      console.log(`Dune cache missing executedAt for query ${queryId}, refetching`);
+      return null;
+    }
+
     if (now - parsed.timestamp < CACHE_DURATION) {
       console.log(`Using cached Dune data for query ${queryId}`);
       return { data: parsed.data, executedAt: parsed.executedAt };
