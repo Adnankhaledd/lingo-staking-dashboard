@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const DUNE_API_BASE = 'https://api.dune.com/api/v1';
-const CACHE_PREFIX = 'dune_cache_';
+const CACHE_VERSION = 'v2'; // Bump to invalidate all old caches
+const CACHE_PREFIX = `dune_${CACHE_VERSION}_`;
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DuneResponse<T> {
