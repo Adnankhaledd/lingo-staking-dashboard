@@ -1,5 +1,6 @@
-import { Clock } from 'lucide-react';
+import { Clock, RefreshCw } from 'lucide-react';
 import { formatDateTime } from '../../utils/formatters';
+import { clearDuneCache } from '../../hooks/useDuneQuery';
 import lingoLogo from '../../assets/logo-lingo.svg';
 
 interface HeaderProps {
@@ -7,6 +8,13 @@ interface HeaderProps {
 }
 
 export function Header({ lastUpdated }: HeaderProps) {
+  const handleRefresh = () => {
+    clearDuneCache();
+    // Also clear Mixpanel cache
+    localStorage.removeItem('mixpanel_data_cache');
+    window.location.reload();
+  };
+
   return (
     <header className="sticky top-0 z-50 glass border-b border-white/5">
       <div className="w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-4">
@@ -35,6 +43,16 @@ export function Header({ lastUpdated }: HeaderProps) {
                 <span>Updated {formatDateTime(lastUpdated)}</span>
               </div>
             )}
+
+            {/* Refresh Button */}
+            <button
+              onClick={handleRefresh}
+              className="flex items-center gap-1.5 text-xs text-soft-gray bg-dark3/60 px-3 py-1.5 rounded-lg border border-white/5 hover:bg-white/10 hover:text-lavender transition-colors cursor-pointer"
+              title="Clear cache and refresh data"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
 
             {/* Status Indicator */}
             <div className="flex items-center gap-2 bg-green1/10 px-3 py-1.5 rounded-lg border border-green1/20">

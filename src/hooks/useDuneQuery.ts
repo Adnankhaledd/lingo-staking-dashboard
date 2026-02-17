@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const DUNE_API_BASE = 'https://api.dune.com/api/v1';
-const CACHE_VERSION = 'v2'; // Bump to invalidate all old caches
+const CACHE_VERSION = 'v3'; // Bump to invalidate all old caches
 const CACHE_PREFIX = `dune_${CACHE_VERSION}_`;
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
@@ -39,6 +39,19 @@ interface UseDuneQueryReturn<T> {
   error: string | null;
   executedAt: string | null;
   refetch: () => Promise<void>;
+}
+
+// Clear all Dune caches from localStorage
+export function clearDuneCache(): void {
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('dune_')) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach(key => localStorage.removeItem(key));
+  console.log(`Cleared ${keysToRemove.length} Dune cache entries`);
 }
 
 // Get cached data if valid
