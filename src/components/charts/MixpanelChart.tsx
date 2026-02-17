@@ -21,7 +21,7 @@ export function MixpanelChart({
   title,
   subtitle,
   data,
-  color = '#00D4FF',
+  color = '#C4B5D4',
   isLoading,
 }: MixpanelChartProps) {
   if (isLoading) {
@@ -37,9 +37,9 @@ export function MixpanelChart({
   return (
     <div className="glass-card rounded-2xl p-6">
       <div className="mb-6">
-        <h3 className="text-lg font-semibold text-white">{title}</h3>
+        <h3 className="text-lg font-semibold text-lavender">{title}</h3>
         {subtitle && (
-          <p className="text-sm text-gray-400 mt-1">{subtitle}</p>
+          <p className="text-sm text-soft-gray mt-1">{subtitle}</p>
         )}
       </div>
 
@@ -48,23 +48,23 @@ export function MixpanelChart({
           <AreaChart data={data}>
             <defs>
               <linearGradient id={`gradient-${title.replace(/\s/g, '')}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+                <stop offset="5%" stopColor={color} stopOpacity={0.25} />
                 <stop offset="95%" stopColor={color} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
             <XAxis
               dataKey="date"
-              stroke="rgba(255,255,255,0.5)"
-              tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 11 }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+              stroke="rgba(255,255,255,0.15)"
+              tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }}
+              axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
               interval="preserveStartEnd"
               tickMargin={8}
             />
             <YAxis
-              stroke="rgba(255,255,255,0.5)"
-              tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+              stroke="rgba(255,255,255,0.15)"
+              tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }}
+              axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
               tickFormatter={(value) => {
                 if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
                 return value.toString();
@@ -72,12 +72,12 @@ export function MixpanelChart({
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: 'rgba(17, 17, 17, 0.95)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
+                backgroundColor: 'hsl(240 19% 13% / 0.95)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
                 borderRadius: '12px',
                 boxShadow: '0 4px 20px rgba(0, 0, 0, 0.5)',
               }}
-              labelStyle={{ color: 'rgba(255, 255, 255, 0.7)' }}
+              labelStyle={{ color: 'rgba(255, 255, 255, 0.5)' }}
               itemStyle={{ color: color }}
               formatter={(value) => value != null ? [value.toLocaleString(), 'Users'] : ['0', 'Users']}
             />

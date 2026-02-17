@@ -35,8 +35,8 @@ function CustomTooltip({ active, payload, label, formatValue }: CustomTooltipPro
 
   return (
     <div className="custom-tooltip">
-      <p className="text-white/60 text-xs mb-1">{formatChartDate(label || '')}</p>
-      <p className="text-white font-semibold text-lg">{formattedValue}</p>
+      <p className="text-soft-gray text-xs mb-1">{formatChartDate(label || '')}</p>
+      <p className="text-lavender font-semibold text-lg">{formattedValue}</p>
     </div>
   );
 }
@@ -45,7 +45,7 @@ export function AreaChartComponent<T extends object>({
   data,
   dataKey,
   xAxisKey = 'date' as keyof T,
-  color = '#00D4FF',
+  color = '#C4B5D4',
   gradientId = 'areaGradient',
   height = 300,
   showGrid = true,
@@ -59,8 +59,8 @@ export function AreaChartComponent<T extends object>({
       >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-            <stop offset="50%" stopColor={color} stopOpacity={0.1} />
+            <stop offset="0%" stopColor={color} stopOpacity={0.25} />
+            <stop offset="50%" stopColor={color} stopOpacity={0.08} />
             <stop offset="100%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>
@@ -68,7 +68,7 @@ export function AreaChartComponent<T extends object>({
         {showGrid && (
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="rgba(255,255,255,0.05)"
+            stroke="rgba(255,255,255,0.04)"
             vertical={false}
           />
         )}
@@ -76,8 +76,8 @@ export function AreaChartComponent<T extends object>({
         <XAxis
           dataKey={xAxisKey as string}
           tickFormatter={formatChartDate}
-          stroke="rgba(255,255,255,0.2)"
-          tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 12 }}
+          stroke="rgba(255,255,255,0.15)"
+          tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           dy={10}
@@ -86,8 +86,8 @@ export function AreaChartComponent<T extends object>({
 
         <YAxis
           tickFormatter={(value) => formatNumber(value, 0)}
-          stroke="rgba(255,255,255,0.2)"
-          tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 12 }}
+          stroke="rgba(255,255,255,0.15)"
+          tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           dx={-10}

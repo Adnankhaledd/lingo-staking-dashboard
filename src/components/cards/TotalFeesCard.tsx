@@ -16,18 +16,18 @@ function formatFullNumber(num: number): string {
 export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
   return (
     <div className="relative overflow-hidden rounded-3xl">
-      {/* Gradient background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#7B61FF] via-[#5B4BC4] to-[#3D2E91]" />
+      {/* Gradient background — flagship purple tones */}
+      <div className="absolute inset-0 bg-gradient-to-br from-[#5B4BC4] via-[#3D2E91] to-[#2A1F6D]" />
 
       {/* Animated gradient orbs */}
-      <div className="absolute top-[-50%] right-[-20%] w-[400px] h-[400px] bg-[#00D4FF]/30 rounded-full blur-[100px] animate-pulse" />
-      <div className="absolute bottom-[-30%] left-[-10%] w-[300px] h-[300px] bg-[#7B61FF]/50 rounded-full blur-[80px]" />
+      <div className="absolute top-[-50%] right-[-20%] w-[400px] h-[400px] bg-lavender/15 rounded-full blur-[100px] animate-pulse" />
+      <div className="absolute bottom-[-30%] left-[-10%] w-[300px] h-[300px] bg-purple/20 rounded-full blur-[80px]" />
 
       {/* Grid pattern overlay */}
       <div
-        className="absolute inset-0 opacity-10"
+        className="absolute inset-0 opacity-8"
         style={{
-          backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`,
+          backgroundImage: `linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)`,
           backgroundSize: '40px 40px',
         }}
       />
@@ -37,10 +37,10 @@ export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
         <div className="flex flex-col items-center text-center">
           {/* Label */}
           <div className="flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/20">
-              <DollarSign className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/15">
+              <DollarSign className="w-5 h-5 text-lavender" />
             </div>
-            <span className="text-sm font-medium text-white/70 uppercase tracking-wider">
+            <span className="text-sm font-medium text-lavender/70 uppercase tracking-wider">
               Total Fees Collected
             </span>
           </div>
@@ -60,13 +60,13 @@ export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
           {!isLoading && (
             <div className="mt-6 flex flex-wrap items-center justify-center gap-6 text-sm">
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-[#7B61FF]" />
-                <span className="text-white/70">Trading Fees:</span>
+                <div className="w-3 h-3 rounded-full bg-purple" />
+                <span className="text-lavender/60">Trading Fees:</span>
                 <span className="text-white font-semibold">${formatFullNumber(totalFees.tradingTotal)}</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-[#00D4FF]" />
-                <span className="text-white/70">LP Fees:</span>
+                <div className="w-3 h-3 rounded-full bg-green1" />
+                <span className="text-lavender/60">LP Fees:</span>
                 <span className="text-white font-semibold">${formatFullNumber(totalFees.lpTotal)}</span>
               </div>
             </div>
@@ -75,7 +75,7 @@ export function TotalFeesCard({ totalFees, isLoading }: TotalFeesCardProps) {
       </div>
 
       {/* Bottom shine effect */}
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-lavender/30 to-transparent" />
     </div>
   );
 }

@@ -36,15 +36,15 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 
   return (
     <div className="custom-tooltip">
-      <p className="text-white/60 text-xs mb-2">{formatChartDate(label || '')}</p>
+      <p className="text-soft-gray text-xs mb-2">{formatChartDate(label || '')}</p>
       {payload.map((entry, index) => (
         <div key={index} className="flex items-center gap-2 mb-1">
           <div
             className="w-2 h-2 rounded-full"
             style={{ backgroundColor: entry.color }}
           />
-          <span className="text-white/60 text-sm">{entry.name}:</span>
-          <span className="text-white font-medium">{formatNumber(entry.value)}</span>
+          <span className="text-soft-gray text-sm">{entry.name}:</span>
+          <span className="text-lavender font-medium">{formatNumber(entry.value)}</span>
         </div>
       ))}
     </div>
@@ -78,7 +78,7 @@ export function BarChartComponent<T extends object>({
               y2="1"
             >
               <stop offset="0%" stopColor={bar.color} stopOpacity={1} />
-              <stop offset="100%" stopColor={bar.color} stopOpacity={0.6} />
+              <stop offset="100%" stopColor={bar.color} stopOpacity={0.5} />
             </linearGradient>
           ))}
         </defs>
@@ -86,7 +86,7 @@ export function BarChartComponent<T extends object>({
         {showGrid && (
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="rgba(255,255,255,0.05)"
+            stroke="rgba(255,255,255,0.04)"
             vertical={false}
           />
         )}
@@ -94,8 +94,8 @@ export function BarChartComponent<T extends object>({
         <XAxis
           dataKey={xAxisKey as string}
           tickFormatter={formatXAxis}
-          stroke="rgba(255,255,255,0.2)"
-          tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 12 }}
+          stroke="rgba(255,255,255,0.15)"
+          tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           dy={10}
@@ -103,8 +103,8 @@ export function BarChartComponent<T extends object>({
 
         <YAxis
           tickFormatter={(value) => formatNumber(value, 0)}
-          stroke="rgba(255,255,255,0.2)"
-          tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 12 }}
+          stroke="rgba(255,255,255,0.15)"
+          tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           dx={-10}
@@ -119,7 +119,7 @@ export function BarChartComponent<T extends object>({
               paddingTop: 20,
             }}
             formatter={(value) => (
-              <span className="text-white/60 text-sm">{value}</span>
+              <span className="text-soft-gray text-sm">{value}</span>
             )}
           />
         )}
@@ -146,7 +146,7 @@ export function SimpleBarChart<T extends object>({
   data,
   dataKey,
   xAxisKey = 'month' as keyof T,
-  color = '#00D4FF',
+  color = '#C4B5D4',
   height = 300,
 }: {
   data: T[];
@@ -165,20 +165,20 @@ export function SimpleBarChart<T extends object>({
         <defs>
           <linearGradient id="simpleBarGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={color} stopOpacity={1} />
-            <stop offset="100%" stopColor={color} stopOpacity={0.4} />
+            <stop offset="100%" stopColor={color} stopOpacity={0.35} />
           </linearGradient>
         </defs>
 
         <CartesianGrid
           strokeDasharray="3 3"
-          stroke="rgba(255,255,255,0.05)"
+          stroke="rgba(255,255,255,0.04)"
           vertical={false}
         />
 
         <XAxis
           dataKey={xAxisKey as string}
-          stroke="rgba(255,255,255,0.2)"
-          tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 12 }}
+          stroke="rgba(255,255,255,0.15)"
+          tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           dy={10}
@@ -186,8 +186,8 @@ export function SimpleBarChart<T extends object>({
 
         <YAxis
           tickFormatter={(value) => formatNumber(value, 0)}
-          stroke="rgba(255,255,255,0.2)"
-          tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 12 }}
+          stroke="rgba(255,255,255,0.15)"
+          tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           dx={-10}
@@ -199,8 +199,8 @@ export function SimpleBarChart<T extends object>({
             if (!active || !payload || !payload.length) return null;
             return (
               <div className="custom-tooltip">
-                <p className="text-white/60 text-xs mb-1">{label}</p>
-                <p className="text-white font-semibold text-lg">
+                <p className="text-soft-gray text-xs mb-1">{label}</p>
+                <p className="text-lavender font-semibold text-lg">
                   {formatNumber(payload[0].value as number)}
                 </p>
               </div>

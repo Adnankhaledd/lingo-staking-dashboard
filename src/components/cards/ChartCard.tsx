@@ -40,15 +40,15 @@ export function ChartCard({
     <div className={`glass rounded-2xl p-6 ${className}`}>
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h3 className="text-lg font-semibold text-white">{title}</h3>
+          <h3 className="text-lg font-semibold text-lavender">{title}</h3>
           {subtitle && (
-            <p className="text-sm text-white/40 mt-1">{subtitle}</p>
+            <p className="text-sm text-soft-gray mt-1">{subtitle}</p>
           )}
         </div>
 
         <div className="flex items-center gap-2">
           {lastUpdated && (
-            <div className="flex items-center gap-1 text-xs text-white/30" title={`Query executed: ${new Date(lastUpdated).toLocaleString()}`}>
+            <div className="flex items-center gap-1 text-xs text-purple-gray" title={`Query executed: ${new Date(lastUpdated).toLocaleString()}`}>
               <Clock className="w-3 h-3" />
               <span>{formatLastUpdated(lastUpdated)}</span>
             </div>
@@ -56,7 +56,7 @@ export function ChartCard({
           {onExport && (
             <button
               onClick={onExport}
-              className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/70 transition-colors"
+              className="p-2 rounded-lg hover:bg-dark3 text-soft-gray hover:text-lavender transition-colors"
               title="Export to CSV"
             >
               <Download className="w-4 h-4" />
@@ -70,7 +70,7 @@ export function ChartCard({
 
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm rounded-xl">
-            <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+            <div className="w-8 h-8 border-2 border-purple border-t-transparent rounded-full animate-spin" />
           </div>
         )}
       </div>

@@ -35,6 +35,7 @@ import {
   transformMonthlyStakingFlowData,
   transformWeeklyStakesData,
 } from '../utils/dataTransformers';
+import lingoLogo from '../assets/logo-lingo.svg';
 
 export function Dashboard() {
   // Fetch data from Dune Analytics
@@ -212,12 +213,12 @@ export function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f]">
-      {/* Background gradient effects - Lingo style */}
+    <div className="min-h-screen bg-background">
+      {/* Background gradient effects — flagship style */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[#00D4FF]/8 rounded-full blur-[150px]" />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-[#7B61FF]/8 rounded-full blur-[150px]" />
-        <div className="absolute top-1/3 right-1/4 w-[400px] h-[400px] bg-[#00D4FF]/5 rounded-full blur-[120px]" />
+        <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-purple/6 rounded-full blur-[150px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-sosiska/5 rounded-full blur-[150px]" />
+        <div className="absolute top-1/3 right-1/4 w-[400px] h-[400px] bg-light1/4 rounded-full blur-[120px]" />
       </div>
 
       {/* Header */}
@@ -232,7 +233,7 @@ export function Dashboard() {
 
         {/* KPI Cards */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Overview
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 stagger-children">
@@ -246,7 +247,7 @@ export function Dashboard() {
 
         {/* Fees Charts */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Trading & LP Fees
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -266,23 +267,23 @@ export function Dashboard() {
                     {
                       dataKey: 'tradingFees',
                       name: 'Trading Fees',
-                      color: '#7B61FF',
+                      color: '#7B68AE',
                     },
                     {
                       dataKey: 'lpFees',
                       name: 'LP Fees',
-                      color: '#00D4FF',
+                      color: '#C4B5D4',
                     },
                     {
                       dataKey: 'totalFees',
                       name: 'Total',
-                      color: '#10B981',
+                      color: '#5EB851',
                     },
                   ]}
                   height={280}
                 />
               ) : (
-                <div className="h-[280px] flex items-center justify-center text-white/40">
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
                   {combinedFeesLoading ? 'Loading...' : 'No data available'}
                 </div>
               )}
@@ -301,13 +302,13 @@ export function Dashboard() {
                   data={cumulativeFeesData}
                   dataKey="cumulative"
                   xAxisKey="month"
-                  color="#7B61FF"
+                  color="#7B68AE"
                   gradientId="cumulativeFeesGradient"
                   height={280}
                   formatValue={(value) => formatCurrency(value)}
                 />
               ) : (
-                <div className="h-[280px] flex items-center justify-center text-white/40">
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
                   {combinedFeesLoading ? 'Loading...' : 'No data available'}
                 </div>
               )}
@@ -317,7 +318,7 @@ export function Dashboard() {
 
         {/* Active Users Section - Mixpanel */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Active Users
           </h2>
 
@@ -327,28 +328,28 @@ export function Dashboard() {
               title="Daily Active Users"
               value={mixpanelData?.currentDAU ?? 0}
               icon={Calendar}
-              color="#00D4FF"
+              color="#C4B5D4"
               isLoading={loadingMixpanel}
             />
             <MixpanelKPICard
               title="Avg. DAU (30d)"
               value={mixpanelData?.avgDAU ?? 0}
               icon={Users}
-              color="#7B61FF"
+              color="#7B68AE"
               isLoading={loadingMixpanel}
             />
             <MixpanelKPICard
               title="Weekly Active Users"
               value={mixpanelData?.currentWAU ?? 0}
               icon={CalendarDays}
-              color="#10B981"
+              color="#5EB851"
               isLoading={loadingMixpanel}
             />
             <MixpanelKPICard
               title="Monthly Active Users"
               value={mixpanelData?.currentMAU ?? 0}
               icon={CalendarRange}
-              color="#F59E0B"
+              color="#FF7847"
               isLoading={loadingMixpanel}
             />
           </div>
@@ -358,7 +359,7 @@ export function Dashboard() {
             title="Daily Active Users Trend"
             subtitle="Unique active users per day (last 30 days)"
             data={mixpanelData?.dauTrend ?? []}
-            color="#00D4FF"
+            color="#C4B5D4"
             isLoading={loadingMixpanel}
           />
         </section>
@@ -379,13 +380,13 @@ export function Dashboard() {
                   data={stakingTrendData}
                   dataKey="volume"
                   xAxisKey="date"
-                  color="#00D4FF"
+                  color="#C4B5D4"
                   gradientId="stakingTrendGradient"
                   height={320}
                   formatValue={(value) => formatNumber(value) + ' LINGO'}
                 />
               ) : (
-                <div className="h-[320px] flex items-center justify-center text-white/40">
+                <div className="h-[320px] flex items-center justify-center text-soft-gray">
                   {loadingTotalStaked ? 'Loading...' : 'No data available'}
                 </div>
               )}
@@ -403,11 +404,11 @@ export function Dashboard() {
                   data={stakingFlowData}
                   dataKey="netFlow"
                   xAxisKey="month"
-                  color="#10B981"
+                  color="#5EB851"
                   height={320}
                 />
               ) : (
-                <div className="h-[320px] flex items-center justify-center text-white/40">
+                <div className="h-[320px] flex items-center justify-center text-soft-gray">
                   {loadingStakingFlow ? 'Loading...' : 'No data available'}
                 </div>
               )}
@@ -434,20 +435,20 @@ export function Dashboard() {
                   {
                     dataKey: 'returningStakers',
                     name: 'Returning',
-                    color: '#7B61FF',
+                    color: '#7B68AE',
                     stackId: 'stakers',
                   },
                   {
                     dataKey: 'newStakers',
                     name: 'New',
-                    color: '#00D4FF',
+                    color: '#C4B5D4',
                     stackId: 'stakers',
                   },
                 ]}
                 height={300}
               />
             ) : (
-              <div className="h-[300px] flex items-center justify-center text-white/40">
+              <div className="h-[300px] flex items-center justify-center text-soft-gray">
                 {loadingNewStakers ? 'Loading...' : 'No data available'}
               </div>
             )}
@@ -468,18 +469,18 @@ export function Dashboard() {
                   {
                     dataKey: 'stakeEvents',
                     name: 'Stake Events',
-                    color: '#00D4FF',
+                    color: '#C4B5D4',
                   },
                   {
                     dataKey: 'uniqueStakers',
                     name: 'Unique Wallets',
-                    color: '#10B981',
+                    color: '#5EB851',
                   },
                 ]}
                 height={300}
               />
             ) : (
-              <div className="h-[300px] flex items-center justify-center text-white/40">
+              <div className="h-[300px] flex items-center justify-center text-soft-gray">
                 {loadingWeeklyStakes ? 'Loading...' : 'No data available'}
               </div>
             )}
@@ -500,11 +501,11 @@ export function Dashboard() {
                 data={monthlyData}
                 dataKey="volume"
                 xAxisKey="month"
-                color="#00D4FF"
+                color="#5EB851"
                 height={300}
               />
             ) : (
-              <div className="h-[300px] flex items-center justify-center text-white/40">
+              <div className="h-[300px] flex items-center justify-center text-soft-gray">
                 {loadingTotalStaked ? 'Loading...' : 'No data available'}
               </div>
             )}
@@ -513,7 +514,7 @@ export function Dashboard() {
 
         {/* Monthly Retention */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Staker Retention
           </h2>
 
@@ -523,7 +524,7 @@ export function Dashboard() {
               {/* Recent Retention (last 3 months) */}
               <div className="glass-card rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-white/50">Recent Retention (3 months)</span>
+                  <span className="text-sm text-soft-gray">Recent Retention (3 months)</span>
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className={`text-3xl font-bold ${
@@ -532,7 +533,7 @@ export function Dashboard() {
                       const totalNew = recent.reduce((s, d) => s + d.newStakers, 0);
                       const totalStill = recent.reduce((s, d) => s + d.stillStaking, 0);
                       const pct = totalNew > 0 ? (totalStill / totalNew) * 100 : 0;
-                      return pct >= 85 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 65 ? 'text-yellow-400' : 'text-orange-400';
+                      return pct >= 85 ? 'text-green1' : pct >= 75 ? 'text-purple' : pct >= 65 ? 'text-amber-soft' : 'text-orange1';
                     })()
                   }`}>
                     {(() => {
@@ -542,7 +543,7 @@ export function Dashboard() {
                       return totalNew > 0 ? ((totalStill / totalNew) * 100).toFixed(1) : '0';
                     })()}%
                   </span>
-                  <span className="text-sm text-white/40">
+                  <span className="text-sm text-soft-gray">
                     {(() => {
                       const recent = retentionData.slice(-3);
                       return `${recent.reduce((s, d) => s + d.stillStaking, 0).toLocaleString()} / ${recent.reduce((s, d) => s + d.newStakers, 0).toLocaleString()} stakers`;
@@ -554,7 +555,7 @@ export function Dashboard() {
               {/* All-time Retention */}
               <div className="glass-card rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-white/50">All-Time Retention</span>
+                  <span className="text-sm text-soft-gray">All-Time Retention</span>
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className={`text-3xl font-bold ${
@@ -562,7 +563,7 @@ export function Dashboard() {
                       const totalNew = retentionData.reduce((s, d) => s + d.newStakers, 0);
                       const totalStill = retentionData.reduce((s, d) => s + d.stillStaking, 0);
                       const pct = totalNew > 0 ? (totalStill / totalNew) * 100 : 0;
-                      return pct >= 85 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 65 ? 'text-yellow-400' : 'text-orange-400';
+                      return pct >= 85 ? 'text-green1' : pct >= 75 ? 'text-purple' : pct >= 65 ? 'text-amber-soft' : 'text-orange1';
                     })()
                   }`}>
                     {(() => {
@@ -571,7 +572,7 @@ export function Dashboard() {
                       return totalNew > 0 ? ((totalStill / totalNew) * 100).toFixed(1) : '0';
                     })()}%
                   </span>
-                  <span className="text-sm text-white/40">
+                  <span className="text-sm text-soft-gray">
                     {retentionData.reduce((s, d) => s + d.stillStaking, 0).toLocaleString()} / {retentionData.reduce((s, d) => s + d.newStakers, 0).toLocaleString()} stakers
                   </span>
                 </div>
@@ -591,27 +592,27 @@ export function Dashboard() {
 
         {/* APY Claims Section */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
             APY Contract Claims
           </h2>
 
           {/* APY Claims KPI Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
             <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-white/50">Total Claims</span>
-              <div className="text-2xl font-bold text-white mt-1">
+              <span className="text-sm text-soft-gray">Total Claims</span>
+              <div className="text-2xl font-bold text-lavender mt-1">
                 {loadingAPYClaims ? '...' : apyClaimsTotals.totalClaims.toLocaleString()}
               </div>
             </div>
             <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-white/50">Total LINGO Claimed</span>
-              <div className="text-2xl font-bold text-cyan-400 mt-1">
+              <span className="text-sm text-soft-gray">Total LINGO Claimed</span>
+              <div className="text-2xl font-bold text-purple mt-1">
                 {loadingAPYClaims ? '...' : Math.round(apyClaimsTotals.totalLingo).toLocaleString()}
               </div>
             </div>
             <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-white/50">Total USD Value</span>
-              <div className="text-2xl font-bold text-emerald-400 mt-1">
+              <span className="text-sm text-soft-gray">Total USD Value</span>
+              <div className="text-2xl font-bold text-green1 mt-1">
                 {loadingAPYClaims ? '...' : `$${Math.round(apyClaimsTotals.totalUsd).toLocaleString()}`}
               </div>
             </div>
@@ -631,11 +632,11 @@ export function Dashboard() {
                   data={apyClaimsData}
                   dataKey="claims"
                   xAxisKey="month"
-                  color="#00D4FF"
+                  color="#C4B5D4"
                   height={280}
                 />
               ) : (
-                <div className="h-[280px] flex items-center justify-center text-white/40">
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
                   {loadingAPYClaims ? 'Loading...' : 'No data available'}
                 </div>
               )}
@@ -653,11 +654,11 @@ export function Dashboard() {
                   data={apyClaimsData}
                   dataKey="lingo"
                   xAxisKey="month"
-                  color="#7B61FF"
+                  color="#7B68AE"
                   height={280}
                 />
               ) : (
-                <div className="h-[280px] flex items-center justify-center text-white/40">
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
                   {loadingAPYClaims ? 'Loading...' : 'No data available'}
                 </div>
               )}
@@ -676,10 +677,10 @@ export function Dashboard() {
         {/* Footer */}
         <footer className="text-center py-8 border-t border-white/5">
           <div className="flex items-center justify-center gap-2 mb-2">
-            <img src="/lingo-logo.jpg" alt="Lingo" className="w-6 h-6 rounded-md object-cover" />
-            <span className="text-sm font-medium text-white/50">Lingo Staking Analytics</span>
+            <img src={lingoLogo} alt="Lingo" className="h-5" />
+            <span className="text-sm font-medium text-soft-gray">Staking Analytics</span>
           </div>
-          <p className="text-xs text-white/30">
+          <p className="text-xs text-purple-gray">
             Powered by Dune Analytics & Mixpanel
           </p>
         </footer>
