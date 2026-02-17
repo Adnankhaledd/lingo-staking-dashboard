@@ -200,6 +200,9 @@ export const DUNE_QUERIES = {
 
   // Liquidity pool fees per month
   LP_FEES: '6693715',
+
+  // Membership tiers by lock period
+  MEMBERSHIP_TIERS: '6708293',
 } as const;
 
 // Type definitions for Dune query responses
@@ -290,4 +293,16 @@ export interface LPFeesRow {
   fees_usd: number;
   trades: number;
   volume_usd: number;
+}
+
+export interface MembershipTiersRow {
+  lock_period: string;
+  total_users: number;
+  users_100_plus: number;
+  users_500_plus: number;
+  users_1000_plus: number;
+  users_5000_plus: number;
+  total_lingo_staked: number;
+  total_usd_value: number;
+  price_used: number;
 }

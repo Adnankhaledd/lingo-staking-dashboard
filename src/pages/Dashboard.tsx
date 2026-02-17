@@ -3,7 +3,7 @@ import { Users, Calendar, CalendarDays, CalendarRange } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
-import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable } from '../components/charts';
+import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, MembershipTiersTable } from '../components/charts';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -19,6 +19,7 @@ import {
   type MonthlyStakingFlowRow,
   type WeeklyStakesRow,
   type LPFeesRow,
+  type MembershipTiersRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -96,6 +97,12 @@ export function Dashboard() {
     isLoading: loadingLPFees,
     executedAt: lpFeesExecutedAt,
   } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
+
+  const {
+    data: membershipTiers,
+    isLoading: loadingMembershipTiers,
+    executedAt: membershipTiersExecutedAt,
+  } = useDuneQuery<MembershipTiersRow>(DUNE_QUERIES.MEMBERSHIP_TIERS);
 
   // Mixpanel data
   const {
@@ -509,6 +516,21 @@ export function Dashboard() {
                 {loadingTotalStaked ? 'Loading...' : 'No data available'}
               </div>
             )}
+          </ChartCard>
+        </section>
+
+        {/* Membership Tiers */}
+        <section className="mb-10">
+          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
+            Lingo Membership Tiers
+          </h2>
+          <ChartCard
+            title="Membership Tiers by Lock Period"
+            subtitle="Users by USD value staked: Bronze ($100+), Silver ($500+), Gold ($1,000+), Diamond ($5,000+)"
+            isLoading={loadingMembershipTiers}
+            lastUpdated={membershipTiersExecutedAt}
+          >
+            <MembershipTiersTable data={membershipTiers} isLoading={loadingMembershipTiers} />
           </ChartCard>
         </section>
 
