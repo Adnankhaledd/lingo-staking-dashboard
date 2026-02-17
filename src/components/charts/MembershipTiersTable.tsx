@@ -42,13 +42,10 @@ export function MembershipTiersTable({ data, isLoading }: MembershipTiersTablePr
 
   // Calculate totals across all lock periods
   const totals = {
-    total_users: sorted.reduce((s, r) => s + r.total_users, 0),
     users_100_plus: sorted.reduce((s, r) => s + r.users_100_plus, 0),
     users_500_plus: sorted.reduce((s, r) => s + r.users_500_plus, 0),
     users_1000_plus: sorted.reduce((s, r) => s + r.users_1000_plus, 0),
     users_5000_plus: sorted.reduce((s, r) => s + r.users_5000_plus, 0),
-    total_lingo_staked: sorted.reduce((s, r) => s + r.total_lingo_staked, 0),
-    total_usd_value: sorted.reduce((s, r) => s + r.total_usd_value, 0),
   };
 
   return (
@@ -59,18 +56,12 @@ export function MembershipTiersTable({ data, isLoading }: MembershipTiersTablePr
             <th className="text-left text-sm font-medium text-white/50 pb-4 pr-4">
               Lock Period
             </th>
-            <th className="text-right text-sm font-medium text-white/50 pb-4 px-4">
-              Total Users
-            </th>
             {TIER_CONFIG.map(tier => (
               <th key={tier.key} className="text-right text-sm font-medium text-white/50 pb-4 px-4">
                 <span className={tier.color}>{tier.label}</span>
                 <span className="block text-xs text-white/30">{tier.threshold}</span>
               </th>
             ))}
-            <th className="text-right text-sm font-medium text-white/50 pb-4 pl-4">
-              LINGO Staked
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -84,11 +75,6 @@ export function MembershipTiersTable({ data, isLoading }: MembershipTiersTablePr
                   {row.lock_period}
                 </span>
               </td>
-              <td className="py-3 px-4 text-right">
-                <span className="text-sm text-white/70">
-                  {row.total_users.toLocaleString()}
-                </span>
-              </td>
               {TIER_CONFIG.map(tier => (
                 <td key={tier.key} className="py-3 px-4 text-right">
                   <span className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-lg text-sm font-semibold ${tier.bg} ${tier.color}`}>
@@ -96,11 +82,6 @@ export function MembershipTiersTable({ data, isLoading }: MembershipTiersTablePr
                   </span>
                 </td>
               ))}
-              <td className="py-3 pl-4 text-right">
-                <span className="text-sm text-white/70">
-                  {Math.round(row.total_lingo_staked).toLocaleString()}
-                </span>
-              </td>
             </tr>
           ))}
         </tbody>
@@ -111,17 +92,11 @@ export function MembershipTiersTable({ data, isLoading }: MembershipTiersTablePr
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-white">Total</span>
           <div className="flex items-center gap-6">
-            <span className="text-sm text-white/70">
-              {totals.total_users.toLocaleString()} users
-            </span>
             {TIER_CONFIG.map(tier => (
               <span key={tier.key} className={`inline-flex items-center gap-1 text-sm ${tier.color}`}>
                 {tier.label}: {totals[tier.key].toLocaleString()}
               </span>
             ))}
-            <span className="text-sm text-white/70">
-              {Math.round(totals.total_lingo_staked).toLocaleString()} LINGO
-            </span>
           </div>
         </div>
       </div>
