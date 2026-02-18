@@ -1,9 +1,58 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const DUNE_API_BASE = 'https://api.dune.com/api/v1';
-const CACHE_VERSION = 'v3'; // Bump to invalidate all old caches
+const CACHE_VERSION = 'v4'; // Bump on migration to blob-based architecture
 const CACHE_PREFIX = `dune_${CACHE_VERSION}_`;
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+// ─── Blob data singleton ────────────────────────────────────────────
+// All useDuneQuery hooks share a single fetch to /api/dune-data.
+// This ensures only 1 network call regardless of how many hooks are mounted.
+
+interface BlobQueryResult {
+  rows: unknown[];
+  executedAt: string | null;
+  error: string | null;
+}
+
+interface BlobPayload {
+  queries: Record<string, BlobQueryResult>;
+  refreshedAt: string;
+  queryCount: number;
+  successCount: number;
+}
+
+let blobPromise: Promise<BlobPayload | null> | null = null;
+let blobData: BlobPayload | null = null;
+
+function fetchBlobData(): Promise<BlobPayload | null> {
+  if (blobData) return Promise.resolve(blobData);
+  if (blobPromise) return blobPromise;
+
+  blobPromise = fetch('/api/dune-data')
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then((data: BlobPayload) => {
+      blobData = data;
+      return data;
+    })
+    .catch(err => {
+      console.warn('Failed to fetch blob data:', err);
+      blobPromise = null; // Allow retry on next hook mount
+      return null;
+    });
+
+  return blobPromise;
+}
+
+function resetBlobCache(): void {
+  blobPromise = null;
+  blobData = null;
+}
+
+// ─── DuneResponse type (for direct API fallback in dev) ─────────────
 
 interface DuneResponse<T> {
   execution_id: string;
@@ -21,6 +70,8 @@ interface DuneResponse<T> {
   };
   error?: string;
 }
+
+// ─── localStorage cache layer (fallback) ────────────────────────────
 
 interface CachedData<T> {
   data: T[];
@@ -41,7 +92,7 @@ interface UseDuneQueryReturn<T> {
   refetch: () => Promise<void>;
 }
 
-// Clear all Dune caches from localStorage
+// Clear all Dune caches from localStorage + in-memory blob cache
 export function clearDuneCache(): void {
   const keysToRemove: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
@@ -51,10 +102,10 @@ export function clearDuneCache(): void {
     }
   }
   keysToRemove.forEach(key => localStorage.removeItem(key));
-  console.log(`Cleared ${keysToRemove.length} Dune cache entries`);
+  resetBlobCache();
+  console.log(`Cleared ${keysToRemove.length} Dune cache entries + blob cache`);
 }
 
-// Try to parse cached data from a specific key
 function parseCacheEntry<T>(key: string): { data: T[]; executedAt?: string; timestamp: number } | null {
   try {
     const cached = localStorage.getItem(key);
@@ -70,8 +121,6 @@ function parseCacheEntry<T>(key: string): { data: T[]; executedAt?: string; time
   }
 }
 
-// Get cached data - returns fresh or stale data with a flag
-// Also checks previous cache versions as fallback
 function getCachedData<T>(queryId: string | number): { data: T[]; executedAt?: string; isStale: boolean } | null {
   const now = Date.now();
 
@@ -80,19 +129,16 @@ function getCachedData<T>(queryId: string | number): { data: T[]; executedAt?: s
   if (current) {
     const isFresh = now - current.timestamp < CACHE_DURATION;
     if (isFresh) {
-      console.log(`Using cached Dune data for query ${queryId}`);
       return { data: current.data, executedAt: current.executedAt, isStale: false };
     }
-    console.log(`Dune cache expired for query ${queryId}, returning stale for fallback`);
     return { data: current.data, executedAt: current.executedAt, isStale: true };
   }
 
-  // Fallback: check previous cache versions (v2, v1, original)
-  const legacyPrefixes = ['dune_v2_', 'dune_v1_', 'dune_cache_'];
+  // Fallback: check previous cache versions
+  const legacyPrefixes = ['dune_v3_', 'dune_v2_', 'dune_v1_', 'dune_cache_'];
   for (const prefix of legacyPrefixes) {
     const legacy = parseCacheEntry<T>(`${prefix}${queryId}`);
     if (legacy) {
-      console.log(`Found legacy cache (${prefix}) for query ${queryId}, using as stale fallback`);
       return { data: legacy.data, executedAt: legacy.executedAt, isStale: true };
     }
   }
@@ -100,7 +146,6 @@ function getCachedData<T>(queryId: string | number): { data: T[]; executedAt?: s
   return null;
 }
 
-// Save data to cache
 function setCachedData<T>(queryId: string | number, data: T[], executedAt?: string): void {
   try {
     const cacheEntry: CachedData<T> = {
@@ -114,6 +159,8 @@ function setCachedData<T>(queryId: string | number, data: T[], executedAt?: stri
   }
 }
 
+// ─── Main hook ──────────────────────────────────────────────────────
+
 export function useDuneQuery<T>(
   queryId: string | number,
   options: UseDuneQueryOptions = {}
@@ -124,19 +171,11 @@ export function useDuneQuery<T>(
   const [error, setError] = useState<string | null>(null);
   const [executedAt, setExecutedAt] = useState<string | null>(null);
 
-  const apiKey = import.meta.env.VITE_DUNE_API_KEY;
-
   const fetchData = useCallback(async (forceRefresh = false) => {
-    if (!apiKey) {
-      setError('Dune API key not configured');
-      setIsLoading(false);
-      return;
-    }
-
-    // Check cache first
+    // Check localStorage cache first
     const cached = getCachedData<T>(queryId);
 
-    // If cache is fresh and not force refreshing, use it directly
+    // If cache is fresh and not forcing, use it directly
     if (!forceRefresh && cached && !cached.isStale) {
       setData(cached.data);
       setExecutedAt(cached.executedAt ?? null);
@@ -144,26 +183,55 @@ export function useDuneQuery<T>(
       return;
     }
 
-    // If we have stale cached data, show it immediately while fetching
+    // Show stale data immediately while fetching fresh
     if (cached) {
       setData(cached.data);
       setExecutedAt(cached.executedAt ?? null);
     }
 
-    // Only show loading spinner if we have no data at all to display
+    // Only show loading spinner if we have nothing at all
     if (!cached) {
       setIsLoading(true);
     }
     setError(null);
 
     try {
+      // PRIMARY: Try the blob endpoint (single server-cached response)
+      const blob = await fetchBlobData();
+
+      if (blob && blob.queries[String(queryId)]) {
+        const queryResult = blob.queries[String(queryId)];
+
+        if (queryResult.error && (!queryResult.rows || queryResult.rows.length === 0)) {
+          throw new Error(queryResult.error);
+        }
+
+        const rows = (queryResult.rows ?? []) as T[];
+
+        if (rows.length > 0) {
+          setCachedData(queryId, rows, queryResult.executedAt ?? undefined);
+          setData(rows);
+          setExecutedAt(queryResult.executedAt ?? null);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // FALLBACK: Direct Dune API (dev mode or blob unavailable)
+      const apiKey = import.meta.env.VITE_DUNE_API_KEY;
+      if (!apiKey) {
+        // No blob data and no API key — use cached data or show error
+        if (cached) {
+          setIsLoading(false);
+          return;
+        }
+        throw new Error('No data available — waiting for server refresh');
+      }
+
+      console.log(`Falling back to direct Dune API for query ${queryId}`);
       const response = await fetch(
         `${DUNE_API_BASE}/query/${queryId}/results?limit=${limit}`,
-        {
-          headers: {
-            'X-Dune-API-Key': apiKey,
-          },
-        }
+        { headers: { 'X-Dune-API-Key': apiKey } }
       );
 
       if (!response.ok) {
@@ -183,34 +251,29 @@ export function useDuneQuery<T>(
       const rows = result.result?.rows ?? [];
       const queryExecutedAt = result.execution_ended_at;
 
-      // Only update if we actually got data (don't replace good data with empty)
       if (rows.length > 0) {
         setCachedData(queryId, rows, queryExecutedAt);
         setData(rows);
         setExecutedAt(queryExecutedAt ?? null);
       } else if (cached) {
-        // API returned empty rows — keep showing cached data
         console.warn(`Dune query ${queryId} returned empty, keeping cached data`);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'An error occurred';
-      console.warn(`Dune API error for query ${queryId}: ${errorMsg}`);
+      console.warn(`Data fetch error for query ${queryId}: ${errorMsg}`);
 
-      // If we have cached data (even stale), keep showing it instead of wiping
+      // Keep showing cached data if available
       if (cached) {
-        console.log(`Using stale cache as fallback for query ${queryId}`);
         setData(cached.data);
         setExecutedAt(cached.executedAt ?? null);
-        // Don't set error state — user still sees data, just stale
       } else {
-        // No cached data at all — show the error
         setError(errorMsg);
         setData(null);
       }
     } finally {
       setIsLoading(false);
     }
-  }, [queryId, apiKey, limit]);
+  }, [queryId, limit]);
 
   useEffect(() => {
     if (enabled) {
@@ -221,49 +284,26 @@ export function useDuneQuery<T>(
   return { data, isLoading, error, executedAt, refetch: () => fetchData(true) };
 }
 
-// Query IDs from Dune
+// ─── Query IDs ──────────────────────────────────────────────────────
+
 export const DUNE_QUERIES = {
-  // Total LINGO staked over time (daily)
   TOTAL_STAKED_TREND: '6590984',
-
-  // Weekly stats: active_stakers, total_tvl
   WEEKLY_STATS: '6534908',
-
-  // Weekly new stakers
   WEEKLY_NEW_STAKERS: '6535206',
-
-  // Cohort retention data
   COHORT_RETENTION: '6528806',
-
-  // Staking tiers breakdown
   STAKING_TIERS: '6560698',
-
-  // Unlock schedule
   UNLOCK_SCHEDULE: '6543709',
-
-  // Top 50 stakers
   TOP_STAKERS: '6632385',
-
-  // Trading fees per month
   TRADING_FEES: '6288543',
-
-  // APY Contract claims per month
   APY_CLAIMS: '6606898',
-
-  // Monthly staking flow (staked/unstaked/net)
   MONTHLY_STAKING_FLOW: '6535334',
-
-  // Weekly stake events and unique stakers
   WEEKLY_STAKES: '6693660',
-
-  // Liquidity pool fees per month
   LP_FEES: '6693715',
-
-  // Membership tiers by lock period
   MEMBERSHIP_TIERS: '6708293',
 } as const;
 
-// Type definitions for Dune query responses
+// ─── Row type definitions ───────────────────────────────────────────
+
 export interface TotalStakedRow {
   day: string;
   total_staked: number;
