@@ -103,6 +103,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const blob = await put('dune-data.json', JSON.stringify(payload), {
       access: 'public',
       addRandomSuffix: false,
+      allowOverwrite: true,
       contentType: 'application/json',
     });
 
