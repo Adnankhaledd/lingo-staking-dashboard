@@ -1,6 +1,6 @@
 import { Clock, RefreshCw } from 'lucide-react';
 import { formatDateTime } from '../../utils/formatters';
-import { clearDuneCache } from '../../hooks/useDuneQuery';
+import { softRefresh } from '../../hooks/useDuneQuery';
 import lingoLogo from '../../assets/logo-lingo.svg';
 
 interface HeaderProps {
@@ -9,9 +9,8 @@ interface HeaderProps {
 
 export function Header({ lastUpdated }: HeaderProps) {
   const handleRefresh = () => {
-    clearDuneCache();
-    // Also clear Mixpanel cache
-    localStorage.removeItem('mixpanel_data_cache');
+    // Only reset in-memory cache — keeps localStorage as safety net
+    softRefresh();
     window.location.reload();
   };
 

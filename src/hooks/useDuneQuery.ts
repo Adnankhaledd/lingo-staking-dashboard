@@ -92,7 +92,15 @@ interface UseDuneQueryReturn<T> {
   refetch: () => Promise<void>;
 }
 
-// Clear all Dune caches from localStorage + in-memory blob cache
+// Soft refresh: reset in-memory blob cache only (localStorage stays as safety net)
+// Used by the Refresh button — re-fetches from blob endpoint on reload
+export function softRefresh(): void {
+  resetBlobCache();
+  console.log('Reset blob cache — will re-fetch from server on reload');
+}
+
+// Hard clear: wipe everything (localStorage + blob cache)
+// Only use for debugging, not for the Refresh button
 export function clearDuneCache(): void {
   const keysToRemove: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
