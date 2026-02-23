@@ -12,25 +12,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Find the blob
-    const { blobs } = await list({ prefix: 'dune-data.json', limit: 1 });
+    // Find all blobs with this prefix (should be 1 after cleanup)
+    const { blobs } = await list({ prefix: 'dune-data.json' });
 
     if (blobs.length === 0) {
       return res.status(404).json({ error: 'No cached data available. Run /api/refresh-dune first.' });
     }
 
-    const blobUrl = blobs[0].url;
+    // Use the most recently uploaded blob
+    const latestBlob = blobs[blobs.length - 1];
 
-    // Fetch the blob content
-    const response = await fetch(blobUrl);
+    // Fetch blob content with cache-busting query param
+    const response = await fetch(`${latestBlob.url}?t=${Date.now()}`);
     if (!response.ok) {
       return res.status(502).json({ error: 'Failed to read cached data' });
     }
 
     const data = await response.json();
 
-    // CDN caches for 1 hour, serves stale for up to 24 hours while revalidating
-    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    // Cache at CDN for 5 minutes, serve stale for up to 24 hours
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=86400');
 
     return res.status(200).json(data);
   } catch (error) {

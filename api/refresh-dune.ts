@@ -1,8 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { put, list } from '@vercel/blob';
+import { put, list, del } from '@vercel/blob';
 
 const DUNE_API_KEY = process.env.DUNE_API_KEY || process.env.VITE_DUNE_API_KEY || '';
 const DUNE_API_BASE = 'https://api.dune.com/api/v1';
+
+const BLOB_FILENAME = 'dune-data.json';
 
 // All queries with their limits
 const QUERIES: Record<string, number> = {
@@ -63,13 +65,15 @@ async function fetchQueryResults(queryId: string, limit: number): Promise<QueryR
   }
 }
 
-// Read the existing blob data so we can merge, not overwrite
+// Read existing blob data for merge
 async function getExistingBlobData(): Promise<BlobPayload | null> {
   try {
-    const { blobs } = await list({ prefix: 'dune-data.json', limit: 1 });
+    const { blobs } = await list({ prefix: BLOB_FILENAME });
     if (blobs.length === 0) return null;
 
-    const response = await fetch(blobs[0].url);
+    // Fetch the most recent blob
+    const latestBlob = blobs[blobs.length - 1];
+    const response = await fetch(latestBlob.url);
     if (!response.ok) return null;
 
     return await response.json() as BlobPayload;
@@ -78,8 +82,20 @@ async function getExistingBlobData(): Promise<BlobPayload | null> {
   }
 }
 
+// Delete all existing blobs with this filename to avoid duplicates
+async function deleteExistingBlobs(): Promise<void> {
+  try {
+    const { blobs } = await list({ prefix: BLOB_FILENAME });
+    if (blobs.length > 0) {
+      await del(blobs.map(b => b.url));
+      console.log(`Deleted ${blobs.length} existing blob(s)`);
+    }
+  } catch (err) {
+    console.warn('Failed to delete old blobs:', err);
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Verify cron secret or allow manual trigger
   const authHeader = req.headers.authorization;
   const cronSecret = process.env.CRON_SECRET;
 
@@ -97,8 +113,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   console.log('Starting Dune data refresh...');
 
-  // Read existing blob data first
+  // Read existing blob data first for merge
   const existingData = await getExistingBlobData();
+  console.log(`Existing blob: ${existingData ? `${existingData.successCount} queries from ${existingData.refreshedAt}` : 'none'}`);
 
   // Fetch all query results in parallel
   const entries = Object.entries(QUERIES);
@@ -109,7 +126,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   );
 
-  // Count how many new queries succeeded
   let newSuccessCount = 0;
   const newQueryData: Record<string, QueryResult> = {};
   for (const [queryId, result] of results) {
@@ -127,7 +143,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // Merge: for each query, use new data if it succeeded, otherwise keep old data
+  // Merge: use new data if succeeded, keep old if failed
   const mergedQueries: Record<string, QueryResult> = {};
   let mergedSuccessCount = 0;
 
@@ -135,17 +151,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const newResult = newQueryData[queryId];
     const existingResult = existingData?.queries?.[queryId];
 
-    // Use new data if it has rows, otherwise keep existing
     if (newResult && !newResult.error && newResult.rows.length > 0) {
       mergedQueries[queryId] = newResult;
       mergedSuccessCount++;
     } else if (existingResult && !existingResult.error && existingResult.rows.length > 0) {
-      // Keep old good data
       mergedQueries[queryId] = existingResult;
       mergedSuccessCount++;
       console.log(`Query ${queryId} failed, keeping existing data`);
     } else {
-      // Both failed — store the new error
       mergedQueries[queryId] = newResult || { rows: [], executedAt: null, error: 'No data' };
     }
   }
@@ -157,16 +170,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     successCount: mergedSuccessCount,
   };
 
-  // Upload merged data to Vercel Blob
+  // Delete old blobs first, then write fresh
   try {
-    const blob = await put('dune-data.json', JSON.stringify(payload), {
+    await deleteExistingBlobs();
+
+    const blob = await put(BLOB_FILENAME, JSON.stringify(payload), {
       access: 'public',
       addRandomSuffix: false,
-      allowOverwrite: true,
       contentType: 'application/json',
     });
 
-    console.log(`Dune refresh complete: ${newSuccessCount} new + ${mergedSuccessCount - newSuccessCount} kept = ${mergedSuccessCount}/${entries.length} total`);
+    console.log(`Blob written: ${blob.url}`);
+    console.log(`Result: ${newSuccessCount} new + ${mergedSuccessCount - newSuccessCount} kept = ${mergedSuccessCount}/${entries.length} total`);
 
     return res.status(200).json({
       message: `Refreshed ${newSuccessCount}/${entries.length} queries (${mergedSuccessCount} total with kept data)`,
