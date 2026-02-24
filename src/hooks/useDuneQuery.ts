@@ -309,6 +309,7 @@ export const DUNE_QUERIES = {
   LP_FEES: '6693715',
   MEMBERSHIP_TIERS: '6708293',
   MONTHLY_NEW_RETURNING: '6738028',
+  STAKING_TIERS_BY_LOCK: '6738074',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -421,4 +422,19 @@ export interface MonthlyNewReturningRow {
   new_lingo_staked: number;
   returning_lingo_staked: number;
   total_lingo_staked: number;
+}
+
+export interface StakingTiersByLockRow {
+  threshold: string;
+  flexible_users: number;
+  flexible_lingo: number;
+  '3mo_users': number;
+  '3mo_lingo': number;
+  '6mo_users': number;
+  '6mo_lingo': number;
+  '12mo_users': number;
+  '12mo_lingo': number;
+  total_users: number;
+  total_lingo: number;
+  price_used: number;
 }

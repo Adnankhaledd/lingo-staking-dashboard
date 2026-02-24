@@ -3,7 +3,7 @@ import { Users, Calendar, CalendarDays, CalendarRange } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
-import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable } from '../components/charts';
+import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -20,6 +20,7 @@ import {
   type WeeklyStakesRow,
   type LPFeesRow,
   type MonthlyNewReturningRow,
+  type StakingTiersByLockRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -101,6 +102,12 @@ export function Dashboard() {
     isLoading: loadingMonthlyNewReturning,
     executedAt: monthlyNewReturningExecutedAt,
   } = useDuneQuery<MonthlyNewReturningRow>(DUNE_QUERIES.MONTHLY_NEW_RETURNING);
+
+  const {
+    data: stakingTiersByLock,
+    isLoading: loadingStakingTiers,
+    executedAt: stakingTiersExecutedAt,
+  } = useDuneQuery<StakingTiersByLockRow>(DUNE_QUERIES.STAKING_TIERS_BY_LOCK);
 
   // Mixpanel data
   const {
@@ -529,24 +536,34 @@ export function Dashboard() {
             )}
           </ChartCard>
 
-          {/* Total LINGO Staked per Month */}
+          {/* Monthly Staked vs Unstaked */}
           <ChartCard
-            title="Total LINGO Staked per Month"
-            subtitle="Combined new + returning LINGO volume"
-            isLoading={loadingMonthlyNewReturning}
-            lastUpdated={monthlyNewReturningExecutedAt}
+            title="Monthly Staked vs Unstaked"
+            subtitle="LINGO staked (green) vs unstaked (red) per month"
+            isLoading={loadingStakingFlow}
+            lastUpdated={stakingFlowExecutedAt}
           >
-            {monthlyNewReturningData.length > 0 ? (
-              <SimpleBarChart
-                data={monthlyNewReturningData}
-                dataKey="totalLingo"
+            {stakingFlowData.length > 0 ? (
+              <BarChartComponent
+                data={stakingFlowData}
                 xAxisKey="month"
-                color="#5EB851"
+                bars={[
+                  {
+                    dataKey: 'staked',
+                    name: 'Staked',
+                    color: '#5EB851',
+                  },
+                  {
+                    dataKey: 'unstaked',
+                    name: 'Unstaked',
+                    color: '#E5484D',
+                  },
+                ]}
                 height={300}
               />
             ) : (
               <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+                {loadingStakingFlow ? 'Loading...' : 'No data available'}
               </div>
             )}
           </ChartCard>
@@ -574,6 +591,21 @@ export function Dashboard() {
                 {loadingTotalStaked ? 'Loading...' : 'No data available'}
               </div>
             )}
+          </ChartCard>
+        </section>
+
+        {/* Staking Tiers by Lock Period */}
+        <section className="mb-10">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+            Staking Tiers
+          </h2>
+          <ChartCard
+            title="Stakers by Tier & Lock Period"
+            subtitle="Active stakers grouped by USD value threshold and lock duration"
+            isLoading={loadingStakingTiers}
+            lastUpdated={stakingTiersExecutedAt}
+          >
+            <StakingTiersByLockTable data={stakingTiersByLock} isLoading={loadingStakingTiers} />
           </ChartCard>
         </section>
 

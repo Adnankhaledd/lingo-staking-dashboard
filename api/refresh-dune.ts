@@ -20,6 +20,7 @@ const QUERIES: Record<string, number> = {
   '6693715': 1000, // LP_FEES
   '6708293': 1000, // MEMBERSHIP_TIERS
   '6738028': 1000, // MONTHLY_NEW_RETURNING
+  '6738074': 50,   // STAKING_TIERS_BY_LOCK
 };
 
 interface QueryResult {

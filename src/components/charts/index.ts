@@ -3,3 +3,4 @@ export { BarChartComponent, SimpleBarChart } from './BarChart';
 export { HeatmapChart, HeatmapSkeleton } from './HeatmapChart';
 export { RetentionTable } from './RetentionTable';
 export { MembershipTiersTable } from './MembershipTiersTable';
+export { StakingTiersByLockTable } from './StakingTiersByLockTable';
