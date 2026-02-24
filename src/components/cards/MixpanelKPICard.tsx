@@ -1,3 +1,4 @@
+import { Users } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 interface MixpanelKPICardProps {
@@ -8,6 +9,7 @@ interface MixpanelKPICardProps {
   isLoading?: boolean;
   changePercent?: number | null;
   formatValue?: (v: number) => string;
+  userCount?: number | null;
 }
 
 export function MixpanelKPICard({
@@ -18,6 +20,7 @@ export function MixpanelKPICard({
   isLoading,
   changePercent,
   formatValue,
+  userCount,
 }: MixpanelKPICardProps) {
   if (isLoading) {
     return (
@@ -58,6 +61,14 @@ export function MixpanelKPICard({
           </span>
         )}
       </div>
+      {userCount != null && userCount > 0 && (
+        <div className="flex items-center gap-1.5 mt-2">
+          <Users className="w-3 h-3 text-purple-gray" />
+          <span className="text-xs text-purple-gray">
+            {userCount.toLocaleString()} users
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache_v2';
+const CACHE_KEY = 'mixpanel_data_cache_v3';
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DAUReportResponse {
@@ -30,6 +30,8 @@ export interface DailyMetric {
 export interface WeeklyEngagement {
   thisWeek: number;
   lastWeek: number;
+  thisWeekUsers: number;
+  lastWeekUsers: number;
 }
 
 export interface MixpanelMetrics {
@@ -120,6 +122,12 @@ async function fetchMAU(): Promise<number> {
   return values.reduce((sum, val) => sum + val, 0);
 }
 
+// Response shape from combined weekly_engagement endpoint
+interface WeeklyEngagementResponse {
+  totals: EventsResponse;
+  unique: EventsResponse;
+}
+
 // Fetch weekly engagement events (asteroids, raffles, rewards)
 async function fetchWeeklyEngagement(): Promise<{
   asteroidsSmashed: WeeklyEngagement;
@@ -132,18 +140,26 @@ async function fetchWeeklyEngagement(): Promise<{
     throw new Error(`API error: ${response.status}`);
   }
 
-  const data: EventsResponse = await response.json();
-  const values = data.data?.values || {};
+  const data: WeeklyEngagementResponse = await response.json();
+  const totalValues = data.totals?.data?.values || {};
+  const uniqueValues = data.unique?.data?.values || {};
 
   // Parse this week and last week from the weekly data
   // Mixpanel returns { "event_name": { "2026-02-17": count, "2026-02-10": count } }
   function getWeeklyValues(eventName: string): WeeklyEngagement {
-    const eventData = values[eventName] || {};
+    // Total event counts
+    const eventData = totalValues[eventName] || {};
     const dates = Object.keys(eventData).sort();
-    // Most recent week is last, previous week is second to last
     const thisWeek = dates.length > 0 ? eventData[dates[dates.length - 1]] ?? 0 : 0;
     const lastWeek = dates.length > 1 ? eventData[dates[dates.length - 2]] ?? 0 : 0;
-    return { thisWeek, lastWeek };
+
+    // Unique user counts
+    const uniqueData = uniqueValues[eventName] || {};
+    const uniqueDates = Object.keys(uniqueData).sort();
+    const thisWeekUsers = uniqueDates.length > 0 ? uniqueData[uniqueDates[uniqueDates.length - 1]] ?? 0 : 0;
+    const lastWeekUsers = uniqueDates.length > 1 ? uniqueData[uniqueDates[uniqueDates.length - 2]] ?? 0 : 0;
+
+    return { thisWeek, lastWeek, thisWeekUsers, lastWeekUsers };
   }
 
   return {
@@ -171,7 +187,7 @@ function formatDate(isoStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-const DEFAULT_ENGAGEMENT: WeeklyEngagement = { thisWeek: 0, lastWeek: 0 };
+const DEFAULT_ENGAGEMENT: WeeklyEngagement = { thisWeek: 0, lastWeek: 0, thisWeekUsers: 0, lastWeekUsers: 0 };
 
 export function useMixpanelData() {
   const [data, setData] = useState<MixpanelMetrics | null>(null);

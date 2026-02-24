@@ -386,11 +386,7 @@ export function Dashboard() {
               icon={Rocket}
               color="#FF7847"
               isLoading={loadingMixpanel}
-              changePercent={
-                mixpanelData?.asteroidsSmashed?.lastWeek
-                  ? ((mixpanelData.asteroidsSmashed.thisWeek - mixpanelData.asteroidsSmashed.lastWeek) / mixpanelData.asteroidsSmashed.lastWeek) * 100
-                  : null
-              }
+              userCount={mixpanelData?.asteroidsSmashed?.thisWeekUsers}
             />
             <MixpanelKPICard
               title="Raffle Entries"
@@ -398,11 +394,7 @@ export function Dashboard() {
               icon={Ticket}
               color="#C4B5D4"
               isLoading={loadingMixpanel}
-              changePercent={
-                mixpanelData?.raffleEntries?.lastWeek
-                  ? ((mixpanelData.raffleEntries.thisWeek - mixpanelData.raffleEntries.lastWeek) / mixpanelData.raffleEntries.lastWeek) * 100
-                  : null
-              }
+              userCount={mixpanelData?.raffleEntries?.thisWeekUsers}
             />
             <MixpanelKPICard
               title="Rewards Claimed"
@@ -410,11 +402,7 @@ export function Dashboard() {
               icon={Trophy}
               color="#5EB851"
               isLoading={loadingMixpanel}
-              changePercent={
-                mixpanelData?.rewardsClaimed?.lastWeek
-                  ? ((mixpanelData.rewardsClaimed.thisWeek - mixpanelData.rewardsClaimed.lastWeek) / mixpanelData.rewardsClaimed.lastWeek) * 100
-                  : null
-              }
+              userCount={mixpanelData?.rewardsClaimed?.thisWeekUsers}
             />
           </div>
         </section>
