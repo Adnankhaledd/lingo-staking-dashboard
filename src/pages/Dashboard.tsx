@@ -35,6 +35,7 @@ import {
   getAPYClaimsTotals,
   transformMonthlyStakingFlowData,
   transformWeeklyStakesData,
+  transformMonthlyNewStakersData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -186,6 +187,12 @@ export function Dashboard() {
   const weeklyStakesData = useMemo(
     () => transformWeeklyStakesData(weeklyStakes),
     [weeklyStakes]
+  );
+
+  // Monthly new unique stakers (aggregated from weekly data)
+  const monthlyNewStakersData = useMemo(
+    () => transformMonthlyNewStakersData(weeklyNewStakers),
+    [weeklyNewStakers]
   );
 
   // Export handlers
@@ -489,6 +496,30 @@ export function Dashboard() {
             ) : (
               <div className="h-[300px] flex items-center justify-center text-soft-gray">
                 {loadingWeeklyStakes ? 'Loading...' : 'No data available'}
+              </div>
+            )}
+          </ChartCard>
+        </section>
+
+        {/* Monthly New Unique Stakers */}
+        <section className="mb-10">
+          <ChartCard
+            title="New Unique Stakers per Month"
+            subtitle="First-time stakers aggregated by month"
+            isLoading={loadingNewStakers}
+            lastUpdated={newStakersExecutedAt}
+          >
+            {monthlyNewStakersData.length > 0 ? (
+              <SimpleBarChart
+                data={monthlyNewStakersData}
+                dataKey="newStakers"
+                xAxisKey="month"
+                color="#C4B5D4"
+                height={300}
+              />
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                {loadingNewStakers ? 'Loading...' : 'No data available'}
               </div>
             )}
           </ChartCard>

@@ -374,6 +374,35 @@ export function transformWeeklyStakesData(data: WeeklyStakesRow[] | null) {
 }
 
 /**
+ * Aggregate weekly new stakers into monthly totals
+ */
+export function transformMonthlyNewStakersData(data: WeeklyNewStakersRow[] | null) {
+  if (!data) return [];
+
+  const monthlyMap = new Map<string, number>();
+
+  data.forEach(row => {
+    const date = new Date(parseDuneDate(row.week));
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+    monthlyMap.set(monthKey, (monthlyMap.get(monthKey) ?? 0) + row.new_stakers);
+  });
+
+  return Array.from(monthlyMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([monthKey, newStakers]) => {
+      const [year, month] = monthKey.split('-');
+      const date = new Date(parseInt(year), parseInt(month) - 1);
+      const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+      return {
+        month: monthName,
+        newStakers,
+      };
+    });
+}
+
+/**
  * Transform combined trading fees + LP fees data for monthly chart
  */
 export function transformCombinedFeesData(
