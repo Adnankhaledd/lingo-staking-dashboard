@@ -38,9 +38,10 @@ export function calculateKPIs(
   const latestWeekStats = weeklyStats?.slice(-1)[0];
   const previousWeekStats = weeklyStats?.slice(-2, -1)[0];
 
-  // Get total stake events this week vs last week
-  const thisWeekStakes = weeklyStakes?.slice(-1)[0];
-  const lastWeekStakes = weeklyStakes?.slice(-2, -1)[0];
+  // Get total stake events this week vs last week (sort by date — Dune returns newest-first)
+  const sortedWeeklyStakes = weeklyStakes ? [...weeklyStakes].sort((a, b) => a.week.localeCompare(b.week)) : null;
+  const thisWeekStakes = sortedWeeklyStakes?.slice(-1)[0];
+  const lastWeekStakes = sortedWeeklyStakes?.slice(-2, -1)[0];
 
   // Calculate average retention rate from recent cohorts
   const recentCohorts = cohortRetention?.slice(-8) ?? [];
