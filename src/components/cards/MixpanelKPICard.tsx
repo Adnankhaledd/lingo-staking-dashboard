@@ -6,6 +6,8 @@ interface MixpanelKPICardProps {
   icon: LucideIcon;
   color?: string;
   isLoading?: boolean;
+  changePercent?: number | null;
+  formatValue?: (v: number) => string;
 }
 
 export function MixpanelKPICard({
@@ -14,6 +16,8 @@ export function MixpanelKPICard({
   icon: Icon,
   color = '#C4B5D4',
   isLoading,
+  changePercent,
+  formatValue,
 }: MixpanelKPICardProps) {
   if (isLoading) {
     return (
@@ -27,6 +31,8 @@ export function MixpanelKPICard({
     );
   }
 
+  const displayValue = formatValue ? formatValue(value) : value.toLocaleString();
+
   return (
     <div className="glass-card rounded-2xl p-6 hover:border-white/15 transition-all duration-300">
       <div className="flex items-center justify-between mb-4">
@@ -38,8 +44,19 @@ export function MixpanelKPICard({
           <Icon className="w-5 h-5" style={{ color }} />
         </div>
       </div>
-      <div className="text-2xl font-bold text-lavender">
-        {value.toLocaleString()}
+      <div className="flex items-baseline gap-2">
+        <span className="text-2xl font-bold text-lavender">
+          {displayValue}
+        </span>
+        {changePercent != null && changePercent !== 0 && (
+          <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
+            changePercent > 0
+              ? 'text-green1 bg-green1/10'
+              : 'text-red-400 bg-red-400/10'
+          }`}>
+            {changePercent > 0 ? '+' : ''}{changePercent.toFixed(1)}%
+          </span>
+        )}
       </div>
     </div>
   );

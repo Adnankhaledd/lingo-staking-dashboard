@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Users, Calendar, CalendarDays, CalendarRange } from 'lucide-react';
+import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, Trophy } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
@@ -374,6 +374,49 @@ export function Dashboard() {
             color="#C4B5D4"
             isLoading={loadingMixpanel}
           />
+
+          {/* Weekly Engagement Cards */}
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
+            Weekly Engagement
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <MixpanelKPICard
+              title="Asteroids Smashed"
+              value={mixpanelData?.asteroidsSmashed?.thisWeek ?? 0}
+              icon={Rocket}
+              color="#FF7847"
+              isLoading={loadingMixpanel}
+              changePercent={
+                mixpanelData?.asteroidsSmashed?.lastWeek
+                  ? ((mixpanelData.asteroidsSmashed.thisWeek - mixpanelData.asteroidsSmashed.lastWeek) / mixpanelData.asteroidsSmashed.lastWeek) * 100
+                  : null
+              }
+            />
+            <MixpanelKPICard
+              title="Raffle Entries"
+              value={mixpanelData?.raffleEntries?.thisWeek ?? 0}
+              icon={Ticket}
+              color="#C4B5D4"
+              isLoading={loadingMixpanel}
+              changePercent={
+                mixpanelData?.raffleEntries?.lastWeek
+                  ? ((mixpanelData.raffleEntries.thisWeek - mixpanelData.raffleEntries.lastWeek) / mixpanelData.raffleEntries.lastWeek) * 100
+                  : null
+              }
+            />
+            <MixpanelKPICard
+              title="Rewards Claimed"
+              value={mixpanelData?.rewardsClaimed?.thisWeek ?? 0}
+              icon={Trophy}
+              color="#5EB851"
+              isLoading={loadingMixpanel}
+              changePercent={
+                mixpanelData?.rewardsClaimed?.lastWeek
+                  ? ((mixpanelData.rewardsClaimed.thisWeek - mixpanelData.rewardsClaimed.lastWeek) / mixpanelData.rewardsClaimed.lastWeek) * 100
+                  : null
+              }
+            />
+          </div>
         </section>
 
         {/* Staking Charts */}

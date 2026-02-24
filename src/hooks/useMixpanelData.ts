@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache';
+const CACHE_KEY = 'mixpanel_data_cache_v2';
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DAUReportResponse {
@@ -27,12 +27,21 @@ export interface DailyMetric {
   value: number;
 }
 
+export interface WeeklyEngagement {
+  thisWeek: number;
+  lastWeek: number;
+}
+
 export interface MixpanelMetrics {
   dauTrend: DailyMetric[];
   currentDAU: number;
   currentWAU: number;
   currentMAU: number;
   avgDAU: number;
+  // Weekly engagement
+  asteroidsSmashed: WeeklyEngagement;
+  raffleEntries: WeeklyEngagement;
+  rewardsClaimed: WeeklyEngagement;
 }
 
 interface CachedData {
@@ -111,6 +120,39 @@ async function fetchMAU(): Promise<number> {
   return values.reduce((sum, val) => sum + val, 0);
 }
 
+// Fetch weekly engagement events (asteroids, raffles, rewards)
+async function fetchWeeklyEngagement(): Promise<{
+  asteroidsSmashed: WeeklyEngagement;
+  raffleEntries: WeeklyEngagement;
+  rewardsClaimed: WeeklyEngagement;
+}> {
+  const response = await fetch(`${API_BASE}/api/mixpanel?type=weekly_engagement`);
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  const data: EventsResponse = await response.json();
+  const values = data.data?.values || {};
+
+  // Parse this week and last week from the weekly data
+  // Mixpanel returns { "event_name": { "2026-02-17": count, "2026-02-10": count } }
+  function getWeeklyValues(eventName: string): WeeklyEngagement {
+    const eventData = values[eventName] || {};
+    const dates = Object.keys(eventData).sort();
+    // Most recent week is last, previous week is second to last
+    const thisWeek = dates.length > 0 ? eventData[dates[dates.length - 1]] ?? 0 : 0;
+    const lastWeek = dates.length > 1 ? eventData[dates[dates.length - 2]] ?? 0 : 0;
+    return { thisWeek, lastWeek };
+  }
+
+  return {
+    asteroidsSmashed: getWeeklyValues('Asteroid Smashed'),
+    raffleEntries: getWeeklyValues('Raffle Ticket Purchased'),
+    rewardsClaimed: getWeeklyValues('Reward Claimed'),
+  };
+}
+
 function transformDAUData(data: DAUReportResponse): DailyMetric[] {
   const dauSeries = data.series?.['A. DAU'] || {};
 
@@ -128,6 +170,8 @@ function formatDate(isoStr: string): string {
   const date = new Date(isoStr);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
+
+const DEFAULT_ENGAGEMENT: WeeklyEngagement = { thisWeek: 0, lastWeek: 0 };
 
 export function useMixpanelData() {
   const [data, setData] = useState<MixpanelMetrics | null>(null);
@@ -149,10 +193,15 @@ export function useMixpanelData() {
         }
 
         // Fetch fresh data
-        const [dauReport, wau, mau] = await Promise.all([
+        const [dauReport, wau, mau, engagement] = await Promise.all([
           fetchDAUReport(),
           fetchWAU(),
           fetchMAU(),
+          fetchWeeklyEngagement().catch(() => ({
+            asteroidsSmashed: DEFAULT_ENGAGEMENT,
+            raffleEntries: DEFAULT_ENGAGEMENT,
+            rewardsClaimed: DEFAULT_ENGAGEMENT,
+          })),
         ]);
 
         const dauTrend = transformDAUData(dauReport);
@@ -167,6 +216,7 @@ export function useMixpanelData() {
           currentWAU: wau,
           currentMAU: mau,
           avgDAU,
+          ...engagement,
         };
 
         // Save to cache
