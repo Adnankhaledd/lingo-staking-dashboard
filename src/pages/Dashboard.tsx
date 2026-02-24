@@ -3,7 +3,7 @@ import { Users, Calendar, CalendarDays, CalendarRange } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
-import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, MembershipTiersTable } from '../components/charts';
+import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable } from '../components/charts';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -19,7 +19,7 @@ import {
   type MonthlyStakingFlowRow,
   type WeeklyStakesRow,
   type LPFeesRow,
-  type MembershipTiersRow,
+  type MonthlyNewReturningRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -34,7 +34,7 @@ import {
   transformAPYClaimsData,
   getAPYClaimsTotals,
   transformMonthlyStakingFlowData,
-  transformMonthlyNewStakersData,
+  transformMonthlyNewReturningData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -88,7 +88,6 @@ export function Dashboard() {
 
   const {
     data: weeklyStakes,
-    isLoading: loadingWeeklyStakes,
   } = useDuneQuery<WeeklyStakesRow>(DUNE_QUERIES.WEEKLY_STAKES);
 
   const {
@@ -98,10 +97,10 @@ export function Dashboard() {
   } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
 
   const {
-    data: membershipTiers,
-    isLoading: loadingMembershipTiers,
-    executedAt: membershipTiersExecutedAt,
-  } = useDuneQuery<MembershipTiersRow>(DUNE_QUERIES.MEMBERSHIP_TIERS);
+    data: monthlyNewReturning,
+    isLoading: loadingMonthlyNewReturning,
+    executedAt: monthlyNewReturningExecutedAt,
+  } = useDuneQuery<MonthlyNewReturningRow>(DUNE_QUERIES.MONTHLY_NEW_RETURNING);
 
   // Mixpanel data
   const {
@@ -122,8 +121,8 @@ export function Dashboard() {
 
   // Transform data for display
   const kpiData = useMemo(
-    () => calculateKPIs(totalStakedData, weeklyStats, weeklyNewStakers, cohortRetention),
-    [totalStakedData, weeklyStats, weeklyNewStakers, cohortRetention]
+    () => calculateKPIs(totalStakedData, weeklyStats, weeklyNewStakers, cohortRetention, weeklyStakes),
+    [totalStakedData, weeklyStats, weeklyNewStakers, cohortRetention, weeklyStakes]
   );
 
   const stakingTrendData = useMemo(
@@ -181,10 +180,10 @@ export function Dashboard() {
     [monthlyStakingFlow]
   );
 
-  // Monthly new vs returning stakers (aggregated from weekly data)
-  const monthlyNewStakersData = useMemo(
-    () => transformMonthlyNewStakersData(weeklyNewStakers, weeklyStakes),
-    [weeklyNewStakers, weeklyStakes]
+  // Monthly new vs returning wallets + LINGO volume (from Dune query)
+  const monthlyNewReturningData = useMemo(
+    () => transformMonthlyNewReturningData(monthlyNewReturning),
+    [monthlyNewReturning]
   );
 
   // Export handlers
@@ -242,9 +241,9 @@ export function Dashboard() {
           <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Overview
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 stagger-children">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 stagger-children">
             {isLoading
-              ? [...Array(4)].map((_, i) => <KPICardSkeleton key={i} />)
+              ? [...Array(5)].map((_, i) => <KPICardSkeleton key={i} />)
               : kpiData.map((kpi, index) => (
                   <KPICard key={kpi.label} data={kpi} index={index} />
                 ))}
@@ -460,36 +459,94 @@ export function Dashboard() {
             )}
           </ChartCard>
 
-          {/* Monthly New vs Returning Stakers */}
+          {/* Monthly New vs Returning Wallets */}
           <ChartCard
-            title="Monthly Stakers Breakdown"
+            title="Monthly Wallets Breakdown"
             subtitle="New (first-time) vs Returning (old wallets staking again)"
-            isLoading={loadingNewStakers || loadingWeeklyStakes}
-            lastUpdated={newStakersExecutedAt}
+            isLoading={loadingMonthlyNewReturning}
+            lastUpdated={monthlyNewReturningExecutedAt}
           >
-            {monthlyNewStakersData.length > 0 ? (
+            {monthlyNewReturningData.length > 0 ? (
               <BarChartComponent
-                data={monthlyNewStakersData}
+                data={monthlyNewReturningData}
                 xAxisKey="month"
                 bars={[
                   {
-                    dataKey: 'returning',
+                    dataKey: 'returningWallets',
                     name: 'Returning',
                     color: '#7B68AE',
-                    stackId: 'stakers',
+                    stackId: 'wallets',
                   },
                   {
-                    dataKey: 'newStakers',
+                    dataKey: 'newWallets',
                     name: 'New',
                     color: '#C4B5D4',
-                    stackId: 'stakers',
+                    stackId: 'wallets',
                   },
                 ]}
                 height={300}
               />
             ) : (
               <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                {loadingNewStakers ? 'Loading...' : 'No data available'}
+                {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+              </div>
+            )}
+          </ChartCard>
+        </section>
+
+        {/* Monthly LINGO Volume by New vs Returning */}
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-10">
+          <ChartCard
+            title="Monthly LINGO Staked by Wallet Type"
+            subtitle="LINGO volume from new vs returning wallets"
+            isLoading={loadingMonthlyNewReturning}
+            lastUpdated={monthlyNewReturningExecutedAt}
+          >
+            {monthlyNewReturningData.length > 0 ? (
+              <BarChartComponent
+                data={monthlyNewReturningData}
+                xAxisKey="month"
+                bars={[
+                  {
+                    dataKey: 'returningLingo',
+                    name: 'Returning',
+                    color: '#7B68AE',
+                    stackId: 'lingo',
+                  },
+                  {
+                    dataKey: 'newLingo',
+                    name: 'New',
+                    color: '#C4B5D4',
+                    stackId: 'lingo',
+                  },
+                ]}
+                height={300}
+              />
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+              </div>
+            )}
+          </ChartCard>
+
+          {/* Total LINGO Staked per Month */}
+          <ChartCard
+            title="Total LINGO Staked per Month"
+            subtitle="Combined new + returning LINGO volume"
+            isLoading={loadingMonthlyNewReturning}
+            lastUpdated={monthlyNewReturningExecutedAt}
+          >
+            {monthlyNewReturningData.length > 0 ? (
+              <SimpleBarChart
+                data={monthlyNewReturningData}
+                dataKey="totalLingo"
+                xAxisKey="month"
+                color="#5EB851"
+                height={300}
+              />
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
               </div>
             )}
           </ChartCard>
@@ -517,21 +574,6 @@ export function Dashboard() {
                 {loadingTotalStaked ? 'Loading...' : 'No data available'}
               </div>
             )}
-          </ChartCard>
-        </section>
-
-        {/* Membership Tiers */}
-        <section className="mb-10">
-          <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-5">
-            Lingo Membership Tiers
-          </h2>
-          <ChartCard
-            title="Membership Tiers by Lock Period"
-            subtitle="Users by USD value staked: Bronze ($100+), Silver ($500+), Gold ($1,000+), Diamond ($5,000+)"
-            isLoading={loadingMembershipTiers}
-            lastUpdated={membershipTiersExecutedAt}
-          >
-            <MembershipTiersTable data={membershipTiers} isLoading={loadingMembershipTiers} />
           </ChartCard>
         </section>
 

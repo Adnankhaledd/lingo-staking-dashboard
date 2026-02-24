@@ -8,6 +8,7 @@ import type {
   MonthlyStakingFlowRow,
   WeeklyStakesRow,
   LPFeesRow,
+  MonthlyNewReturningRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -25,8 +26,9 @@ export function parseDuneDate(dateStr: string): string {
 export function calculateKPIs(
   totalStakedData: TotalStakedRow[] | null,
   weeklyStats: WeeklyStatsRow[] | null,
-  weeklyNewStakers: WeeklyNewStakersRow[] | null,
-  cohortRetention: CohortRetentionRow[] | null
+  _weeklyNewStakers: WeeklyNewStakersRow[] | null,
+  cohortRetention: CohortRetentionRow[] | null,
+  weeklyStakes: WeeklyStakesRow[] | null
 ): KPIData[] {
   // Get latest total staked
   const latestStaked = totalStakedData?.slice(-1)[0];
@@ -36,9 +38,9 @@ export function calculateKPIs(
   const latestWeekStats = weeklyStats?.slice(-1)[0];
   const previousWeekStats = weeklyStats?.slice(-2, -1)[0];
 
-  // Get new stakers this week vs last week
-  const thisWeekNewStakers = weeklyNewStakers?.slice(-1)[0];
-  const lastWeekNewStakers = weeklyNewStakers?.slice(-2, -1)[0];
+  // Get total stake events this week vs last week
+  const thisWeekStakes = weeklyStakes?.slice(-1)[0];
+  const lastWeekStakes = weeklyStakes?.slice(-2, -1)[0];
 
   // Calculate average retention rate from recent cohorts
   const recentCohorts = cohortRetention?.slice(-8) ?? [];
@@ -75,15 +77,27 @@ export function calculateKPIs(
         : 0,
     },
     {
-      label: 'New This Week',
-      value: thisWeekNewStakers?.new_stakers ?? 0,
-      previousValue: lastWeekNewStakers?.new_stakers,
+      label: 'Stakes This Week',
+      value: thisWeekStakes?.total_stake_events ?? 0,
+      previousValue: lastWeekStakes?.total_stake_events,
       format: 'number',
-      trend: thisWeekNewStakers && lastWeekNewStakers
-        ? thisWeekNewStakers.new_stakers > lastWeekNewStakers.new_stakers ? 'up' : 'down'
+      trend: thisWeekStakes && lastWeekStakes
+        ? thisWeekStakes.total_stake_events > lastWeekStakes.total_stake_events ? 'up' : 'down'
         : 'neutral',
-      trendValue: thisWeekNewStakers && lastWeekNewStakers && lastWeekNewStakers.new_stakers > 0
-        ? ((thisWeekNewStakers.new_stakers - lastWeekNewStakers.new_stakers) / lastWeekNewStakers.new_stakers) * 100
+      trendValue: thisWeekStakes && lastWeekStakes && lastWeekStakes.total_stake_events > 0
+        ? ((thisWeekStakes.total_stake_events - lastWeekStakes.total_stake_events) / lastWeekStakes.total_stake_events) * 100
+        : 0,
+    },
+    {
+      label: 'Stakers This Week',
+      value: thisWeekStakes?.unique_wallets_staked ?? 0,
+      previousValue: lastWeekStakes?.unique_wallets_staked,
+      format: 'number',
+      trend: thisWeekStakes && lastWeekStakes
+        ? thisWeekStakes.unique_wallets_staked > lastWeekStakes.unique_wallets_staked ? 'up' : 'down'
+        : 'neutral',
+      trendValue: thisWeekStakes && lastWeekStakes && lastWeekStakes.unique_wallets_staked > 0
+        ? ((thisWeekStakes.unique_wallets_staked - lastWeekStakes.unique_wallets_staked) / lastWeekStakes.unique_wallets_staked) * 100
         : 0,
     },
     {
@@ -525,4 +539,30 @@ export function getTotalCombinedFees(
     lpTotal: Math.round(lpTotal * 100) / 100,
     grandTotal: Math.round((tradingTotal + lpTotal) * 100) / 100,
   };
+}
+
+/**
+ * Transform monthly new vs returning wallets data from Dune query 6738028
+ */
+export function transformMonthlyNewReturningData(data: MonthlyNewReturningRow[] | null) {
+  if (!data || data.length === 0) return [];
+
+  return [...data]
+    .sort((a, b) => a.stake_month.localeCompare(b.stake_month))
+    .map(row => {
+      const dateStr = parseDuneDate(row.stake_month);
+      const [year, month] = dateStr.split('-');
+      const date = new Date(parseInt(year), parseInt(month) - 1);
+      const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+      return {
+        month: monthName,
+        newWallets: row.new_wallets,
+        returningWallets: row.returning_wallets,
+        newLingo: Math.round(row.new_lingo_staked),
+        returningLingo: Math.round(row.returning_lingo_staked),
+        totalLingo: Math.round(row.total_lingo_staked),
+        totalWallets: row.new_wallets + row.returning_wallets,
+      };
+    });
 }

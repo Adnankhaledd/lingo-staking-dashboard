@@ -308,6 +308,7 @@ export const DUNE_QUERIES = {
   WEEKLY_STAKES: '6693660',
   LP_FEES: '6693715',
   MEMBERSHIP_TIERS: '6708293',
+  MONTHLY_NEW_RETURNING: '6738028',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -411,4 +412,13 @@ export interface MembershipTiersRow {
   total_lingo_staked: number;
   total_usd_value: number;
   price_used: number;
+}
+
+export interface MonthlyNewReturningRow {
+  stake_month: string;
+  new_wallets: number;
+  returning_wallets: number;
+  new_lingo_staked: number;
+  returning_lingo_staked: number;
+  total_lingo_staked: number;
 }
