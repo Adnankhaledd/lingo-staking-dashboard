@@ -1,5 +1,6 @@
 import { Download, ExternalLink, Trophy, Medal, Award } from 'lucide-react';
 import { formatNumber, formatCurrency, exportToCSV } from '../../utils/formatters';
+import { GlowButton } from '../ui/GlowButton';
 import type { TopStakerRow } from '../../hooks/useDuneQuery';
 
 interface TopStakersTableProps {
@@ -69,14 +70,13 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
           <h3 className="text-lg font-semibold text-lavender">Top Stakers Leaderboard</h3>
           <p className="text-sm text-soft-gray mt-1">Top 50 wallets by LINGO staked</p>
         </div>
-        <button
+        <GlowButton
           onClick={handleExport}
           disabled={!data || data.length === 0}
-          className="glow-btn gap-2"
         >
           <Download className="w-4 h-4" />
           <span className="text-sm">Export</span>
-        </button>
+        </GlowButton>
       </div>
 
       {/* Table Container with Scroll */}

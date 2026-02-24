@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Download, Clock } from 'lucide-react';
+import { GlowButton } from '../ui/GlowButton';
 
 interface ChartCardProps {
   title: string;
@@ -54,14 +55,10 @@ export function ChartCard({
             </div>
           )}
           {onExport && (
-            <button
-              onClick={onExport}
-              className="glow-btn h-8 px-3 gap-1.5"
-              title="Export to CSV"
-            >
+            <GlowButton onClick={onExport} className="h-8">
               <Download className="w-3.5 h-3.5" />
               <span className="text-xs hidden sm:inline">CSV</span>
-            </button>
+            </GlowButton>
           )}
         </div>
       </div>
