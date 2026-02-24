@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache_v3';
+const CACHE_KEY = 'mixpanel_data_cache_v4';
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DAUReportResponse {
@@ -34,6 +34,13 @@ export interface WeeklyEngagement {
   lastWeekUsers: number;
 }
 
+export interface MonthlyEngagement {
+  thisMonth: number;
+  lastMonth: number;
+  thisMonthUsers: number;
+  lastMonthUsers: number;
+}
+
 export interface MixpanelMetrics {
   dauTrend: DailyMetric[];
   currentDAU: number;
@@ -44,6 +51,10 @@ export interface MixpanelMetrics {
   asteroidsSmashed: WeeklyEngagement;
   raffleEntries: WeeklyEngagement;
   rewardsClaimed: WeeklyEngagement;
+  // Monthly engagement
+  monthlyAsteroidsSmashed: MonthlyEngagement;
+  monthlyRaffleEntries: MonthlyEngagement;
+  monthlyRewardsClaimed: MonthlyEngagement;
 }
 
 interface CachedData {
@@ -169,6 +180,51 @@ async function fetchWeeklyEngagement(): Promise<{
   };
 }
 
+// Response shape from combined monthly_engagement endpoint
+interface MonthlyEngagementResponse {
+  totals: EventsResponse;
+  unique: EventsResponse;
+}
+
+// Fetch monthly engagement events (asteroids, raffles, rewards)
+async function fetchMonthlyEngagement(): Promise<{
+  monthlyAsteroidsSmashed: MonthlyEngagement;
+  monthlyRaffleEntries: MonthlyEngagement;
+  monthlyRewardsClaimed: MonthlyEngagement;
+}> {
+  const response = await fetch(`${API_BASE}/api/mixpanel?type=monthly_engagement`);
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  const data: MonthlyEngagementResponse = await response.json();
+  const totalValues = data.totals?.data?.values || {};
+  const uniqueValues = data.unique?.data?.values || {};
+
+  function getMonthlyValues(eventName: string): MonthlyEngagement {
+    // Total event counts
+    const eventData = totalValues[eventName] || {};
+    const dates = Object.keys(eventData).sort();
+    const thisMonth = dates.length > 0 ? eventData[dates[dates.length - 1]] ?? 0 : 0;
+    const lastMonth = dates.length > 1 ? eventData[dates[dates.length - 2]] ?? 0 : 0;
+
+    // Unique user counts
+    const uniqueData = uniqueValues[eventName] || {};
+    const uniqueDates = Object.keys(uniqueData).sort();
+    const thisMonthUsers = uniqueDates.length > 0 ? uniqueData[uniqueDates[uniqueDates.length - 1]] ?? 0 : 0;
+    const lastMonthUsers = uniqueDates.length > 1 ? uniqueData[uniqueDates[uniqueDates.length - 2]] ?? 0 : 0;
+
+    return { thisMonth, lastMonth, thisMonthUsers, lastMonthUsers };
+  }
+
+  return {
+    monthlyAsteroidsSmashed: getMonthlyValues('Asteroid Smashed'),
+    monthlyRaffleEntries: getMonthlyValues('Raffle Ticket Purchased'),
+    monthlyRewardsClaimed: getMonthlyValues('Reward Claimed'),
+  };
+}
+
 function transformDAUData(data: DAUReportResponse): DailyMetric[] {
   const dauSeries = data.series?.['A. DAU'] || {};
 
@@ -188,6 +244,7 @@ function formatDate(isoStr: string): string {
 }
 
 const DEFAULT_ENGAGEMENT: WeeklyEngagement = { thisWeek: 0, lastWeek: 0, thisWeekUsers: 0, lastWeekUsers: 0 };
+const DEFAULT_MONTHLY_ENGAGEMENT: MonthlyEngagement = { thisMonth: 0, lastMonth: 0, thisMonthUsers: 0, lastMonthUsers: 0 };
 
 export function useMixpanelData() {
   const [data, setData] = useState<MixpanelMetrics | null>(null);
@@ -209,7 +266,7 @@ export function useMixpanelData() {
         }
 
         // Fetch fresh data
-        const [dauReport, wau, mau, engagement] = await Promise.all([
+        const [dauReport, wau, mau, engagement, monthlyEngagement] = await Promise.all([
           fetchDAUReport(),
           fetchWAU(),
           fetchMAU(),
@@ -217,6 +274,11 @@ export function useMixpanelData() {
             asteroidsSmashed: DEFAULT_ENGAGEMENT,
             raffleEntries: DEFAULT_ENGAGEMENT,
             rewardsClaimed: DEFAULT_ENGAGEMENT,
+          })),
+          fetchMonthlyEngagement().catch(() => ({
+            monthlyAsteroidsSmashed: DEFAULT_MONTHLY_ENGAGEMENT,
+            monthlyRaffleEntries: DEFAULT_MONTHLY_ENGAGEMENT,
+            monthlyRewardsClaimed: DEFAULT_MONTHLY_ENGAGEMENT,
           })),
         ]);
 
@@ -233,6 +295,7 @@ export function useMixpanelData() {
           currentMAU: mau,
           avgDAU,
           ...engagement,
+          ...monthlyEngagement,
         };
 
         // Save to cache

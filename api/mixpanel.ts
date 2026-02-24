@@ -122,8 +122,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const totals = await totalsRes.json();
       const unique = await uniqueRes.json();
       data = { totals, unique };
+    } else if (type === 'monthly_engagement') {
+      // Fetch engagement events for this month + last month (for comparison)
+      // Two calls: type=general for total counts, type=unique for unique users
+      const today = new Date();
+      const twoMonthsAgo = new Date(today);
+      twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 60);
+
+      const events = ['Asteroid Smashed', 'Raffle Ticket Purchased', 'Reward Claimed'];
+      const authHeader = `Basic ${Buffer.from(MIXPANEL_API_SECRET + ':').toString('base64')}`;
+
+      const baseParams = {
+        project_id: PROJECT_ID,
+        event: JSON.stringify(events),
+        unit: 'month',
+        from_date: twoMonthsAgo.toISOString().split('T')[0],
+        to_date: today.toISOString().split('T')[0],
+      };
+
+      const [totalsRes, uniqueRes] = await Promise.all([
+        fetch(
+          `https://eu.mixpanel.com/api/2.0/events?${new URLSearchParams({ ...baseParams, type: 'general' })}`,
+          {
+            method: 'GET',
+            headers: { 'Accept': 'application/json', 'Authorization': authHeader },
+          }
+        ),
+        fetch(
+          `https://eu.mixpanel.com/api/2.0/events?${new URLSearchParams({ ...baseParams, type: 'unique' })}`,
+          {
+            method: 'GET',
+            headers: { 'Accept': 'application/json', 'Authorization': authHeader },
+          }
+        ),
+      ]);
+
+      const totals = await totalsRes.json();
+      const unique = await uniqueRes.json();
+      data = { totals, unique };
     } else {
-      return res.status(400).json({ error: 'Invalid type. Use: dau, wau, mau, or weekly_engagement' });
+      return res.status(400).json({ error: 'Invalid type. Use: dau, wau, mau, weekly_engagement, or monthly_engagement' });
     }
 
     return res.status(200).json(data);

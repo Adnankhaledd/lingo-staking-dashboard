@@ -405,6 +405,37 @@ export function Dashboard() {
               userCount={mixpanelData?.rewardsClaimed?.thisWeekUsers}
             />
           </div>
+
+          {/* Monthly Engagement Cards */}
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
+            Monthly Engagement
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <MixpanelKPICard
+              title="Asteroids Smashed"
+              value={mixpanelData?.monthlyAsteroidsSmashed?.thisMonth ?? 0}
+              icon={Rocket}
+              color="#FF7847"
+              isLoading={loadingMixpanel}
+              userCount={mixpanelData?.monthlyAsteroidsSmashed?.thisMonthUsers}
+            />
+            <MixpanelKPICard
+              title="Raffle Entries"
+              value={mixpanelData?.monthlyRaffleEntries?.thisMonth ?? 0}
+              icon={Ticket}
+              color="#C4B5D4"
+              isLoading={loadingMixpanel}
+              userCount={mixpanelData?.monthlyRaffleEntries?.thisMonthUsers}
+            />
+            <MixpanelKPICard
+              title="Rewards Claimed"
+              value={mixpanelData?.monthlyRewardsClaimed?.thisMonth ?? 0}
+              icon={Trophy}
+              color="#5EB851"
+              isLoading={loadingMixpanel}
+              userCount={mixpanelData?.monthlyRewardsClaimed?.thisMonthUsers}
+            />
+          </div>
         </section>
 
         {/* Staking Charts */}
