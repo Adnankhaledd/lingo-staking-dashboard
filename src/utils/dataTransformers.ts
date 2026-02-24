@@ -374,30 +374,55 @@ export function transformWeeklyStakesData(data: WeeklyStakesRow[] | null) {
 }
 
 /**
- * Aggregate weekly new stakers into monthly totals
+ * Aggregate weekly data into monthly new vs returning stakers
+ * New = first-time stakers, Returning = old wallets staking again
  */
-export function transformMonthlyNewStakersData(data: WeeklyNewStakersRow[] | null) {
-  if (!data) return [];
+export function transformMonthlyNewStakersData(
+  newStakersData: WeeklyNewStakersRow[] | null,
+  weeklyStakesData: WeeklyStakesRow[] | null
+) {
+  if (!newStakersData) return [];
 
-  const monthlyMap = new Map<string, number>();
+  // Build a map of unique wallets per week from WeeklyStakes
+  const walletsMap = new Map<string, number>();
+  if (weeklyStakesData) {
+    weeklyStakesData.forEach(row => {
+      walletsMap.set(parseDuneDate(row.week), row.unique_wallets_staked);
+    });
+  }
 
-  data.forEach(row => {
-    const date = new Date(parseDuneDate(row.week));
+  const monthlyMap = new Map<string, { newStakers: number; returning: number }>();
+
+  newStakersData.forEach(row => {
+    const weekDate = parseDuneDate(row.week);
+    const date = new Date(weekDate);
     const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
-    monthlyMap.set(monthKey, (monthlyMap.get(monthKey) ?? 0) + row.new_stakers);
+    if (!monthlyMap.has(monthKey)) {
+      monthlyMap.set(monthKey, { newStakers: 0, returning: 0 });
+    }
+
+    const entry = monthlyMap.get(monthKey)!;
+    entry.newStakers += row.new_stakers;
+
+    const totalWallets = walletsMap.get(weekDate);
+    if (totalWallets !== undefined) {
+      entry.returning += Math.max(0, totalWallets - row.new_stakers);
+    }
   });
 
   return Array.from(monthlyMap.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([monthKey, newStakers]) => {
+    .map(([monthKey, data]) => {
       const [year, month] = monthKey.split('-');
       const date = new Date(parseInt(year), parseInt(month) - 1);
       const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 
       return {
         month: monthName,
-        newStakers,
+        newStakers: data.newStakers,
+        returning: data.returning,
+        total: data.newStakers + data.returning,
       };
     });
 }

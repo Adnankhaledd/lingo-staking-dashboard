@@ -34,7 +34,6 @@ import {
   transformAPYClaimsData,
   getAPYClaimsTotals,
   transformMonthlyStakingFlowData,
-  transformWeeklyStakesData,
   transformMonthlyNewStakersData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
@@ -90,7 +89,6 @@ export function Dashboard() {
   const {
     data: weeklyStakes,
     isLoading: loadingWeeklyStakes,
-    executedAt: weeklyStakesExecutedAt,
   } = useDuneQuery<WeeklyStakesRow>(DUNE_QUERIES.WEEKLY_STAKES);
 
   const {
@@ -183,16 +181,10 @@ export function Dashboard() {
     [monthlyStakingFlow]
   );
 
-  // Weekly stakes data
-  const weeklyStakesData = useMemo(
-    () => transformWeeklyStakesData(weeklyStakes),
-    [weeklyStakes]
-  );
-
-  // Monthly new unique stakers (aggregated from weekly data)
+  // Monthly new vs returning stakers (aggregated from weekly data)
   const monthlyNewStakersData = useMemo(
-    () => transformMonthlyNewStakersData(weeklyNewStakers),
-    [weeklyNewStakers]
+    () => transformMonthlyNewStakersData(weeklyNewStakers, weeklyStakes),
+    [weeklyNewStakers, weeklyStakes]
   );
 
   // Export handlers
@@ -468,53 +460,31 @@ export function Dashboard() {
             )}
           </ChartCard>
 
-          {/* Weekly Stake Activity */}
+          {/* Monthly New vs Returning Stakers */}
           <ChartCard
-            title="Weekly Stake Activity"
-            subtitle="Total stake events vs unique wallets"
-            isLoading={loadingWeeklyStakes}
-            lastUpdated={weeklyStakesExecutedAt}
-          >
-            {weeklyStakesData.length > 0 ? (
-              <BarChartComponent
-                data={weeklyStakesData}
-                xAxisKey="week"
-                bars={[
-                  {
-                    dataKey: 'stakeEvents',
-                    name: 'Stake Events',
-                    color: '#C4B5D4',
-                  },
-                  {
-                    dataKey: 'uniqueStakers',
-                    name: 'Unique Wallets',
-                    color: '#5EB851',
-                  },
-                ]}
-                height={300}
-              />
-            ) : (
-              <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                {loadingWeeklyStakes ? 'Loading...' : 'No data available'}
-              </div>
-            )}
-          </ChartCard>
-        </section>
-
-        {/* Monthly New Unique Stakers */}
-        <section className="mb-10">
-          <ChartCard
-            title="New Unique Stakers per Month"
-            subtitle="First-time stakers aggregated by month"
-            isLoading={loadingNewStakers}
+            title="Monthly Stakers Breakdown"
+            subtitle="New (first-time) vs Returning (old wallets staking again)"
+            isLoading={loadingNewStakers || loadingWeeklyStakes}
             lastUpdated={newStakersExecutedAt}
           >
             {monthlyNewStakersData.length > 0 ? (
-              <SimpleBarChart
+              <BarChartComponent
                 data={monthlyNewStakersData}
-                dataKey="newStakers"
                 xAxisKey="month"
-                color="#C4B5D4"
+                bars={[
+                  {
+                    dataKey: 'returning',
+                    name: 'Returning',
+                    color: '#7B68AE',
+                    stackId: 'stakers',
+                  },
+                  {
+                    dataKey: 'newStakers',
+                    name: 'New',
+                    color: '#C4B5D4',
+                    stackId: 'stakers',
+                  },
+                ]}
                 height={300}
               />
             ) : (
