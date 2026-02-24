@@ -51,24 +51,69 @@
 }
 
 @layer components {
-  /* Glassmorphism base — flagship style */
+  /* Flagship card — matches CardLayoutBackground from main app */
+  .flagship-card {
+    background: rgba(20, 20, 31, 0.88);
+    border-radius: 1rem;
+    box-shadow: 0px 0px 56px -16px rgba(28, 28, 41, 0.4) inset;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .flagship-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(62, 62, 103, 0.35) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(62, 62, 103, 0.35) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    opacity: 0.4;
+  }
+
+  /* Keep glass as alias for backwards compat (tooltip etc) */
   .glass {
-    background: hsl(240 19% 13% / 0.8);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(20, 20, 31, 0.88);
+    box-shadow: 0px 0px 56px -16px rgba(28, 28, 41, 0.4) inset;
+    border: 1px solid rgba(255, 255, 255, 0.04);
   }
 
   .glass-card {
-    background: hsl(240 19% 13% / 0.8);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(20, 20, 31, 0.88);
+    box-shadow: 0px 0px 56px -16px rgba(28, 28, 41, 0.4) inset;
+    border: 1px solid rgba(255, 255, 255, 0.04);
   }
 
-  .glass-hover:hover {
-    background: hsl(240 19% 18% / 0.8);
-    border-color: rgba(196, 181, 212, 0.2);
+  /* Glow button — matches GlowButton from main app */
+  .glow-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: 9999px;
+    background: rgba(38, 38, 56, 0.56);
+    box-shadow: 0px -4px 16px -2px rgba(222, 206, 235, 0.24) inset;
+    color: hsl(274 66% 94%);
+    font-weight: 600;
+    font-size: 0.875rem;
+    letter-spacing: 0.03em;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    cursor: pointer;
+    transition: all 0.2s ease-out;
+  }
+
+  .glow-btn:hover {
+    background: rgba(58, 48, 86, 0.7);
+    box-shadow: 0px -4px 16px -2px rgba(222, 206, 235, 0.35) inset, 0 0 20px rgba(196, 181, 212, 0.1);
+    border-color: rgba(196, 181, 212, 0.15);
+  }
+
+  .glow-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   /* Gradient text — flagship lavender */
@@ -112,8 +157,7 @@
 
   /* Chart tooltip styling — flagship dark */
   .custom-tooltip {
-    background: hsl(240 19% 13% / 0.95) !important;
-    backdrop-filter: blur(20px);
+    background: rgba(20, 20, 31, 0.95) !important;
     border: 1px solid rgba(255, 255, 255, 0.08) !important;
     border-radius: 12px !important;
     padding: 12px 16px !important;

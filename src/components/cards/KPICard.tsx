@@ -36,13 +36,9 @@ export function KPICard({ data, index = 0 }: KPICardProps) {
 
   return (
     <div
-      className="relative rounded-2xl p-5 overflow-hidden group transition-all duration-300 hover:scale-[1.02]"
+      className="flagship-card p-5 group transition-all duration-300 hover:scale-[1.02]"
       style={{ animationDelay: `${index * 0.1}s` }}
     >
-      {/* Card background with gradient border effect */}
-      <div className="absolute inset-0 bg-gradient-to-br from-white/[0.06] to-white/[0.02] rounded-2xl" />
-      <div className="absolute inset-[1px] bg-dark2 rounded-2xl" />
-
       {/* Gradient accent on hover */}
       <div className="absolute inset-0 bg-gradient-to-br from-purple/5 to-light1/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-2xl" />
 
@@ -74,16 +70,14 @@ export function KPICard({ data, index = 0 }: KPICardProps) {
       </div>
 
       {/* Bottom gradient line */}
-      <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-gradient-to-r from-transparent via-purple/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+      <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-gradient-to-r from-transparent via-purple/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10" />
     </div>
   );
 }
 
 export function KPICardSkeleton() {
   return (
-    <div className="relative rounded-2xl p-5 overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-br from-white/[0.06] to-white/[0.02] rounded-2xl" />
-      <div className="absolute inset-[1px] bg-dark2 rounded-2xl" />
+    <div className="flagship-card p-5">
       <div className="relative z-10">
         <div className="skeleton h-3 w-20 rounded mb-3" />
         <div className="skeleton h-8 w-28 rounded mb-3" />

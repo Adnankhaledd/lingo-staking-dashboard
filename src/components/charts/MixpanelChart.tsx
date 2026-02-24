@@ -26,24 +26,24 @@ export function MixpanelChart({
 }: MixpanelChartProps) {
   if (isLoading) {
     return (
-      <div className="glass-card rounded-2xl p-6">
-        <div className="skeleton h-6 w-48 rounded mb-2" />
-        <div className="skeleton h-4 w-32 rounded mb-6" />
-        <div className="skeleton h-64 w-full rounded-xl" />
+      <div className="flagship-card p-6">
+        <div className="skeleton h-6 w-48 rounded mb-2 relative z-10" />
+        <div className="skeleton h-4 w-32 rounded mb-6 relative z-10" />
+        <div className="skeleton h-64 w-full rounded-xl relative z-10" />
       </div>
     );
   }
 
   return (
-    <div className="glass-card rounded-2xl p-6">
-      <div className="mb-6">
+    <div className="flagship-card p-6">
+      <div className="mb-6 relative z-10">
         <h3 className="text-lg font-semibold text-lavender">{title}</h3>
         {subtitle && (
           <p className="text-sm text-soft-gray mt-1">{subtitle}</p>
         )}
       </div>
 
-      <div className="h-64">
+      <div className="h-64 relative z-10">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data}>
             <defs>
@@ -72,7 +72,7 @@ export function MixpanelChart({
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: 'hsl(240 19% 13% / 0.95)',
+                backgroundColor: 'rgba(20, 20, 31, 0.95)',
                 border: '1px solid rgba(255, 255, 255, 0.08)',
                 borderRadius: '12px',
                 boxShadow: '0 4px 20px rgba(0, 0, 0, 0.5)',

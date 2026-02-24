@@ -62,9 +62,9 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
   };
 
   return (
-    <div className="glass rounded-2xl overflow-hidden">
+    <div className="flagship-card rounded-2xl">
       {/* Header */}
-      <div className="flex items-center justify-between p-6 border-b border-white/5">
+      <div className="flex items-center justify-between p-6 border-b border-white/5 relative z-10">
         <div>
           <h3 className="text-lg font-semibold text-lavender">Top Stakers Leaderboard</h3>
           <p className="text-sm text-soft-gray mt-1">Top 50 wallets by LINGO staked</p>
@@ -72,7 +72,7 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
         <button
           onClick={handleExport}
           disabled={!data || data.length === 0}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-dark3 hover:bg-dark3/80 border border-white/8 text-soft-gray hover:text-lavender transition-all duration-200 disabled:opacity-50"
+          className="glow-btn gap-2"
         >
           <Download className="w-4 h-4" />
           <span className="text-sm">Export</span>
@@ -80,9 +80,9 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
       </div>
 
       {/* Table Container with Scroll */}
-      <div className="max-h-[600px] overflow-y-auto">
+      <div className="max-h-[600px] overflow-y-auto relative z-10">
         <table className="w-full">
-          <thead className="sticky top-0 bg-dark2/95 backdrop-blur-sm z-10">
+          <thead className="sticky top-0 z-10" style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
             <tr className="border-b border-white/5">
               <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-6">
                 Rank
@@ -183,7 +183,7 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
 
       {/* Footer */}
       {data && data.length > 0 && (
-        <div className="px-6 py-4 border-t border-white/5 bg-white/[0.02]">
+        <div className="px-6 py-4 border-t border-white/5 bg-white/[0.02] relative z-10">
           <p className="text-xs text-purple-gray text-center">
             Showing {data.length} wallets &bull; Data from Dune Analytics
           </p>

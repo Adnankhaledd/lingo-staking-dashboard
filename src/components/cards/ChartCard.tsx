@@ -37,8 +37,8 @@ export function ChartCard({
   lastUpdated,
 }: ChartCardProps) {
   return (
-    <div className={`glass rounded-2xl p-6 ${className}`}>
-      <div className="flex items-start justify-between mb-6">
+    <div className={`flagship-card rounded-2xl p-6 ${className}`}>
+      <div className="flex items-start justify-between mb-6 relative z-10">
         <div>
           <h3 className="text-lg font-semibold text-lavender">{title}</h3>
           {subtitle && (
@@ -56,16 +56,17 @@ export function ChartCard({
           {onExport && (
             <button
               onClick={onExport}
-              className="p-2 rounded-lg hover:bg-dark3 text-soft-gray hover:text-lavender transition-colors"
+              className="glow-btn h-8 px-3 gap-1.5"
               title="Export to CSV"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-3.5 h-3.5" />
+              <span className="text-xs hidden sm:inline">CSV</span>
             </button>
           )}
         </div>
       </div>
 
-      <div className="relative">
+      <div className="relative z-10">
         {children}
 
         {isLoading && (
@@ -80,14 +81,14 @@ export function ChartCard({
 
 export function ChartCardSkeleton({ className = '' }: { className?: string }) {
   return (
-    <div className={`glass rounded-2xl p-6 ${className}`}>
-      <div className="flex items-start justify-between mb-6">
+    <div className={`flagship-card rounded-2xl p-6 ${className}`}>
+      <div className="flex items-start justify-between mb-6 relative z-10">
         <div>
           <div className="skeleton h-6 w-40 rounded mb-2" />
           <div className="skeleton h-4 w-24 rounded" />
         </div>
       </div>
-      <div className="skeleton h-64 rounded-xl" />
+      <div className="skeleton h-64 rounded-xl relative z-10" />
     </div>
   );
 }

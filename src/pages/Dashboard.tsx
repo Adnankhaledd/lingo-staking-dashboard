@@ -681,7 +681,8 @@ export function Dashboard() {
           {retentionData.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
               {/* Recent Retention (last 3 months) */}
-              <div className="glass-card rounded-2xl p-6">
+              <div className="flagship-card p-6">
+                <div className="relative z-10">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-soft-gray">Recent Retention (3 months)</span>
                 </div>
@@ -709,10 +710,12 @@ export function Dashboard() {
                     })()}
                   </span>
                 </div>
+                </div>
               </div>
 
               {/* All-time Retention */}
-              <div className="glass-card rounded-2xl p-6">
+              <div className="flagship-card p-6">
+                <div className="relative z-10">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-soft-gray">All-Time Retention</span>
                 </div>
@@ -734,6 +737,7 @@ export function Dashboard() {
                   <span className="text-sm text-soft-gray">
                     {retentionData.reduce((s, d) => s + d.stillStaking, 0).toLocaleString()} / {retentionData.reduce((s, d) => s + d.newStakers, 0).toLocaleString()} stakers
                   </span>
+                </div>
                 </div>
               </div>
             </div>
@@ -757,22 +761,28 @@ export function Dashboard() {
 
           {/* APY Claims KPI Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-            <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-soft-gray">Total Claims</span>
-              <div className="text-2xl font-bold text-lavender mt-1">
-                {loadingAPYClaims ? '...' : apyClaimsTotals.totalClaims.toLocaleString()}
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total Claims</span>
+                <div className="text-2xl font-bold text-lavender mt-1">
+                  {loadingAPYClaims ? '...' : apyClaimsTotals.totalClaims.toLocaleString()}
+                </div>
               </div>
             </div>
-            <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-soft-gray">Total LINGO Claimed</span>
-              <div className="text-2xl font-bold text-purple mt-1">
-                {loadingAPYClaims ? '...' : Math.round(apyClaimsTotals.totalLingo).toLocaleString()}
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total LINGO Claimed</span>
+                <div className="text-2xl font-bold text-purple mt-1">
+                  {loadingAPYClaims ? '...' : Math.round(apyClaimsTotals.totalLingo).toLocaleString()}
+                </div>
               </div>
             </div>
-            <div className="glass-card rounded-2xl p-6">
-              <span className="text-sm text-soft-gray">Total USD Value</span>
-              <div className="text-2xl font-bold text-green1 mt-1">
-                {loadingAPYClaims ? '...' : `$${Math.round(apyClaimsTotals.totalUsd).toLocaleString()}`}
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total USD Value</span>
+                <div className="text-2xl font-bold text-green1 mt-1">
+                  {loadingAPYClaims ? '...' : `$${Math.round(apyClaimsTotals.totalUsd).toLocaleString()}`}
+                </div>
               </div>
             </div>
           </div>
