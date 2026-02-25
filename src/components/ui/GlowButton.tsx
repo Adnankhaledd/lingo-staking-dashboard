@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
+import { useRef, useState, useCallback, useEffect, type ReactNode } from 'react';
 
 interface GlowButtonProps {
   children: ReactNode;
