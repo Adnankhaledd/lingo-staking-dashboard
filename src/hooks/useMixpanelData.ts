@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache_v4';
+const CACHE_KEY = 'mixpanel_data_cache_v5';
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DAUReportResponse {
@@ -116,8 +116,11 @@ async function fetchWAU(): Promise<number> {
   }
 
   const data: EventsResponse = await response.json();
-  const values = Object.values(data.data?.values?.['Wallet Connected'] || {});
-  return values.reduce((sum, val) => sum + val, 0);
+  const walletData = data.data?.values?.['Wallet Connected'] || {};
+  const dates = Object.keys(walletData).sort();
+  // Use the most recent week's unique count (not the sum of all weeks)
+  if (dates.length === 0) return 0;
+  return walletData[dates[dates.length - 1]] ?? 0;
 }
 
 // Fetch MAU from the API proxy
@@ -265,11 +268,12 @@ export function useMixpanelData() {
           return;
         }
 
-        // Fetch fresh data
+        // Fetch fresh data (WAU/MAU have catch handlers so a single failure
+        // doesn't prevent the rest of the dashboard from loading)
         const [dauReport, wau, mau, engagement, monthlyEngagement] = await Promise.all([
           fetchDAUReport(),
-          fetchWAU(),
-          fetchMAU(),
+          fetchWAU().catch((err) => { console.warn('WAU fetch failed, will retry next load:', err); return -1; }),
+          fetchMAU().catch((err) => { console.warn('MAU fetch failed, will retry next load:', err); return -1; }),
           fetchWeeklyEngagement().catch(() => ({
             asteroidsSmashed: DEFAULT_ENGAGEMENT,
             raffleEntries: DEFAULT_ENGAGEMENT,
@@ -288,18 +292,26 @@ export function useMixpanelData() {
           ? Math.round(dauTrend.reduce((sum, d) => sum + d.value, 0) / dauTrend.length)
           : 0;
 
+        // If WAU or MAU failed (-1 sentinel), show 0 but skip caching
+        // so next page load retries the fetch
+        const wauFailed = wau < 0;
+        const mauFailed = mau < 0;
+
         const metrics: MixpanelMetrics = {
           dauTrend,
           currentDAU,
-          currentWAU: wau,
-          currentMAU: mau,
+          currentWAU: wauFailed ? 0 : wau,
+          currentMAU: mauFailed ? 0 : mau,
           avgDAU,
           ...engagement,
           ...monthlyEngagement,
         };
 
-        // Save to cache
-        setCachedData(metrics);
+        // Only cache if all critical metrics succeeded — prevents
+        // stale 0 values from being locked in for 24 hours
+        if (!wauFailed && !mauFailed) {
+          setCachedData(metrics);
+        }
         setData(metrics);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch Mixpanel data');
