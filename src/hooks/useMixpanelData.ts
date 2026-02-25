@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache_v5';
+const CACHE_KEY = 'mixpanel_data_cache_v6';
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DAUReportResponse {
@@ -158,22 +158,34 @@ async function fetchWeeklyEngagement(): Promise<{
   const totalValues = data.totals?.data?.values || {};
   const uniqueValues = data.unique?.data?.values || {};
 
-  // Parse this week and last week from the weekly data
-  // Mixpanel returns { "event_name": { "2026-02-17": count, "2026-02-10": count } }
+  // Validate that both sub-requests returned real data — if totals is
+  // empty but unique has data, the general API call failed silently
+  const hasTotals = Object.keys(totalValues).length > 0;
+  const hasUnique = Object.keys(uniqueValues).length > 0;
+  if (!hasTotals && hasUnique) {
+    console.warn('Weekly engagement totals empty but unique has data — partial API failure');
+  }
+
+  // Helper: pick the most recent period's value from a date-keyed object
+  function latestValue(obj: Record<string, number>): number {
+    const dates = Object.keys(obj).sort();
+    return dates.length > 0 ? obj[dates[dates.length - 1]] ?? 0 : 0;
+  }
+  function prevValue(obj: Record<string, number>): number {
+    const dates = Object.keys(obj).sort();
+    return dates.length > 1 ? obj[dates[dates.length - 2]] ?? 0 : 0;
+  }
+
   function getWeeklyValues(eventName: string): WeeklyEngagement {
-    // Total event counts
     const eventData = totalValues[eventName] || {};
-    const dates = Object.keys(eventData).sort();
-    const thisWeek = dates.length > 0 ? eventData[dates[dates.length - 1]] ?? 0 : 0;
-    const lastWeek = dates.length > 1 ? eventData[dates[dates.length - 2]] ?? 0 : 0;
-
-    // Unique user counts
     const uniqueData = uniqueValues[eventName] || {};
-    const uniqueDates = Object.keys(uniqueData).sort();
-    const thisWeekUsers = uniqueDates.length > 0 ? uniqueData[uniqueDates[uniqueDates.length - 1]] ?? 0 : 0;
-    const lastWeekUsers = uniqueDates.length > 1 ? uniqueData[uniqueDates[uniqueDates.length - 2]] ?? 0 : 0;
 
-    return { thisWeek, lastWeek, thisWeekUsers, lastWeekUsers };
+    return {
+      thisWeek: latestValue(eventData),
+      lastWeek: prevValue(eventData),
+      thisWeekUsers: latestValue(uniqueData),
+      lastWeekUsers: prevValue(uniqueData),
+    };
   }
 
   return {
@@ -205,20 +217,31 @@ async function fetchMonthlyEngagement(): Promise<{
   const totalValues = data.totals?.data?.values || {};
   const uniqueValues = data.unique?.data?.values || {};
 
+  const hasTotals = Object.keys(totalValues).length > 0;
+  const hasUnique = Object.keys(uniqueValues).length > 0;
+  if (!hasTotals && hasUnique) {
+    console.warn('Monthly engagement totals empty but unique has data — partial API failure');
+  }
+
+  function latestVal(obj: Record<string, number>): number {
+    const dates = Object.keys(obj).sort();
+    return dates.length > 0 ? obj[dates[dates.length - 1]] ?? 0 : 0;
+  }
+  function prevVal(obj: Record<string, number>): number {
+    const dates = Object.keys(obj).sort();
+    return dates.length > 1 ? obj[dates[dates.length - 2]] ?? 0 : 0;
+  }
+
   function getMonthlyValues(eventName: string): MonthlyEngagement {
-    // Total event counts
     const eventData = totalValues[eventName] || {};
-    const dates = Object.keys(eventData).sort();
-    const thisMonth = dates.length > 0 ? eventData[dates[dates.length - 1]] ?? 0 : 0;
-    const lastMonth = dates.length > 1 ? eventData[dates[dates.length - 2]] ?? 0 : 0;
-
-    // Unique user counts
     const uniqueData = uniqueValues[eventName] || {};
-    const uniqueDates = Object.keys(uniqueData).sort();
-    const thisMonthUsers = uniqueDates.length > 0 ? uniqueData[uniqueDates[uniqueDates.length - 1]] ?? 0 : 0;
-    const lastMonthUsers = uniqueDates.length > 1 ? uniqueData[uniqueDates[uniqueDates.length - 2]] ?? 0 : 0;
 
-    return { thisMonth, lastMonth, thisMonthUsers, lastMonthUsers };
+    return {
+      thisMonth: latestVal(eventData),
+      lastMonth: prevVal(eventData),
+      thisMonthUsers: latestVal(uniqueData),
+      lastMonthUsers: prevVal(uniqueData),
+    };
   }
 
   return {
@@ -307,9 +330,15 @@ export function useMixpanelData() {
           ...monthlyEngagement,
         };
 
+        // Detect partial engagement failures: totals 0 but users > 0
+        // means the 'general' Mixpanel sub-request failed silently
+        const engagementTotalsOk =
+          engagement.asteroidsSmashed.thisWeek > 0 ||
+          engagement.asteroidsSmashed.thisWeekUsers === 0;
+
         // Only cache if all critical metrics succeeded — prevents
         // stale 0 values from being locked in for 24 hours
-        if (!wauFailed && !mauFailed) {
+        if (!wauFailed && !mauFailed && engagementTotalsOk) {
           setCachedData(metrics);
         }
         setData(metrics);
