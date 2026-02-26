@@ -283,7 +283,7 @@ export function Dashboard() {
 
         {/* KPI Cards */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Overview
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 stagger-children">
@@ -299,7 +299,7 @@ export function Dashboard() {
             REVENUE & FEES
         ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Revenue & Fees
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -372,7 +372,7 @@ export function Dashboard() {
             ACTIVE USERS & ENGAGEMENT (Mixpanel)
         ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Active Users
           </h2>
 
@@ -418,7 +418,7 @@ export function Dashboard() {
           />
 
           {/* Weekly Engagement Cards */}
-          <h3 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
+          <h3 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
             Weekly Engagement
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -449,7 +449,7 @@ export function Dashboard() {
           </div>
 
           {/* Monthly Engagement Cards */}
-          <h3 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
+          <h3 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
             Monthly Engagement
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -484,7 +484,7 @@ export function Dashboard() {
             STAKING VOLUME
         ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Staking Volume
           </h2>
 
@@ -634,7 +634,7 @@ export function Dashboard() {
             WALLET ANALYSIS
         ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Wallet Analysis
           </h2>
 
@@ -748,12 +748,12 @@ export function Dashboard() {
             REWARDS DISTRIBUTION
         ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Rewards Distribution
           </h2>
 
           {/* APY Contract Claims */}
-          <h3 className="text-sm font-medium text-lavender mb-4">APY Contract Claims</h3>
+          <h3 className="text-base font-medium text-lavender mb-4">APY Contract Claims</h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
             <div className="flagship-card p-6">
@@ -827,7 +827,7 @@ export function Dashboard() {
           </div>
 
           {/* Community Rewards */}
-          <h3 className="text-sm font-medium text-lavender mb-4">Community Rewards</h3>
+          <h3 className="text-base font-medium text-lavender mb-4">Community Rewards</h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
             <div className="flagship-card p-6">
@@ -905,7 +905,7 @@ export function Dashboard() {
             STAKER RETENTION
         ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Staker Retention
           </h2>
 
@@ -989,7 +989,7 @@ export function Dashboard() {
             STAKING TIERS & TOP STAKERS
         ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Staking Tiers
           </h2>
           <ChartCard
