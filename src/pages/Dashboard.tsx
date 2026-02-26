@@ -858,15 +858,15 @@ export function Dashboard() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <ChartCard
-              title="Monthly LINGO Rewards"
-              subtitle="LINGO rewards sent to the community per month"
+              title="Monthly Reward Transfers"
+              subtitle="Number of reward transfers per month"
               isLoading={loadingCommunityRewards}
               lastUpdated={communityRewardsExecutedAt}
             >
               {communityRewardsData.length > 0 ? (
                 <SimpleBarChart
                   data={communityRewardsData}
-                  dataKey="lingoOut"
+                  dataKey="transfers"
                   xAxisKey="month"
                   color="#FF7847"
                   height={280}
@@ -879,17 +879,17 @@ export function Dashboard() {
             </ChartCard>
 
             <ChartCard
-              title="Monthly Reward Transfers"
-              subtitle="Number of reward transfers per month"
+              title="Monthly USD Value"
+              subtitle="USD value of community rewards per month"
               isLoading={loadingCommunityRewards}
               lastUpdated={communityRewardsExecutedAt}
             >
               {communityRewardsData.length > 0 ? (
                 <SimpleBarChart
                   data={communityRewardsData}
-                  dataKey="transfers"
+                  dataKey="usdValue"
                   xAxisKey="month"
-                  color="#C4B5D4"
+                  color="#5EB851"
                   height={280}
                 />
               ) : (
