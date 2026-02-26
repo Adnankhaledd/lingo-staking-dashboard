@@ -10,6 +10,7 @@ import type {
   LPFeesRow,
   MonthlyNewReturningRow,
   MonthlyLingoByLockRow,
+  CommunityRewardsRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -592,4 +593,59 @@ export function transformMonthlyLingoByLockData(data: MonthlyLingoByLockRow[] | 
         total: Math.round(row.total),
       };
     });
+}
+
+/**
+ * Transform weekly community rewards data into monthly breakdown (Dune query 6749507)
+ */
+export function transformCommunityRewardsData(data: CommunityRewardsRow[] | null) {
+  if (!data || data.length === 0) return [];
+
+  // Aggregate weekly data into monthly buckets
+  const monthlyMap = new Map<string, { transfers: number; lingoOut: number; usdValue: number }>();
+
+  data.forEach(row => {
+    const dateStr = parseDuneDate(row.week);
+    const date = new Date(dateStr);
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+    if (!monthlyMap.has(monthKey)) {
+      monthlyMap.set(monthKey, { transfers: 0, lingoOut: 0, usdValue: 0 });
+    }
+
+    const entry = monthlyMap.get(monthKey)!;
+    entry.transfers += row.transfers;
+    entry.lingoOut += row.lingo_out;
+    entry.usdValue += row.usd_value;
+  });
+
+  return Array.from(monthlyMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([monthKey, data]) => {
+      const [year, month] = monthKey.split('-');
+      const date = new Date(parseInt(year), parseInt(month) - 1);
+      const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+      return {
+        month: monthName,
+        transfers: data.transfers,
+        lingoOut: Math.round(data.lingoOut),
+        usdValue: Math.round(data.usdValue * 100) / 100,
+      };
+    });
+}
+
+/**
+ * Get total community rewards stats
+ */
+export function getCommunityRewardsTotals(data: CommunityRewardsRow[] | null) {
+  if (!data || data.length === 0) {
+    return { totalTransfers: 0, totalLingo: 0, totalUsd: 0 };
+  }
+
+  return {
+    totalTransfers: data.reduce((sum, row) => sum + row.transfers, 0),
+    totalLingo: data.reduce((sum, row) => sum + row.lingo_out, 0),
+    totalUsd: data.reduce((sum, row) => sum + row.usd_value, 0),
+  };
 }

@@ -228,6 +228,7 @@ export const DUNE_QUERIES = {
   MONTHLY_NEW_RETURNING: '6738028',
   STAKING_TIERS_BY_LOCK: '6738074',
   MONTHLY_LINGO_BY_LOCK: '6749292',
+  COMMUNITY_REWARDS: '6749507',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -349,6 +350,14 @@ export interface MonthlyLingoByLockRow {
   '6mo': number;
   '12mo': number;
   total: number;
+}
+
+export interface CommunityRewardsRow {
+  week: string;
+  transfers: number;
+  lingo_out: number;
+  usd_value: number;
+  price_used: number;
 }
 
 export interface StakingTiersByLockRow {

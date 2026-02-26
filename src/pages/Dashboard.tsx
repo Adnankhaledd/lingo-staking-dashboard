@@ -22,6 +22,7 @@ import {
   type MonthlyNewReturningRow,
   type StakingTiersByLockRow,
   type MonthlyLingoByLockRow,
+  type CommunityRewardsRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -38,6 +39,8 @@ import {
   transformMonthlyStakingFlowData,
   transformMonthlyNewReturningData,
   transformMonthlyLingoByLockData,
+  transformCommunityRewardsData,
+  getCommunityRewardsTotals,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -116,6 +119,12 @@ export function Dashboard() {
     isLoading: loadingLingoByLock,
     executedAt: lingoByLockExecutedAt,
   } = useDuneQuery<MonthlyLingoByLockRow>(DUNE_QUERIES.MONTHLY_LINGO_BY_LOCK);
+
+  const {
+    data: communityRewards,
+    isLoading: loadingCommunityRewards,
+    executedAt: communityRewardsExecutedAt,
+  } = useDuneQuery<CommunityRewardsRow>(DUNE_QUERIES.COMMUNITY_REWARDS);
 
   // Mixpanel data
   const {
@@ -205,6 +214,17 @@ export function Dashboard() {
   const monthlyLingoByLockData = useMemo(
     () => transformMonthlyLingoByLockData(monthlyLingoByLock),
     [monthlyLingoByLock]
+  );
+
+  // Community rewards data (weekly → monthly aggregation)
+  const communityRewardsData = useMemo(
+    () => transformCommunityRewardsData(communityRewards),
+    [communityRewards]
+  );
+
+  const communityRewardsTotals = useMemo(
+    () => getCommunityRewardsTotals(communityRewards),
+    [communityRewards]
   );
 
   // Export handlers
@@ -882,6 +902,88 @@ export function Dashboard() {
               ) : (
                 <div className="h-[280px] flex items-center justify-center text-soft-gray">
                   {loadingAPYClaims ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+        </section>
+
+        {/* Community Rewards Section */}
+        <section className="mb-10">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+            Community Rewards
+          </h2>
+
+          {/* Community Rewards KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total Claims</span>
+                <div className="text-2xl font-bold text-lavender mt-1">
+                  {loadingCommunityRewards ? '...' : communityRewardsTotals.totalTransfers.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total LINGO Sent</span>
+                <div className="text-2xl font-bold text-purple mt-1">
+                  {loadingCommunityRewards ? '...' : Math.round(communityRewardsTotals.totalLingo).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total USD Value</span>
+                <div className="text-2xl font-bold text-green1 mt-1">
+                  {loadingCommunityRewards ? '...' : `$${Math.round(communityRewardsTotals.totalUsd).toLocaleString()}`}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Community Rewards Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Monthly LINGO Sent */}
+            <ChartCard
+              title="Monthly LINGO Rewards"
+              subtitle="LINGO rewards sent to the community per month"
+              isLoading={loadingCommunityRewards}
+              lastUpdated={communityRewardsExecutedAt}
+            >
+              {communityRewardsData.length > 0 ? (
+                <SimpleBarChart
+                  data={communityRewardsData}
+                  dataKey="lingoOut"
+                  xAxisKey="month"
+                  color="#FF7847"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
+                  {loadingCommunityRewards ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            {/* Monthly Transfers Count */}
+            <ChartCard
+              title="Monthly Reward Transfers"
+              subtitle="Number of reward transfers per month"
+              isLoading={loadingCommunityRewards}
+              lastUpdated={communityRewardsExecutedAt}
+            >
+              {communityRewardsData.length > 0 ? (
+                <SimpleBarChart
+                  data={communityRewardsData}
+                  dataKey="transfers"
+                  xAxisKey="month"
+                  color="#C4B5D4"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
+                  {loadingCommunityRewards ? 'Loading...' : 'No data available'}
                 </div>
               )}
             </ChartCard>

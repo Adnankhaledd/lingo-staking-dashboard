@@ -197,7 +197,7 @@ export function Admin() {
             {isRefreshing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Refreshing all 14 queries...
+                Refreshing all 15 queries...
               </>
             ) : (
               <>
@@ -277,7 +277,7 @@ export function Admin() {
 
         {/* Info */}
         <div className="mt-6 text-center text-xs text-purple-gray">
-          <p>Dune cron runs daily at 06:00 UTC &middot; 14 queries &middot; Stored in Vercel Blob</p>
+          <p>Dune cron runs daily at 06:00 UTC &middot; 15 queries &middot; Stored in Vercel Blob</p>
           <p className="mt-1">Dune data: 5-min in-memory + 1-min CDN &middot; Mixpanel: 4h browser cache</p>
         </div>
       </div>
