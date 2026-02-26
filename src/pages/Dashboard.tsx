@@ -21,6 +21,7 @@ import {
   type LPFeesRow,
   type MonthlyNewReturningRow,
   type StakingTiersByLockRow,
+  type MonthlyLingoByLockRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -36,6 +37,7 @@ import {
   getAPYClaimsTotals,
   transformMonthlyStakingFlowData,
   transformMonthlyNewReturningData,
+  transformMonthlyLingoByLockData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -108,6 +110,12 @@ export function Dashboard() {
     isLoading: loadingStakingTiers,
     executedAt: stakingTiersExecutedAt,
   } = useDuneQuery<StakingTiersByLockRow>(DUNE_QUERIES.STAKING_TIERS_BY_LOCK);
+
+  const {
+    data: monthlyLingoByLock,
+    isLoading: loadingLingoByLock,
+    executedAt: lingoByLockExecutedAt,
+  } = useDuneQuery<MonthlyLingoByLockRow>(DUNE_QUERIES.MONTHLY_LINGO_BY_LOCK);
 
   // Mixpanel data
   const {
@@ -191,6 +199,12 @@ export function Dashboard() {
   const monthlyNewReturningData = useMemo(
     () => transformMonthlyNewReturningData(monthlyNewReturning),
     [monthlyNewReturning]
+  );
+
+  // Monthly LINGO staked by lock duration
+  const monthlyLingoByLockData = useMemo(
+    () => transformMonthlyLingoByLockData(monthlyLingoByLock),
+    [monthlyLingoByLock]
   );
 
   // Export handlers
@@ -626,6 +640,54 @@ export function Dashboard() {
             ) : (
               <div className="h-[300px] flex items-center justify-center text-soft-gray">
                 {loadingStakingFlow ? 'Loading...' : 'No data available'}
+              </div>
+            )}
+          </ChartCard>
+        </section>
+
+        {/* Monthly LINGO Staked by Lock Duration */}
+        <section className="mb-10">
+          <ChartCard
+            title="Monthly LINGO Staked by Lock Duration"
+            subtitle="New LINGO staked per month broken down by lock period"
+            isLoading={loadingLingoByLock}
+            lastUpdated={lingoByLockExecutedAt}
+          >
+            {monthlyLingoByLockData.length > 0 ? (
+              <BarChartComponent
+                data={monthlyLingoByLockData}
+                xAxisKey="month"
+                bars={[
+                  {
+                    dataKey: 'flexible',
+                    name: 'Flexible',
+                    color: '#7B68AE',
+                    stackId: 'lock',
+                  },
+                  {
+                    dataKey: 'threeMonth',
+                    name: '3 Month',
+                    color: '#C4B5D4',
+                    stackId: 'lock',
+                  },
+                  {
+                    dataKey: 'sixMonth',
+                    name: '6 Month',
+                    color: '#5EB851',
+                    stackId: 'lock',
+                  },
+                  {
+                    dataKey: 'twelveMonth',
+                    name: '12 Month',
+                    color: '#FF7847',
+                    stackId: 'lock',
+                  },
+                ]}
+                height={320}
+              />
+            ) : (
+              <div className="h-[320px] flex items-center justify-center text-soft-gray">
+                {loadingLingoByLock ? 'Loading...' : 'No data available'}
               </div>
             )}
           </ChartCard>

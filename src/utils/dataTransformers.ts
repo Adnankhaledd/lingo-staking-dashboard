@@ -9,6 +9,7 @@ import type {
   WeeklyStakesRow,
   LPFeesRow,
   MonthlyNewReturningRow,
+  MonthlyLingoByLockRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -564,6 +565,31 @@ export function transformMonthlyNewReturningData(data: MonthlyNewReturningRow[] 
         returningLingo: Math.round(row.returning_lingo_staked),
         totalLingo: Math.round(row.total_lingo_staked),
         totalWallets: row.new_wallets + row.returning_wallets,
+      };
+    });
+}
+
+/**
+ * Transform monthly LINGO staked by lock duration from Dune query 6749292
+ */
+export function transformMonthlyLingoByLockData(data: MonthlyLingoByLockRow[] | null) {
+  if (!data || data.length === 0) return [];
+
+  return [...data]
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map(row => {
+      const dateStr = parseDuneDate(row.month);
+      const [year, month] = dateStr.split('-');
+      const date = new Date(parseInt(year), parseInt(month) - 1);
+      const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+      return {
+        month: monthName,
+        flexible: Math.round(row.flexible),
+        threeMonth: Math.round(row['3mo']),
+        sixMonth: Math.round(row['6mo']),
+        twelveMonth: Math.round(row['12mo']),
+        total: Math.round(row.total),
       };
     });
 }
