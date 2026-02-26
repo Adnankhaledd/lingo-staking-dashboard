@@ -55,13 +55,15 @@ export function MixpanelKPICard({
           <span className="text-2xl font-bold text-lavender">
             {displayValue}
           </span>
-          {changePercent != null && changePercent !== 0 && (
+          {changePercent != null && (
             <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
               changePercent > 0
                 ? 'text-green1 bg-green1/10'
-                : 'text-red-400 bg-red-400/10'
+                : changePercent < 0
+                  ? 'text-red-400 bg-red-400/10'
+                  : 'text-soft-gray bg-white/5'
             }`}>
-              {changePercent > 0 ? '+' : ''}{changePercent.toFixed(1)}%
+              {changePercent > 0 ? '+' : ''}{changePercent === 0 ? '0.0' : changePercent.toFixed(1)}%
             </span>
           )}
         </div>
