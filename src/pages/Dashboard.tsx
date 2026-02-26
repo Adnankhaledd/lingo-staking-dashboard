@@ -659,28 +659,19 @@ export function Dashboard() {
                 xAxisKey="month"
                 bars={[
                   {
-                    dataKey: 'flexible',
-                    name: 'Flexible',
-                    color: '#7B68AE',
-                    stackId: 'lock',
-                  },
-                  {
                     dataKey: 'threeMonth',
                     name: '3 Month',
-                    color: '#C4B5D4',
-                    stackId: 'lock',
+                    color: '#7B68AE',
                   },
                   {
                     dataKey: 'sixMonth',
                     name: '6 Month',
                     color: '#5EB851',
-                    stackId: 'lock',
                   },
                   {
                     dataKey: 'twelveMonth',
                     name: '12 Month',
-                    color: '#FF7847',
-                    stackId: 'lock',
+                    color: '#D4A017',
                   },
                 ]}
                 height={320}
