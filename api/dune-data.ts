@@ -30,8 +30,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const data = await response.json();
 
-    // Cache at CDN for 5 minutes, serve stale for up to 24 hours
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=86400');
+    // Cache at CDN for 1 minute, allow stale for 5 minutes while revalidating.
+    // Short TTLs ensure admin refreshes are picked up quickly.
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
 
     return res.status(200).json(data);
   } catch (error) {

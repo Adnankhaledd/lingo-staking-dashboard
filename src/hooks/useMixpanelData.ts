@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache_v7';
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+const CACHE_KEY = 'mixpanel_data_cache_v8';
+const CACHE_DURATION = 4 * 60 * 60 * 1000; // 4 hours — short enough to recover from failures quickly
 
 interface DAUReportResponse {
   series: {

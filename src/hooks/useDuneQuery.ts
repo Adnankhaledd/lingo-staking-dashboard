@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const DUNE_API_BASE = 'https://api.dune.com/api/v1';
-const CACHE_VERSION = 'v4'; // Bump on migration to blob-based architecture
-const CACHE_PREFIX = `dune_${CACHE_VERSION}_`;
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
-// ─── Blob data singleton ────────────────────────────────────────────
+// ─── Blob data singleton with TTL ──────────────────────────────────
 // All useDuneQuery hooks share a single fetch to /api/dune-data.
 // This ensures only 1 network call regardless of how many hooks are mounted.
+// The singleton expires after 5 minutes so fresh data is picked up
+// on subsequent page loads without needing manual cache clearing.
+
+const BLOB_TTL = 5 * 60 * 1000; // 5 minutes — re-fetch from server after this
 
 interface BlobQueryResult {
   rows: unknown[];
@@ -24,11 +25,20 @@ interface BlobPayload {
 
 let blobPromise: Promise<BlobPayload | null> | null = null;
 let blobData: BlobPayload | null = null;
+let blobFetchedAt = 0;
 
 function fetchBlobData(): Promise<BlobPayload | null> {
-  if (blobData) return Promise.resolve(blobData);
+  const now = Date.now();
+
+  // If we have data and it's still fresh, return it
+  if (blobData && now - blobFetchedAt < BLOB_TTL) {
+    return Promise.resolve(blobData);
+  }
+
+  // If a fetch is already in-flight, reuse it
   if (blobPromise) return blobPromise;
 
+  // Expired or no data — fetch fresh
   blobPromise = fetch('/api/dune-data')
     .then(res => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -36,12 +46,14 @@ function fetchBlobData(): Promise<BlobPayload | null> {
     })
     .then((data: BlobPayload) => {
       blobData = data;
+      blobFetchedAt = Date.now();
+      blobPromise = null;
       return data;
     })
     .catch(err => {
       console.warn('Failed to fetch blob data:', err);
       blobPromise = null; // Allow retry on next hook mount
-      return null;
+      return blobData; // Return stale data if available
     });
 
   return blobPromise;
@@ -50,6 +62,7 @@ function fetchBlobData(): Promise<BlobPayload | null> {
 function resetBlobCache(): void {
   blobPromise = null;
   blobData = null;
+  blobFetchedAt = 0;
 }
 
 // ─── DuneResponse type (for direct API fallback in dev) ─────────────
@@ -71,14 +84,6 @@ interface DuneResponse<T> {
   error?: string;
 }
 
-// ─── localStorage cache layer (fallback) ────────────────────────────
-
-interface CachedData<T> {
-  data: T[];
-  timestamp: number;
-  executedAt?: string;
-}
-
 interface UseDuneQueryOptions {
   enabled?: boolean;
   limit?: number;
@@ -92,16 +97,10 @@ interface UseDuneQueryReturn<T> {
   refetch: () => Promise<void>;
 }
 
-// Soft refresh: reset in-memory blob cache only (localStorage stays as safety net)
-// Used by the Refresh button — re-fetches from blob endpoint on reload
-export function softRefresh(): void {
-  resetBlobCache();
-  console.log('Reset blob cache — will re-fetch from server on reload');
-}
-
-// Hard clear: wipe everything (localStorage + blob cache)
-// Only use for debugging, not for the Refresh button
+// Reset blob cache so next page load fetches fresh data from server.
+// Also clears any legacy localStorage entries from older cache versions.
 export function clearDuneCache(): void {
+  // Clean up legacy localStorage entries (from previous cache architecture)
   const keysToRemove: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
@@ -109,63 +108,17 @@ export function clearDuneCache(): void {
       keysToRemove.push(key);
     }
   }
-  keysToRemove.forEach(key => localStorage.removeItem(key));
+  if (keysToRemove.length > 0) {
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    console.log(`Cleaned up ${keysToRemove.length} legacy Dune localStorage entries`);
+  }
+
   resetBlobCache();
-  console.log(`Cleared ${keysToRemove.length} Dune cache entries + blob cache`);
+  console.log('Dune cache cleared — will re-fetch from server');
 }
 
-function parseCacheEntry<T>(key: string): { data: T[]; executedAt?: string; timestamp: number } | null {
-  try {
-    const cached = localStorage.getItem(key);
-    if (!cached) return null;
-
-    const parsed: CachedData<T> = JSON.parse(cached);
-    if (!parsed.data || parsed.data.length === 0) return null;
-    if (!parsed.executedAt) return null;
-
-    return { data: parsed.data, executedAt: parsed.executedAt, timestamp: parsed.timestamp };
-  } catch {
-    return null;
-  }
-}
-
-function getCachedData<T>(queryId: string | number): { data: T[]; executedAt?: string; isStale: boolean } | null {
-  const now = Date.now();
-
-  // Try current version first
-  const current = parseCacheEntry<T>(`${CACHE_PREFIX}${queryId}`);
-  if (current) {
-    const isFresh = now - current.timestamp < CACHE_DURATION;
-    if (isFresh) {
-      return { data: current.data, executedAt: current.executedAt, isStale: false };
-    }
-    return { data: current.data, executedAt: current.executedAt, isStale: true };
-  }
-
-  // Fallback: check previous cache versions
-  const legacyPrefixes = ['dune_v3_', 'dune_v2_', 'dune_v1_', 'dune_cache_'];
-  for (const prefix of legacyPrefixes) {
-    const legacy = parseCacheEntry<T>(`${prefix}${queryId}`);
-    if (legacy) {
-      return { data: legacy.data, executedAt: legacy.executedAt, isStale: true };
-    }
-  }
-
-  return null;
-}
-
-function setCachedData<T>(queryId: string | number, data: T[], executedAt?: string): void {
-  try {
-    const cacheEntry: CachedData<T> = {
-      data,
-      timestamp: Date.now(),
-      executedAt,
-    };
-    localStorage.setItem(`${CACHE_PREFIX}${queryId}`, JSON.stringify(cacheEntry));
-  } catch (e) {
-    console.warn('Failed to cache Dune data:', e);
-  }
-}
+// Alias kept for backward compat
+export const softRefresh = clearDuneCache;
 
 // ─── Main hook ──────────────────────────────────────────────────────
 
@@ -179,32 +132,12 @@ export function useDuneQuery<T>(
   const [error, setError] = useState<string | null>(null);
   const [executedAt, setExecutedAt] = useState<string | null>(null);
 
-  const fetchData = useCallback(async (forceRefresh = false) => {
-    // Check localStorage cache first
-    const cached = getCachedData<T>(queryId);
-
-    // If cache is fresh and not forcing, use it directly
-    if (!forceRefresh && cached && !cached.isStale) {
-      setData(cached.data);
-      setExecutedAt(cached.executedAt ?? null);
-      setIsLoading(false);
-      return;
-    }
-
-    // Show stale data immediately while fetching fresh
-    if (cached) {
-      setData(cached.data);
-      setExecutedAt(cached.executedAt ?? null);
-    }
-
-    // Only show loading spinner if we have nothing at all
-    if (!cached) {
-      setIsLoading(true);
-    }
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
     setError(null);
 
     try {
-      // PRIMARY: Try the blob endpoint (single server-cached response)
+      // PRIMARY: Fetch from blob endpoint (shared singleton, 5-min TTL)
       const blob = await fetchBlobData();
 
       if (blob && blob.queries[String(queryId)]) {
@@ -217,7 +150,6 @@ export function useDuneQuery<T>(
         const rows = (queryResult.rows ?? []) as T[];
 
         if (rows.length > 0) {
-          setCachedData(queryId, rows, queryResult.executedAt ?? undefined);
           setData(rows);
           setExecutedAt(queryResult.executedAt ?? null);
           setIsLoading(false);
@@ -228,11 +160,6 @@ export function useDuneQuery<T>(
       // FALLBACK: Direct Dune API (dev mode or blob unavailable)
       const apiKey = import.meta.env.VITE_DUNE_API_KEY;
       if (!apiKey) {
-        // No blob data and no API key — use cached data or show error
-        if (cached) {
-          setIsLoading(false);
-          return;
-        }
         throw new Error('No data available — waiting for server refresh');
       }
 
@@ -260,24 +187,14 @@ export function useDuneQuery<T>(
       const queryExecutedAt = result.execution_ended_at;
 
       if (rows.length > 0) {
-        setCachedData(queryId, rows, queryExecutedAt);
         setData(rows);
         setExecutedAt(queryExecutedAt ?? null);
-      } else if (cached) {
-        console.warn(`Dune query ${queryId} returned empty, keeping cached data`);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'An error occurred';
       console.warn(`Data fetch error for query ${queryId}: ${errorMsg}`);
-
-      // Keep showing cached data if available
-      if (cached) {
-        setData(cached.data);
-        setExecutedAt(cached.executedAt ?? null);
-      } else {
-        setError(errorMsg);
-        setData(null);
-      }
+      setError(errorMsg);
+      setData(null);
     } finally {
       setIsLoading(false);
     }
@@ -289,7 +206,7 @@ export function useDuneQuery<T>(
     }
   }, [enabled, fetchData]);
 
-  return { data, isLoading, error, executedAt, refetch: () => fetchData(true) };
+  return { data, isLoading, error, executedAt, refetch: fetchData };
 }
 
 // ─── Query IDs ──────────────────────────────────────────────────────

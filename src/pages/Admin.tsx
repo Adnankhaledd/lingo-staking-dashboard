@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { RefreshCw, ArrowLeft, Database, Trash2, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import lingoLogo from '../assets/logo-lingo.svg';
+import { clearDuneCache } from '../hooks/useDuneQuery';
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
 const SESSION_KEY = 'admin_password';
@@ -62,9 +63,9 @@ export function Admin() {
           setResult(data);
         }
       } else {
-        // Success — clear all browser caches so dashboard picks up fresh data
-        clearAllDuneLocalStorage();
-        clearAllMixpanelLocalStorage();
+        // Success — reset caches so dashboard picks up fresh data
+        clearDuneCache();
+        clearMixpanelCache();
         setResult(data);
       }
     } catch (err) {
@@ -74,21 +75,8 @@ export function Admin() {
     }
   }, []);
 
-  // Clear all Dune localStorage entries (keys like dune_v4_6590984, etc.)
-  const clearAllDuneLocalStorage = () => {
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('dune_')) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach(key => localStorage.removeItem(key));
-    return keysToRemove.length;
-  };
-
-  // Clear all Mixpanel localStorage entries
-  const clearAllMixpanelLocalStorage = () => {
+  // Clear Mixpanel localStorage cache
+  const clearMixpanelCache = () => {
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -97,17 +85,17 @@ export function Admin() {
       }
     }
     keysToRemove.forEach(key => localStorage.removeItem(key));
-    return keysToRemove.length;
+    console.log(`Cleared ${keysToRemove.length} Mixpanel cache entries`);
   };
 
   const handleClearMixpanelCache = () => {
-    clearAllMixpanelLocalStorage();
+    clearMixpanelCache();
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 3000);
   };
 
   const handleClearDuneCache = () => {
-    clearAllDuneLocalStorage();
+    clearDuneCache();
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 3000);
   };
@@ -238,7 +226,7 @@ export function Admin() {
                   ) : (
                     <>
                       <p className="text-green1 font-medium">{result.message}</p>
-                      <p className="text-purple-gray mt-1">Browser caches cleared automatically.</p>
+                      <p className="text-purple-gray mt-1">Caches cleared — reload dashboard to see fresh data.</p>
                       {result.refreshedAt && (
                         <p className="text-purple-gray">
                           Refreshed at: {new Date(result.refreshedAt).toLocaleString()}
@@ -290,7 +278,7 @@ export function Admin() {
         {/* Info */}
         <div className="mt-6 text-center text-xs text-purple-gray">
           <p>Dune cron runs daily at 06:00 UTC &middot; 13 queries &middot; Stored in Vercel Blob</p>
-          <p className="mt-1">Mixpanel data cached 24h in browser localStorage</p>
+          <p className="mt-1">Dune data: 5-min in-memory + 1-min CDN &middot; Mixpanel: 4h browser cache</p>
         </div>
       </div>
     </div>
