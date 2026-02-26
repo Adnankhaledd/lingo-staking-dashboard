@@ -272,6 +272,10 @@ export function Dashboard() {
 
       {/* Main Content */}
       <main className="relative w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
+        {/* ═══════════════════════════════════════════════════════════════
+            HERO + OVERVIEW
+        ═══════════════════════════════════════════════════════════════ */}
+
         {/* Total Fees Hero Card */}
         <section className="mb-10">
           <TotalFeesCard totalFees={totalFeesData} isLoading={combinedFeesLoading} />
@@ -291,13 +295,15 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* Fees Charts */}
+        {/* ═══════════════════════════════════════════════════════════════
+            REVENUE & FEES
+        ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
           <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
-            Trading & LP Fees
+            Revenue & Fees
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Monthly Fees - Stacked */}
+            {/* Monthly Fees Breakdown */}
             <ChartCard
               title="Monthly Fees Breakdown"
               subtitle="Trading fees + Liquidity pool fees per month"
@@ -362,7 +368,9 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* Active Users Section - Mixpanel */}
+        {/* ═══════════════════════════════════════════════════════════════
+            ACTIVE USERS & ENGAGEMENT (Mixpanel)
+        ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
           <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Active Users
@@ -410,9 +418,9 @@ export function Dashboard() {
           />
 
           {/* Weekly Engagement Cards */}
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
+          <h3 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
             Weekly Engagement
-          </h2>
+          </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <MixpanelKPICard
               title="Asteroids Smashed"
@@ -441,9 +449,9 @@ export function Dashboard() {
           </div>
 
           {/* Monthly Engagement Cards */}
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
+          <h3 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
             Monthly Engagement
-          </h2>
+          </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <MixpanelKPICard
               title="Asteroids Smashed"
@@ -472,10 +480,16 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* Staking Charts */}
+        {/* ═══════════════════════════════════════════════════════════════
+            STAKING VOLUME
+        ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Total LINGO Staked */}
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+            Staking Volume
+          </h2>
+
+          {/* Row 1: Total Staked + Monthly Growth */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
             <ChartCard
               title="Total LINGO Staked"
               subtitle="Cumulative staking volume over time"
@@ -500,7 +514,31 @@ export function Dashboard() {
               )}
             </ChartCard>
 
-            {/* Monthly Net Flow */}
+            <ChartCard
+              title="Monthly Staking Growth"
+              subtitle="Month-over-month total staked"
+              onExport={handleExportMonthly}
+              isLoading={loadingTotalStaked}
+              lastUpdated={totalStakedExecutedAt}
+            >
+              {monthlyData.length > 0 ? (
+                <SimpleBarChart
+                  data={monthlyData}
+                  dataKey="volume"
+                  xAxisKey="month"
+                  color="#5EB851"
+                  height={320}
+                />
+              ) : (
+                <div className="h-[320px] flex items-center justify-center text-soft-gray">
+                  {loadingTotalStaked ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+
+          {/* Row 2: Net Flow + Staked vs Unstaked */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
             <ChartCard
               title="Monthly Net Flow"
               subtitle="Net LINGO staked minus unstaked per month"
@@ -513,160 +551,48 @@ export function Dashboard() {
                   dataKey="netFlow"
                   xAxisKey="month"
                   color="#5EB851"
-                  height={320}
+                  height={300}
                 />
               ) : (
-                <div className="h-[320px] flex items-center justify-center text-soft-gray">
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                  {loadingStakingFlow ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Monthly Staked vs Unstaked"
+              subtitle="LINGO staked (green) vs unstaked (red) per month"
+              isLoading={loadingStakingFlow}
+              lastUpdated={stakingFlowExecutedAt}
+            >
+              {stakingFlowData.length > 0 ? (
+                <BarChartComponent
+                  data={stakingFlowData}
+                  xAxisKey="month"
+                  bars={[
+                    {
+                      dataKey: 'staked',
+                      name: 'Staked',
+                      color: '#5EB851',
+                    },
+                    {
+                      dataKey: 'unstaked',
+                      name: 'Unstaked',
+                      color: '#E5484D',
+                    },
+                  ]}
+                  height={300}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
                   {loadingStakingFlow ? 'Loading...' : 'No data available'}
                 </div>
               )}
             </ChartCard>
           </div>
-        </section>
 
-        {/* Two Column Layout */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-10">
-          {/* New vs Returning Stakers */}
-          <ChartCard
-            title="New vs Returning Stakers"
-            subtitle="Weekly breakdown of staker types"
-            onExport={handleExportNewVsReturning}
-            isLoading={loadingNewStakers}
-            lastUpdated={newStakersExecutedAt}
-          >
-            {newVsReturningData.length > 0 ? (
-              <BarChartComponent
-                data={newVsReturningData}
-                xAxisKey="week"
-                formatXAxis={formatWeekDate}
-                bars={[
-                  {
-                    dataKey: 'returningStakers',
-                    name: 'Returning',
-                    color: '#7B68AE',
-                    stackId: 'stakers',
-                  },
-                  {
-                    dataKey: 'newStakers',
-                    name: 'New',
-                    color: '#C4B5D4',
-                    stackId: 'stakers',
-                  },
-                ]}
-                height={300}
-              />
-            ) : (
-              <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                {loadingNewStakers ? 'Loading...' : 'No data available'}
-              </div>
-            )}
-          </ChartCard>
-
-          {/* Monthly New vs Returning Wallets */}
-          <ChartCard
-            title="Monthly Wallets Breakdown"
-            subtitle="New (first-time) vs Returning (old wallets staking again)"
-            isLoading={loadingMonthlyNewReturning}
-            lastUpdated={monthlyNewReturningExecutedAt}
-          >
-            {monthlyNewReturningData.length > 0 ? (
-              <BarChartComponent
-                data={monthlyNewReturningData}
-                xAxisKey="month"
-                bars={[
-                  {
-                    dataKey: 'returningWallets',
-                    name: 'Returning',
-                    color: '#7B68AE',
-                    stackId: 'wallets',
-                  },
-                  {
-                    dataKey: 'newWallets',
-                    name: 'New',
-                    color: '#C4B5D4',
-                    stackId: 'wallets',
-                  },
-                ]}
-                height={300}
-              />
-            ) : (
-              <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
-              </div>
-            )}
-          </ChartCard>
-        </section>
-
-        {/* Monthly LINGO Volume by New vs Returning */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-10">
-          <ChartCard
-            title="Monthly LINGO Staked by Wallet Type"
-            subtitle="LINGO volume from new vs returning wallets"
-            isLoading={loadingMonthlyNewReturning}
-            lastUpdated={monthlyNewReturningExecutedAt}
-          >
-            {monthlyNewReturningData.length > 0 ? (
-              <BarChartComponent
-                data={monthlyNewReturningData}
-                xAxisKey="month"
-                bars={[
-                  {
-                    dataKey: 'returningLingo',
-                    name: 'Returning',
-                    color: '#7B68AE',
-                    stackId: 'lingo',
-                  },
-                  {
-                    dataKey: 'newLingo',
-                    name: 'New',
-                    color: '#C4B5D4',
-                    stackId: 'lingo',
-                  },
-                ]}
-                height={300}
-              />
-            ) : (
-              <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
-              </div>
-            )}
-          </ChartCard>
-
-          {/* Monthly Staked vs Unstaked */}
-          <ChartCard
-            title="Monthly Staked vs Unstaked"
-            subtitle="LINGO staked (green) vs unstaked (red) per month"
-            isLoading={loadingStakingFlow}
-            lastUpdated={stakingFlowExecutedAt}
-          >
-            {stakingFlowData.length > 0 ? (
-              <BarChartComponent
-                data={stakingFlowData}
-                xAxisKey="month"
-                bars={[
-                  {
-                    dataKey: 'staked',
-                    name: 'Staked',
-                    color: '#5EB851',
-                  },
-                  {
-                    dataKey: 'unstaked',
-                    name: 'Unstaked',
-                    color: '#E5484D',
-                  },
-                ]}
-                height={300}
-              />
-            ) : (
-              <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                {loadingStakingFlow ? 'Loading...' : 'No data available'}
-              </div>
-            )}
-          </ChartCard>
-        </section>
-
-        {/* Monthly LINGO Staked by Lock Duration */}
-        <section className="mb-10">
+          {/* Row 3: Lock Duration Breakdown */}
           <ChartCard
             title="Monthly LINGO Staked by Lock Duration"
             subtitle="New LINGO staked per month broken down by lock period"
@@ -704,47 +630,280 @@ export function Dashboard() {
           </ChartCard>
         </section>
 
-        {/* Monthly Growth */}
+        {/* ═══════════════════════════════════════════════════════════════
+            WALLET ANALYSIS
+        ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
+            Wallet Analysis
+          </h2>
+
+          {/* Row 1: Weekly New vs Returning + Monthly Wallets */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+            <ChartCard
+              title="New vs Returning Stakers"
+              subtitle="Weekly breakdown of staker types"
+              onExport={handleExportNewVsReturning}
+              isLoading={loadingNewStakers}
+              lastUpdated={newStakersExecutedAt}
+            >
+              {newVsReturningData.length > 0 ? (
+                <BarChartComponent
+                  data={newVsReturningData}
+                  xAxisKey="week"
+                  formatXAxis={formatWeekDate}
+                  bars={[
+                    {
+                      dataKey: 'returningStakers',
+                      name: 'Returning',
+                      color: '#7B68AE',
+                      stackId: 'stakers',
+                    },
+                    {
+                      dataKey: 'newStakers',
+                      name: 'New',
+                      color: '#C4B5D4',
+                      stackId: 'stakers',
+                    },
+                  ]}
+                  height={300}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                  {loadingNewStakers ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Monthly Wallets Breakdown"
+              subtitle="New (first-time) vs Returning (old wallets staking again)"
+              isLoading={loadingMonthlyNewReturning}
+              lastUpdated={monthlyNewReturningExecutedAt}
+            >
+              {monthlyNewReturningData.length > 0 ? (
+                <BarChartComponent
+                  data={monthlyNewReturningData}
+                  xAxisKey="month"
+                  bars={[
+                    {
+                      dataKey: 'returningWallets',
+                      name: 'Returning',
+                      color: '#7B68AE',
+                      stackId: 'wallets',
+                    },
+                    {
+                      dataKey: 'newWallets',
+                      name: 'New',
+                      color: '#C4B5D4',
+                      stackId: 'wallets',
+                    },
+                  ]}
+                  height={300}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                  {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+
+          {/* Row 2: LINGO by Wallet Type */}
           <ChartCard
-            title="Monthly Staking Growth"
-            subtitle="Month-over-month total staked"
-            onExport={handleExportMonthly}
-            isLoading={loadingTotalStaked}
-            lastUpdated={totalStakedExecutedAt}
+            title="Monthly LINGO Staked by Wallet Type"
+            subtitle="LINGO volume from new vs returning wallets"
+            isLoading={loadingMonthlyNewReturning}
+            lastUpdated={monthlyNewReturningExecutedAt}
           >
-            {monthlyData.length > 0 ? (
-              <SimpleBarChart
-                data={monthlyData}
-                dataKey="volume"
+            {monthlyNewReturningData.length > 0 ? (
+              <BarChartComponent
+                data={monthlyNewReturningData}
                 xAxisKey="month"
-                color="#5EB851"
+                bars={[
+                  {
+                    dataKey: 'returningLingo',
+                    name: 'Returning',
+                    color: '#7B68AE',
+                    stackId: 'lingo',
+                  },
+                  {
+                    dataKey: 'newLingo',
+                    name: 'New',
+                    color: '#C4B5D4',
+                    stackId: 'lingo',
+                  },
+                ]}
                 height={300}
               />
             ) : (
               <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                {loadingTotalStaked ? 'Loading...' : 'No data available'}
+                {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
               </div>
             )}
           </ChartCard>
         </section>
 
-        {/* Staking Tiers by Lock Period */}
+        {/* ═══════════════════════════════════════════════════════════════
+            REWARDS DISTRIBUTION
+        ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
           <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
-            Staking Tiers
+            Rewards Distribution
           </h2>
-          <ChartCard
-            title="Stakers by Tier & Lock Period"
-            subtitle="Active stakers grouped by USD value threshold and lock duration"
-            isLoading={loadingStakingTiers}
-            lastUpdated={stakingTiersExecutedAt}
-          >
-            <StakingTiersByLockTable data={stakingTiersByLock} isLoading={loadingStakingTiers} />
-          </ChartCard>
+
+          {/* APY Contract Claims */}
+          <h3 className="text-sm font-medium text-lavender mb-4">APY Contract Claims</h3>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total Claims</span>
+                <div className="text-2xl font-bold text-lavender mt-1">
+                  {loadingAPYClaims ? '...' : apyClaimsTotals.totalClaims.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total LINGO Claimed</span>
+                <div className="text-2xl font-bold text-purple mt-1">
+                  {loadingAPYClaims ? '...' : Math.round(apyClaimsTotals.totalLingo).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total USD Value</span>
+                <div className="text-2xl font-bold text-green1 mt-1">
+                  {loadingAPYClaims ? '...' : `$${Math.round(apyClaimsTotals.totalUsd).toLocaleString()}`}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-8">
+            <ChartCard
+              title="Monthly Claims Count"
+              subtitle="Number of APY reward claims per month"
+              isLoading={loadingAPYClaims}
+              lastUpdated={apyClaimsExecutedAt}
+            >
+              {apyClaimsData.length > 0 ? (
+                <SimpleBarChart
+                  data={apyClaimsData}
+                  dataKey="claims"
+                  xAxisKey="month"
+                  color="#C4B5D4"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
+                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Monthly LINGO Claimed"
+              subtitle="Amount of LINGO claimed per month"
+              isLoading={loadingAPYClaims}
+              lastUpdated={apyClaimsExecutedAt}
+            >
+              {apyClaimsData.length > 0 ? (
+                <SimpleBarChart
+                  data={apyClaimsData}
+                  dataKey="lingo"
+                  xAxisKey="month"
+                  color="#7B68AE"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
+                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+
+          {/* Community Rewards */}
+          <h3 className="text-sm font-medium text-lavender mb-4">Community Rewards</h3>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total Transfers</span>
+                <div className="text-2xl font-bold text-lavender mt-1">
+                  {loadingCommunityRewards ? '...' : communityRewardsTotals.totalTransfers.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total LINGO Sent</span>
+                <div className="text-2xl font-bold text-purple mt-1">
+                  {loadingCommunityRewards ? '...' : Math.round(communityRewardsTotals.totalLingo).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <span className="text-sm text-soft-gray">Total USD Value</span>
+                <div className="text-2xl font-bold text-green1 mt-1">
+                  {loadingCommunityRewards ? '...' : `$${Math.round(communityRewardsTotals.totalUsd).toLocaleString()}`}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <ChartCard
+              title="Monthly LINGO Rewards"
+              subtitle="LINGO rewards sent to the community per month"
+              isLoading={loadingCommunityRewards}
+              lastUpdated={communityRewardsExecutedAt}
+            >
+              {communityRewardsData.length > 0 ? (
+                <SimpleBarChart
+                  data={communityRewardsData}
+                  dataKey="lingoOut"
+                  xAxisKey="month"
+                  color="#FF7847"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
+                  {loadingCommunityRewards ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Monthly Reward Transfers"
+              subtitle="Number of reward transfers per month"
+              isLoading={loadingCommunityRewards}
+              lastUpdated={communityRewardsExecutedAt}
+            >
+              {communityRewardsData.length > 0 ? (
+                <SimpleBarChart
+                  data={communityRewardsData}
+                  dataKey="transfers"
+                  xAxisKey="month"
+                  color="#C4B5D4"
+                  height={280}
+                />
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-soft-gray">
+                  {loadingCommunityRewards ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
         </section>
 
-        {/* Monthly Retention */}
+        {/* ═══════════════════════════════════════════════════════════════
+            STAKER RETENTION
+        ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
           <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Staker Retention
@@ -826,171 +985,23 @@ export function Dashboard() {
           </ChartCard>
         </section>
 
-        {/* APY Claims Section */}
+        {/* ═══════════════════════════════════════════════════════════════
+            STAKING TIERS & TOP STAKERS
+        ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
           <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
-            APY Contract Claims
+            Staking Tiers
           </h2>
-
-          {/* APY Claims KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-            <div className="flagship-card p-6">
-              <div className="relative z-10">
-                <span className="text-sm text-soft-gray">Total Claims</span>
-                <div className="text-2xl font-bold text-lavender mt-1">
-                  {loadingAPYClaims ? '...' : apyClaimsTotals.totalClaims.toLocaleString()}
-                </div>
-              </div>
-            </div>
-            <div className="flagship-card p-6">
-              <div className="relative z-10">
-                <span className="text-sm text-soft-gray">Total LINGO Claimed</span>
-                <div className="text-2xl font-bold text-purple mt-1">
-                  {loadingAPYClaims ? '...' : Math.round(apyClaimsTotals.totalLingo).toLocaleString()}
-                </div>
-              </div>
-            </div>
-            <div className="flagship-card p-6">
-              <div className="relative z-10">
-                <span className="text-sm text-soft-gray">Total USD Value</span>
-                <div className="text-2xl font-bold text-green1 mt-1">
-                  {loadingAPYClaims ? '...' : `$${Math.round(apyClaimsTotals.totalUsd).toLocaleString()}`}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* APY Claims Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Claims Count */}
-            <ChartCard
-              title="Monthly Claims Count"
-              subtitle="Number of APY reward claims per month"
-              isLoading={loadingAPYClaims}
-              lastUpdated={apyClaimsExecutedAt}
-            >
-              {apyClaimsData.length > 0 ? (
-                <SimpleBarChart
-                  data={apyClaimsData}
-                  dataKey="claims"
-                  xAxisKey="month"
-                  color="#C4B5D4"
-                  height={280}
-                />
-              ) : (
-                <div className="h-[280px] flex items-center justify-center text-soft-gray">
-                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
-
-            {/* LINGO Amount Claimed */}
-            <ChartCard
-              title="Monthly LINGO Claimed"
-              subtitle="Amount of LINGO claimed per month"
-              isLoading={loadingAPYClaims}
-              lastUpdated={apyClaimsExecutedAt}
-            >
-              {apyClaimsData.length > 0 ? (
-                <SimpleBarChart
-                  data={apyClaimsData}
-                  dataKey="lingo"
-                  xAxisKey="month"
-                  color="#7B68AE"
-                  height={280}
-                />
-              ) : (
-                <div className="h-[280px] flex items-center justify-center text-soft-gray">
-                  {loadingAPYClaims ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
-          </div>
+          <ChartCard
+            title="Stakers by Tier & Lock Period"
+            subtitle="Active stakers grouped by USD value threshold and lock duration"
+            isLoading={loadingStakingTiers}
+            lastUpdated={stakingTiersExecutedAt}
+          >
+            <StakingTiersByLockTable data={stakingTiersByLock} isLoading={loadingStakingTiers} />
+          </ChartCard>
         </section>
 
-        {/* Community Rewards Section */}
-        <section className="mb-10">
-          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-5">
-            Community Rewards
-          </h2>
-
-          {/* Community Rewards KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-            <div className="flagship-card p-6">
-              <div className="relative z-10">
-                <span className="text-sm text-soft-gray">Total Claims</span>
-                <div className="text-2xl font-bold text-lavender mt-1">
-                  {loadingCommunityRewards ? '...' : communityRewardsTotals.totalTransfers.toLocaleString()}
-                </div>
-              </div>
-            </div>
-            <div className="flagship-card p-6">
-              <div className="relative z-10">
-                <span className="text-sm text-soft-gray">Total LINGO Sent</span>
-                <div className="text-2xl font-bold text-purple mt-1">
-                  {loadingCommunityRewards ? '...' : Math.round(communityRewardsTotals.totalLingo).toLocaleString()}
-                </div>
-              </div>
-            </div>
-            <div className="flagship-card p-6">
-              <div className="relative z-10">
-                <span className="text-sm text-soft-gray">Total USD Value</span>
-                <div className="text-2xl font-bold text-green1 mt-1">
-                  {loadingCommunityRewards ? '...' : `$${Math.round(communityRewardsTotals.totalUsd).toLocaleString()}`}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Community Rewards Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Monthly LINGO Sent */}
-            <ChartCard
-              title="Monthly LINGO Rewards"
-              subtitle="LINGO rewards sent to the community per month"
-              isLoading={loadingCommunityRewards}
-              lastUpdated={communityRewardsExecutedAt}
-            >
-              {communityRewardsData.length > 0 ? (
-                <SimpleBarChart
-                  data={communityRewardsData}
-                  dataKey="lingoOut"
-                  xAxisKey="month"
-                  color="#FF7847"
-                  height={280}
-                />
-              ) : (
-                <div className="h-[280px] flex items-center justify-center text-soft-gray">
-                  {loadingCommunityRewards ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
-
-            {/* Monthly Transfers Count */}
-            <ChartCard
-              title="Monthly Reward Transfers"
-              subtitle="Number of reward transfers per month"
-              isLoading={loadingCommunityRewards}
-              lastUpdated={communityRewardsExecutedAt}
-            >
-              {communityRewardsData.length > 0 ? (
-                <SimpleBarChart
-                  data={communityRewardsData}
-                  dataKey="transfers"
-                  xAxisKey="month"
-                  color="#C4B5D4"
-                  height={280}
-                />
-              ) : (
-                <div className="h-[280px] flex items-center justify-center text-soft-gray">
-                  {loadingCommunityRewards ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
-          </div>
-        </section>
-
-        {/* Top Stakers Table */}
         <section className="mb-10">
           <TopStakersTable
             data={topStakers ?? []}
