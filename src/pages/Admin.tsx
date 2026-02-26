@@ -62,6 +62,9 @@ export function Admin() {
           setResult(data);
         }
       } else {
+        // Success — clear all browser caches so dashboard picks up fresh data
+        clearAllDuneLocalStorage();
+        clearAllMixpanelLocalStorage();
         setResult(data);
       }
     } catch (err) {
@@ -71,21 +74,40 @@ export function Admin() {
     }
   }, []);
 
-  const handleClearMixpanelCache = () => {
-    // Clear all mixpanel cache versions
-    for (let i = 1; i <= 10; i++) {
-      localStorage.removeItem(`mixpanel_data_cache_v${i}`);
+  // Clear all Dune localStorage entries (keys like dune_v4_6590984, etc.)
+  const clearAllDuneLocalStorage = () => {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('dune_')) {
+        keysToRemove.push(key);
+      }
     }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    return keysToRemove.length;
+  };
+
+  // Clear all Mixpanel localStorage entries
+  const clearAllMixpanelLocalStorage = () => {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('mixpanel_')) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    return keysToRemove.length;
+  };
+
+  const handleClearMixpanelCache = () => {
+    clearAllMixpanelLocalStorage();
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 3000);
   };
 
   const handleClearDuneCache = () => {
-    // Clear all dune cache versions
-    for (let i = 1; i <= 10; i++) {
-      localStorage.removeItem(`dune_blob_cache_v${i}`);
-    }
-    localStorage.removeItem('dune_blob_cache');
+    clearAllDuneLocalStorage();
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 3000);
   };
@@ -216,8 +238,9 @@ export function Admin() {
                   ) : (
                     <>
                       <p className="text-green1 font-medium">{result.message}</p>
+                      <p className="text-purple-gray mt-1">Browser caches cleared automatically.</p>
                       {result.refreshedAt && (
-                        <p className="text-purple-gray mt-1">
+                        <p className="text-purple-gray">
                           Refreshed at: {new Date(result.refreshedAt).toLocaleString()}
                         </p>
                       )}
