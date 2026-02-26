@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache_v6';
+const CACHE_KEY = 'mixpanel_data_cache_v7';
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 interface DAUReportResponse {
@@ -291,10 +291,10 @@ export function useMixpanelData() {
           return;
         }
 
-        // Fetch fresh data (WAU/MAU have catch handlers so a single failure
-        // doesn't prevent the rest of the dashboard from loading)
+        // Fetch fresh data — all calls have catch handlers so a single failure
+        // doesn't prevent the rest of the dashboard from loading
         const [dauReport, wau, mau, engagement, monthlyEngagement] = await Promise.all([
-          fetchDAUReport(),
+          fetchDAUReport().catch((err) => { console.warn('DAU fetch failed, will retry next load:', err); return null; }),
           fetchWAU().catch((err) => { console.warn('WAU fetch failed, will retry next load:', err); return -1; }),
           fetchMAU().catch((err) => { console.warn('MAU fetch failed, will retry next load:', err); return -1; }),
           fetchWeeklyEngagement().catch(() => ({
@@ -309,7 +309,8 @@ export function useMixpanelData() {
           })),
         ]);
 
-        const dauTrend = transformDAUData(dauReport);
+        const dauFailed = !dauReport;
+        const dauTrend = dauReport ? transformDAUData(dauReport) : [];
         const currentDAU = dauTrend.length > 0 ? dauTrend[dauTrend.length - 1].value : 0;
         const avgDAU = dauTrend.length > 0
           ? Math.round(dauTrend.reduce((sum, d) => sum + d.value, 0) / dauTrend.length)
@@ -338,8 +339,10 @@ export function useMixpanelData() {
 
         // Only cache if all critical metrics succeeded — prevents
         // stale 0 values from being locked in for 24 hours
-        if (!wauFailed && !mauFailed && engagementTotalsOk) {
+        if (!dauFailed && !wauFailed && !mauFailed && engagementTotalsOk) {
           setCachedData(metrics);
+        } else {
+          console.warn(`Skipping cache — partial failure: DAU=${dauFailed ? 'FAIL' : 'ok'} WAU=${wauFailed ? 'FAIL' : 'ok'} MAU=${mauFailed ? 'FAIL' : 'ok'}`);
         }
         setData(metrics);
       } catch (err) {
