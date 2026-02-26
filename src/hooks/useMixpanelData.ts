@@ -2,8 +2,17 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache_v8';
-const CACHE_DURATION = 4 * 60 * 60 * 1000; // 4 hours — short enough to recover from failures quickly
+const CACHE_KEY = 'mixpanel_data_cache_v9';
+const CACHE_DURATION = 4 * 60 * 60 * 1000; // 4 hours
+
+// ─── Types ───────────────────────────────────────────────────────────
+
+interface EventsResponse {
+  data: {
+    series: string[];
+    values: Record<string, Record<string, number>>;
+  };
+}
 
 interface DAUReportResponse {
   series: {
@@ -12,13 +21,6 @@ interface DAUReportResponse {
   date_range: {
     from_date: string;
     to_date: string;
-  };
-}
-
-interface EventsResponse {
-  data: {
-    series: string[];
-    values: Record<string, Record<string, number>>;
   };
 }
 
@@ -57,12 +59,25 @@ export interface MixpanelMetrics {
   monthlyRewardsClaimed: MonthlyEngagement;
 }
 
+// ─── Combined API response shape ─────────────────────────────────────
+
+interface AllMixpanelResponse {
+  dau: DAUReportResponse | null;
+  wau: EventsResponse | null;
+  mau: EventsResponse | null;
+  weeklyEngagement: { totals: EventsResponse; unique: EventsResponse } | null;
+  monthlyEngagement: { totals: EventsResponse; unique: EventsResponse } | null;
+  errors?: Record<string, string>;
+  fetchedAt: string;
+}
+
+// ─── Cache ───────────────────────────────────────────────────────────
+
 interface CachedData {
   data: MixpanelMetrics;
   timestamp: number;
 }
 
-// Check if cache is valid
 function getCachedData(): MixpanelMetrics | null {
   try {
     const cached = localStorage.getItem(CACHE_KEY);
@@ -83,173 +98,16 @@ function getCachedData(): MixpanelMetrics | null {
   }
 }
 
-// Save to cache
 function setCachedData(data: MixpanelMetrics): void {
   try {
-    const cacheEntry: CachedData = {
-      data,
-      timestamp: Date.now(),
-    };
+    const cacheEntry: CachedData = { data, timestamp: Date.now() };
     localStorage.setItem(CACHE_KEY, JSON.stringify(cacheEntry));
   } catch (e) {
     console.warn('Failed to cache Mixpanel data:', e);
   }
 }
 
-// Fetch DAU from the API proxy
-async function fetchDAUReport(): Promise<DAUReportResponse> {
-  const response = await fetch(`${API_BASE}/api/mixpanel?type=dau`);
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  return response.json();
-}
-
-// Fetch WAU from the API proxy
-async function fetchWAU(): Promise<number> {
-  const response = await fetch(`${API_BASE}/api/mixpanel?type=wau`);
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  const data: EventsResponse = await response.json();
-  const walletData = data.data?.values?.['Wallet Connected'] || {};
-  const dates = Object.keys(walletData).sort();
-  // Use the most recent week's unique count (not the sum of all weeks)
-  if (dates.length === 0) return 0;
-  return walletData[dates[dates.length - 1]] ?? 0;
-}
-
-// Fetch MAU from the API proxy
-async function fetchMAU(): Promise<number> {
-  const response = await fetch(`${API_BASE}/api/mixpanel?type=mau`);
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  const data: EventsResponse = await response.json();
-  const values = Object.values(data.data?.values?.['Wallet Connected'] || {});
-  return values.reduce((sum, val) => sum + val, 0);
-}
-
-// Response shape from combined weekly_engagement endpoint
-interface WeeklyEngagementResponse {
-  totals: EventsResponse;
-  unique: EventsResponse;
-}
-
-// Fetch weekly engagement events (asteroids, raffles, rewards)
-async function fetchWeeklyEngagement(): Promise<{
-  asteroidsSmashed: WeeklyEngagement;
-  raffleEntries: WeeklyEngagement;
-  rewardsClaimed: WeeklyEngagement;
-}> {
-  const response = await fetch(`${API_BASE}/api/mixpanel?type=weekly_engagement`);
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  const data: WeeklyEngagementResponse = await response.json();
-  const totalValues = data.totals?.data?.values || {};
-  const uniqueValues = data.unique?.data?.values || {};
-
-  // Validate that both sub-requests returned real data — if totals is
-  // empty but unique has data, the general API call failed silently
-  const hasTotals = Object.keys(totalValues).length > 0;
-  const hasUnique = Object.keys(uniqueValues).length > 0;
-  if (!hasTotals && hasUnique) {
-    console.warn('Weekly engagement totals empty but unique has data — partial API failure');
-  }
-
-  // Helper: pick the most recent period's value from a date-keyed object
-  function latestValue(obj: Record<string, number>): number {
-    const dates = Object.keys(obj).sort();
-    return dates.length > 0 ? obj[dates[dates.length - 1]] ?? 0 : 0;
-  }
-  function prevValue(obj: Record<string, number>): number {
-    const dates = Object.keys(obj).sort();
-    return dates.length > 1 ? obj[dates[dates.length - 2]] ?? 0 : 0;
-  }
-
-  function getWeeklyValues(eventName: string): WeeklyEngagement {
-    const eventData = totalValues[eventName] || {};
-    const uniqueData = uniqueValues[eventName] || {};
-
-    return {
-      thisWeek: latestValue(eventData),
-      lastWeek: prevValue(eventData),
-      thisWeekUsers: latestValue(uniqueData),
-      lastWeekUsers: prevValue(uniqueData),
-    };
-  }
-
-  return {
-    asteroidsSmashed: getWeeklyValues('Asteroid Smashed'),
-    raffleEntries: getWeeklyValues('Raffle Ticket Purchased'),
-    rewardsClaimed: getWeeklyValues('Reward Claimed'),
-  };
-}
-
-// Response shape from combined monthly_engagement endpoint
-interface MonthlyEngagementResponse {
-  totals: EventsResponse;
-  unique: EventsResponse;
-}
-
-// Fetch monthly engagement events (asteroids, raffles, rewards)
-async function fetchMonthlyEngagement(): Promise<{
-  monthlyAsteroidsSmashed: MonthlyEngagement;
-  monthlyRaffleEntries: MonthlyEngagement;
-  monthlyRewardsClaimed: MonthlyEngagement;
-}> {
-  const response = await fetch(`${API_BASE}/api/mixpanel?type=monthly_engagement`);
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  const data: MonthlyEngagementResponse = await response.json();
-  const totalValues = data.totals?.data?.values || {};
-  const uniqueValues = data.unique?.data?.values || {};
-
-  const hasTotals = Object.keys(totalValues).length > 0;
-  const hasUnique = Object.keys(uniqueValues).length > 0;
-  if (!hasTotals && hasUnique) {
-    console.warn('Monthly engagement totals empty but unique has data — partial API failure');
-  }
-
-  function latestVal(obj: Record<string, number>): number {
-    const dates = Object.keys(obj).sort();
-    return dates.length > 0 ? obj[dates[dates.length - 1]] ?? 0 : 0;
-  }
-  function prevVal(obj: Record<string, number>): number {
-    const dates = Object.keys(obj).sort();
-    return dates.length > 1 ? obj[dates[dates.length - 2]] ?? 0 : 0;
-  }
-
-  function getMonthlyValues(eventName: string): MonthlyEngagement {
-    const eventData = totalValues[eventName] || {};
-    const uniqueData = uniqueValues[eventName] || {};
-
-    return {
-      thisMonth: latestVal(eventData),
-      lastMonth: prevVal(eventData),
-      thisMonthUsers: latestVal(uniqueData),
-      lastMonthUsers: prevVal(uniqueData),
-    };
-  }
-
-  return {
-    monthlyAsteroidsSmashed: getMonthlyValues('Asteroid Smashed'),
-    monthlyRaffleEntries: getMonthlyValues('Raffle Ticket Purchased'),
-    monthlyRewardsClaimed: getMonthlyValues('Reward Claimed'),
-  };
-}
+// ─── Data transformation helpers ─────────────────────────────────────
 
 function transformDAUData(data: DAUReportResponse): DailyMetric[] {
   const dauSeries = data.series?.['A. DAU'] || {};
@@ -259,9 +117,7 @@ function transformDAUData(data: DAUReportResponse): DailyMetric[] {
       date: formatDate(dateStr),
       value,
     }))
-    .sort((a, b) => {
-      return new Date(a.date).getTime() - new Date(b.date).getTime();
-    });
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 }
 
 function formatDate(isoStr: string): string {
@@ -269,8 +125,54 @@ function formatDate(isoStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function latestValue(obj: Record<string, number>): number {
+  const dates = Object.keys(obj).sort();
+  return dates.length > 0 ? obj[dates[dates.length - 1]] ?? 0 : 0;
+}
+
+function prevValue(obj: Record<string, number>): number {
+  const dates = Object.keys(obj).sort();
+  return dates.length > 1 ? obj[dates[dates.length - 2]] ?? 0 : 0;
+}
+
+function parseWeeklyEngagement(
+  totals: EventsResponse | null,
+  unique: EventsResponse | null,
+  eventName: string
+): WeeklyEngagement {
+  const totalValues = totals?.data?.values?.[eventName] || {};
+  const uniqueValues = unique?.data?.values?.[eventName] || {};
+
+  return {
+    thisWeek: latestValue(totalValues),
+    lastWeek: prevValue(totalValues),
+    thisWeekUsers: latestValue(uniqueValues),
+    lastWeekUsers: prevValue(uniqueValues),
+  };
+}
+
+function parseMonthlyEngagement(
+  totals: EventsResponse | null,
+  unique: EventsResponse | null,
+  eventName: string
+): MonthlyEngagement {
+  const totalValues = totals?.data?.values?.[eventName] || {};
+  const uniqueValues = unique?.data?.values?.[eventName] || {};
+
+  return {
+    thisMonth: latestValue(totalValues),
+    lastMonth: prevValue(totalValues),
+    thisMonthUsers: latestValue(uniqueValues),
+    lastMonthUsers: prevValue(uniqueValues),
+  };
+}
+
+// ─── Defaults ────────────────────────────────────────────────────────
+
 const DEFAULT_ENGAGEMENT: WeeklyEngagement = { thisWeek: 0, lastWeek: 0, thisWeekUsers: 0, lastWeekUsers: 0 };
-const DEFAULT_MONTHLY_ENGAGEMENT: MonthlyEngagement = { thisMonth: 0, lastMonth: 0, thisMonthUsers: 0, lastMonthUsers: 0 };
+const DEFAULT_MONTHLY: MonthlyEngagement = { thisMonth: 0, lastMonth: 0, thisMonthUsers: 0, lastMonthUsers: 0 };
+
+// ─── Main hook ───────────────────────────────────────────────────────
 
 export function useMixpanelData() {
   const [data, setData] = useState<MixpanelMetrics | null>(null);
@@ -291,59 +193,89 @@ export function useMixpanelData() {
           return;
         }
 
-        // Fetch fresh data — all calls have catch handlers so a single failure
-        // doesn't prevent the rest of the dashboard from loading
-        const [dauReport, wau, mau, engagement, monthlyEngagement] = await Promise.all([
-          fetchDAUReport().catch((err) => { console.warn('DAU fetch failed, will retry next load:', err); return null; }),
-          fetchWAU().catch((err) => { console.warn('WAU fetch failed, will retry next load:', err); return -1; }),
-          fetchMAU().catch((err) => { console.warn('MAU fetch failed, will retry next load:', err); return -1; }),
-          fetchWeeklyEngagement().catch(() => ({
-            asteroidsSmashed: DEFAULT_ENGAGEMENT,
-            raffleEntries: DEFAULT_ENGAGEMENT,
-            rewardsClaimed: DEFAULT_ENGAGEMENT,
-          })),
-          fetchMonthlyEngagement().catch(() => ({
-            monthlyAsteroidsSmashed: DEFAULT_MONTHLY_ENGAGEMENT,
-            monthlyRaffleEntries: DEFAULT_MONTHLY_ENGAGEMENT,
-            monthlyRewardsClaimed: DEFAULT_MONTHLY_ENGAGEMENT,
-          })),
-        ]);
+        // ── Single API call fetches everything ──────────────────────
+        const response = await fetch(`${API_BASE}/api/mixpanel?type=all`);
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
 
-        const dauFailed = !dauReport;
-        const dauTrend = dauReport ? transformDAUData(dauReport) : [];
+        const raw: AllMixpanelResponse = await response.json();
+
+        if (raw.errors && Object.keys(raw.errors).length > 0) {
+          console.warn('Mixpanel partial errors:', raw.errors);
+        }
+
+        // ── Parse DAU ───────────────────────────────────────────────
+        const dauTrend = raw.dau ? transformDAUData(raw.dau) : [];
         const currentDAU = dauTrend.length > 0 ? dauTrend[dauTrend.length - 1].value : 0;
         const avgDAU = dauTrend.length > 0
           ? Math.round(dauTrend.reduce((sum, d) => sum + d.value, 0) / dauTrend.length)
           : 0;
 
-        // If WAU or MAU failed (-1 sentinel), show 0 but skip caching
-        // so next page load retries the fetch
-        const wauFailed = wau < 0;
-        const mauFailed = mau < 0;
+        // ── Parse WAU ───────────────────────────────────────────────
+        const wauData = raw.wau as EventsResponse | null;
+        const walletData = wauData?.data?.values?.['Wallet Connected'] || {};
+        const wauDates = Object.keys(walletData).sort();
+        const currentWAU = wauDates.length > 0 ? walletData[wauDates[wauDates.length - 1]] ?? 0 : 0;
 
+        // ── Parse MAU ───────────────────────────────────────────────
+        const mauData = raw.mau as EventsResponse | null;
+        const mauValues = Object.values(mauData?.data?.values?.['Wallet Connected'] || {});
+        const currentMAU = mauValues.reduce((sum, val) => sum + val, 0);
+
+        // ── Parse weekly engagement ─────────────────────────────────
+        const weTotals = raw.weeklyEngagement?.totals ?? null;
+        const weUnique = raw.weeklyEngagement?.unique ?? null;
+
+        const asteroidsSmashed = raw.weeklyEngagement
+          ? parseWeeklyEngagement(weTotals, weUnique, 'Asteroid Smashed')
+          : DEFAULT_ENGAGEMENT;
+        const raffleEntries = raw.weeklyEngagement
+          ? parseWeeklyEngagement(weTotals, weUnique, 'Raffle Ticket Purchased')
+          : DEFAULT_ENGAGEMENT;
+        const rewardsClaimed = raw.weeklyEngagement
+          ? parseWeeklyEngagement(weTotals, weUnique, 'Reward Claimed')
+          : DEFAULT_ENGAGEMENT;
+
+        // ── Parse monthly engagement ────────────────────────────────
+        const meTotals = raw.monthlyEngagement?.totals ?? null;
+        const meUnique = raw.monthlyEngagement?.unique ?? null;
+
+        const monthlyAsteroidsSmashed = raw.monthlyEngagement
+          ? parseMonthlyEngagement(meTotals, meUnique, 'Asteroid Smashed')
+          : DEFAULT_MONTHLY;
+        const monthlyRaffleEntries = raw.monthlyEngagement
+          ? parseMonthlyEngagement(meTotals, meUnique, 'Raffle Ticket Purchased')
+          : DEFAULT_MONTHLY;
+        const monthlyRewardsClaimed = raw.monthlyEngagement
+          ? parseMonthlyEngagement(meTotals, meUnique, 'Reward Claimed')
+          : DEFAULT_MONTHLY;
+
+        // ── Assemble metrics ────────────────────────────────────────
         const metrics: MixpanelMetrics = {
           dauTrend,
           currentDAU,
-          currentWAU: wauFailed ? 0 : wau,
-          currentMAU: mauFailed ? 0 : mau,
+          currentWAU,
+          currentMAU,
           avgDAU,
-          ...engagement,
-          ...monthlyEngagement,
+          asteroidsSmashed,
+          raffleEntries,
+          rewardsClaimed,
+          monthlyAsteroidsSmashed,
+          monthlyRaffleEntries,
+          monthlyRewardsClaimed,
         };
 
-        // Detect partial engagement failures: totals 0 but users > 0
-        // means the 'general' Mixpanel sub-request failed silently
-        const engagementTotalsOk =
-          engagement.asteroidsSmashed.thisWeek > 0 ||
-          engagement.asteroidsSmashed.thisWeekUsers === 0;
+        // Only cache if no critical errors (DAU + WAU + MAU all present)
+        const hasErrors = raw.errors && Object.keys(raw.errors).length > 0;
+        const criticalMissing = !raw.dau || !raw.wau || !raw.mau;
 
-        // Only cache if all critical metrics succeeded — prevents
-        // stale 0 values from being locked in for 24 hours
-        if (!dauFailed && !wauFailed && !mauFailed && engagementTotalsOk) {
+        if (!hasErrors && !criticalMissing) {
           setCachedData(metrics);
         } else {
-          console.warn(`Skipping cache — partial failure: DAU=${dauFailed ? 'FAIL' : 'ok'} WAU=${wauFailed ? 'FAIL' : 'ok'} MAU=${mauFailed ? 'FAIL' : 'ok'}`);
+          console.warn('Skipping Mixpanel cache — partial data received');
         }
+
         setData(metrics);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch Mixpanel data');
