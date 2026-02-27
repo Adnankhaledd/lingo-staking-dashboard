@@ -12,6 +12,7 @@ interface RefreshResult {
   refreshedAt?: string;
   newSuccessCount?: number;
   totalSuccessCount?: number;
+  successCount?: number;
   blobUrl?: string;
   kept?: boolean;
 }
@@ -20,7 +21,9 @@ export function Admin() {
   const [password, setPassword] = useState(() => sessionStorage.getItem(SESSION_KEY) || '');
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!sessionStorage.getItem(SESSION_KEY));
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshingMixpanel, setIsRefreshingMixpanel] = useState(false);
   const [result, setResult] = useState<RefreshResult | null>(null);
+  const [mixpanelResult, setMixpanelResult] = useState<RefreshResult | null>(null);
   const [cacheCleared, setCacheCleared] = useState(false);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -63,9 +66,8 @@ export function Admin() {
           setResult(data);
         }
       } else {
-        // Success — reset caches so dashboard picks up fresh data
+        // Success — reset Dune in-memory cache so dashboard picks up fresh data
         clearDuneCache();
-        clearMixpanelCache();
         setResult(data);
       }
     } catch (err) {
@@ -75,7 +77,41 @@ export function Admin() {
     }
   }, []);
 
-  // Clear Mixpanel localStorage cache
+  const handleRefreshMixpanel = useCallback(async () => {
+    setIsRefreshingMixpanel(true);
+    setMixpanelResult(null);
+
+    try {
+      const storedPassword = sessionStorage.getItem(SESSION_KEY) || '';
+      const response = await fetch(`${API_BASE}/api/refresh-mixpanel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Password': storedPassword,
+        },
+      });
+
+      const data: RefreshResult = await response.json();
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          sessionStorage.removeItem(SESSION_KEY);
+          setIsAuthenticated(false);
+          setMixpanelResult({ error: 'Wrong password. Please log in again.' });
+        } else {
+          setMixpanelResult(data);
+        }
+      } else {
+        setMixpanelResult(data);
+      }
+    } catch (err) {
+      setMixpanelResult({ error: err instanceof Error ? err.message : 'Network error' });
+    } finally {
+      setIsRefreshingMixpanel(false);
+    }
+  }, []);
+
+  // Clear Mixpanel localStorage cache (legacy cleanup)
   const clearMixpanelCache = () => {
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -240,6 +276,68 @@ export function Admin() {
           )}
         </section>
 
+        {/* Mixpanel Refresh */}
+        <section className="glass-card rounded-2xl p-6 mb-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-green1/10 flex items-center justify-center">
+              <Database className="w-5 h-5 text-green1" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-lavender">Mixpanel Data</h2>
+              <p className="text-xs text-purple-gray">Auto-refreshes daily at 6:05 AM UTC via cron</p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleRefreshMixpanel}
+            disabled={isRefreshingMixpanel}
+            className="w-full flex items-center justify-center gap-2 bg-green1/20 hover:bg-green1/30 disabled:opacity-50 disabled:cursor-not-allowed text-lavender font-medium py-3 rounded-xl transition-colors"
+          >
+            {isRefreshingMixpanel ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Refreshing Mixpanel data...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-4 h-4" />
+                Refresh Mixpanel Data Now
+              </>
+            )}
+          </button>
+
+          {mixpanelResult && (
+            <div className={`mt-4 p-4 rounded-xl border ${
+              mixpanelResult.error
+                ? 'bg-red-400/5 border-red-400/20'
+                : 'bg-green1/5 border-green1/20'
+            }`}>
+              <div className="flex items-start gap-2">
+                {mixpanelResult.error ? (
+                  <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                ) : (
+                  <CheckCircle className="w-4 h-4 text-green1 mt-0.5 shrink-0" />
+                )}
+                <div className="text-sm">
+                  {mixpanelResult.error ? (
+                    <p className="text-red-400">{mixpanelResult.error}</p>
+                  ) : (
+                    <>
+                      <p className="text-green1 font-medium">{mixpanelResult.message}</p>
+                      <p className="text-purple-gray mt-1">Reload dashboard to see fresh data.</p>
+                      {mixpanelResult.refreshedAt && (
+                        <p className="text-purple-gray">
+                          Refreshed at: {new Date(mixpanelResult.refreshedAt).toLocaleString()}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
         {/* Cache Management */}
         <section className="glass-card rounded-2xl p-6">
           <div className="flex items-center gap-3 mb-4">
@@ -252,20 +350,12 @@ export function Admin() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={handleClearMixpanelCache}
-              className="flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-soft-gray font-medium py-3 rounded-xl transition-colors text-sm"
-            >
-              Clear Mixpanel Cache
-            </button>
-            <button
-              onClick={handleClearDuneCache}
-              className="flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-soft-gray font-medium py-3 rounded-xl transition-colors text-sm"
-            >
-              Clear Dune Cache
-            </button>
-          </div>
+          <button
+            onClick={handleClearDuneCache}
+            className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-soft-gray font-medium py-3 rounded-xl transition-colors text-sm"
+          >
+            Clear Dune In-Memory Cache
+          </button>
 
           {cacheCleared && (
             <p className="mt-3 text-xs text-green1 flex items-center gap-1.5">
@@ -277,8 +367,8 @@ export function Admin() {
 
         {/* Info */}
         <div className="mt-6 text-center text-xs text-purple-gray">
-          <p>Dune cron runs daily at 06:00 UTC &middot; 15 queries &middot; Stored in Vercel Blob</p>
-          <p className="mt-1">Dune data: 5-min in-memory + 1-min CDN &middot; Mixpanel: 4h browser cache</p>
+          <p>Dune cron: 06:00 UTC &middot; 15 queries &middot; Mixpanel cron: 06:05 UTC</p>
+          <p className="mt-1">Both stored in Vercel Blob &middot; CDN cached 1 min + 5 min stale</p>
         </div>
       </div>
     </div>

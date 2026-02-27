@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react';
 
 // Use API proxy to avoid CORS issues
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-const CACHE_KEY = 'mixpanel_data_cache_v9';
-const CACHE_DURATION = 4 * 60 * 60 * 1000; // 4 hours
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -59,52 +57,16 @@ export interface MixpanelMetrics {
   monthlyRewardsClaimed: MonthlyEngagement;
 }
 
-// ─── Combined API response shape ─────────────────────────────────────
+// ─── Blob response shape (from /api/mixpanel serving blob data) ──────
 
-interface AllMixpanelResponse {
+interface MixpanelBlobResponse {
   dau: DAUReportResponse | null;
   wau: EventsResponse | null;
   mau: EventsResponse | null;
   weeklyEngagement: { totals: EventsResponse; unique: EventsResponse } | null;
   monthlyEngagement: { totals: EventsResponse; unique: EventsResponse } | null;
   errors?: Record<string, string>;
-  fetchedAt: string;
-}
-
-// ─── Cache ───────────────────────────────────────────────────────────
-
-interface CachedData {
-  data: MixpanelMetrics;
-  timestamp: number;
-}
-
-function getCachedData(): MixpanelMetrics | null {
-  try {
-    const cached = localStorage.getItem(CACHE_KEY);
-    if (!cached) return null;
-
-    const parsed: CachedData = JSON.parse(cached);
-    const now = Date.now();
-
-    if (now - parsed.timestamp < CACHE_DURATION) {
-      console.log('Using cached Mixpanel data');
-      return parsed.data;
-    }
-
-    console.log('Mixpanel cache expired');
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function setCachedData(data: MixpanelMetrics): void {
-  try {
-    const cacheEntry: CachedData = { data, timestamp: Date.now() };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheEntry));
-  } catch (e) {
-    console.warn('Failed to cache Mixpanel data:', e);
-  }
+  refreshedAt: string;
 }
 
 // ─── Data transformation helpers ─────────────────────────────────────
@@ -185,21 +147,13 @@ export function useMixpanelData() {
         setIsLoading(true);
         setError(null);
 
-        // Check cache first
-        const cachedData = getCachedData();
-        if (cachedData) {
-          setData(cachedData);
-          setIsLoading(false);
-          return;
-        }
-
-        // ── Single API call fetches everything ──────────────────────
-        const response = await fetch(`${API_BASE}/api/mixpanel?type=all`);
+        // Fetch from blob-served endpoint (CDN cached, no live Mixpanel calls)
+        const response = await fetch(`${API_BASE}/api/mixpanel`);
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
         }
 
-        const raw: AllMixpanelResponse = await response.json();
+        const raw: MixpanelBlobResponse = await response.json();
 
         if (raw.errors && Object.keys(raw.errors).length > 0) {
           console.warn('Mixpanel partial errors:', raw.errors);
@@ -265,16 +219,6 @@ export function useMixpanelData() {
           monthlyRaffleEntries,
           monthlyRewardsClaimed,
         };
-
-        // Only cache if no critical errors (DAU + WAU + MAU all present)
-        const hasErrors = raw.errors && Object.keys(raw.errors).length > 0;
-        const criticalMissing = !raw.dau || !raw.wau || !raw.mau;
-
-        if (!hasErrors && !criticalMissing) {
-          setCachedData(metrics);
-        } else {
-          console.warn('Skipping Mixpanel cache — partial data received');
-        }
 
         setData(metrics);
       } catch (err) {
