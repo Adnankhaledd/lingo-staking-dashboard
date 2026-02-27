@@ -111,25 +111,6 @@ export function Admin() {
     }
   }, []);
 
-  // Clear Mixpanel localStorage cache (legacy cleanup)
-  const clearMixpanelCache = () => {
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('mixpanel_')) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach(key => localStorage.removeItem(key));
-    console.log(`Cleared ${keysToRemove.length} Mixpanel cache entries`);
-  };
-
-  const handleClearMixpanelCache = () => {
-    clearMixpanelCache();
-    setCacheCleared(true);
-    setTimeout(() => setCacheCleared(false), 3000);
-  };
-
   const handleClearDuneCache = () => {
     clearDuneCache();
     setCacheCleared(true);
