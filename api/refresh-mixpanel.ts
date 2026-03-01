@@ -33,7 +33,7 @@ async function fetchDAU() {
 async function fetchWAU() {
   const today = new Date();
   const from = new Date(today);
-  from.setDate(from.getDate() - 90); // 12-13 weeks for trend chart
+  from.setDate(from.getDate() - 56); // ~8 weeks for trend chart
 
   const params = new URLSearchParams({
     project_id: PROJECT_ID,

@@ -88,6 +88,25 @@ function formatDate(isoStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+// Check if a date string falls within the current week (Mon-Sun)
+function isCurrentWeek(dateStr: string): boolean {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(now.getDate() + mondayOffset);
+  return date >= monday;
+}
+
+// Check if a date string falls within the current month
+function isCurrentMonth(dateStr: string): boolean {
+  const date = new Date(dateStr);
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+}
+
 function transformWAUData(data: EventsResponse | null): DailyMetric[] {
   const walletData = data?.data?.values?.['Wallet Connected'] || {};
   const entries = Object.entries(walletData)
@@ -98,8 +117,10 @@ function transformWAUData(data: EventsResponse | null): DailyMetric[] {
     }))
     .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-  // Skip the latest (partial) week
-  if (entries.length > 1) entries.pop();
+  // Only skip the latest entry if it falls in the current (partial) week
+  if (entries.length > 1 && isCurrentWeek(entries[entries.length - 1].sortKey)) {
+    entries.pop();
+  }
 
   return entries.map(({ date, value }) => ({ date, value }));
 }
@@ -107,6 +128,13 @@ function transformWAUData(data: EventsResponse | null): DailyMetric[] {
 function formatWeekLabel(isoStr: string): string {
   const date = new Date(isoStr);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function skipIfPartial(dates: string[], unit: 'week' | 'month'): string[] {
+  if (dates.length <= 1) return dates;
+  const lastDate = dates[dates.length - 1];
+  const isPartial = unit === 'week' ? isCurrentWeek(lastDate) : isCurrentMonth(lastDate);
+  return isPartial ? dates.slice(0, -1) : dates;
 }
 
 function parseWeeklyEngagement(
@@ -117,11 +145,8 @@ function parseWeeklyEngagement(
   const totalValues = totals?.data?.values?.[eventName] || {};
   const uniqueValues = unique?.data?.values?.[eventName] || {};
 
-  // Skip the latest (partial) week — show last complete week instead
-  const totalDates = Object.keys(totalValues).sort();
-  const uniqueDates = Object.keys(uniqueValues).sort();
-  if (totalDates.length > 1) totalDates.pop();
-  if (uniqueDates.length > 1) uniqueDates.pop();
+  const totalDates = skipIfPartial(Object.keys(totalValues).sort(), 'week');
+  const uniqueDates = skipIfPartial(Object.keys(uniqueValues).sort(), 'week');
 
   return {
     thisWeek: totalDates.length > 0 ? totalValues[totalDates[totalDates.length - 1]] ?? 0 : 0,
@@ -139,11 +164,8 @@ function parseMonthlyEngagement(
   const totalValues = totals?.data?.values?.[eventName] || {};
   const uniqueValues = unique?.data?.values?.[eventName] || {};
 
-  // Skip the latest (partial) month — show last complete month instead
-  const totalDates = Object.keys(totalValues).sort();
-  const uniqueDates = Object.keys(uniqueValues).sort();
-  if (totalDates.length > 1) totalDates.pop();
-  if (uniqueDates.length > 1) uniqueDates.pop();
+  const totalDates = skipIfPartial(Object.keys(totalValues).sort(), 'month');
+  const uniqueDates = skipIfPartial(Object.keys(uniqueValues).sort(), 'month');
 
   return {
     thisMonth: totalDates.length > 0 ? totalValues[totalDates[totalDates.length - 1]] ?? 0 : 0,

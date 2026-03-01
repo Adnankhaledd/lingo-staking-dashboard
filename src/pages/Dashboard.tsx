@@ -419,7 +419,7 @@ export function Dashboard() {
             />
             <MixpanelChart
               title="Weekly Active Users Trend"
-              subtitle="Unique active users per week (last 12 weeks)"
+              subtitle="Unique active users per week (last 8 weeks)"
               data={mixpanelData?.wauTrend ?? []}
               color="#5EB851"
               isLoading={loadingMixpanel}
