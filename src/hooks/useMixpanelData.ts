@@ -88,41 +88,16 @@ function formatDate(isoStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-// Check if a date string falls within the current week (Mon-Sun)
-function isCurrentWeek(dateStr: string): boolean {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(now.getDate() + mondayOffset);
-  return date >= monday;
-}
-
-// Check if a date string falls within the current month
-function isCurrentMonth(dateStr: string): boolean {
-  const date = new Date(dateStr);
-  const now = new Date();
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
-}
-
 function transformWAUData(data: EventsResponse | null): DailyMetric[] {
   const walletData = data?.data?.values?.['Wallet Connected'] || {};
-  const entries = Object.entries(walletData)
+  return Object.entries(walletData)
     .map(([dateStr, value]) => ({
       date: formatWeekLabel(dateStr),
       value,
       sortKey: dateStr,
     }))
-    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-
-  // Only skip the latest entry if it falls in the current (partial) week
-  if (entries.length > 1 && isCurrentWeek(entries[entries.length - 1].sortKey)) {
-    entries.pop();
-  }
-
-  return entries.map(({ date, value }) => ({ date, value }));
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+    .map(({ date, value }) => ({ date, value }));
 }
 
 function formatWeekLabel(isoStr: string): string {
@@ -130,11 +105,12 @@ function formatWeekLabel(isoStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function skipIfPartial(dates: string[], unit: 'week' | 'month'): string[] {
-  if (dates.length <= 1) return dates;
-  const lastDate = dates[dates.length - 1];
-  const isPartial = unit === 'week' ? isCurrentWeek(lastDate) : isCurrentMonth(lastDate);
-  return isPartial ? dates.slice(0, -1) : dates;
+function latestAndPrev(obj: Record<string, number>): { latest: number; prev: number } {
+  const dates = Object.keys(obj).sort();
+  return {
+    latest: dates.length > 0 ? obj[dates[dates.length - 1]] ?? 0 : 0,
+    prev: dates.length > 1 ? obj[dates[dates.length - 2]] ?? 0 : 0,
+  };
 }
 
 function parseWeeklyEngagement(
@@ -144,15 +120,14 @@ function parseWeeklyEngagement(
 ): WeeklyEngagement {
   const totalValues = totals?.data?.values?.[eventName] || {};
   const uniqueValues = unique?.data?.values?.[eventName] || {};
-
-  const totalDates = skipIfPartial(Object.keys(totalValues).sort(), 'week');
-  const uniqueDates = skipIfPartial(Object.keys(uniqueValues).sort(), 'week');
+  const t = latestAndPrev(totalValues);
+  const u = latestAndPrev(uniqueValues);
 
   return {
-    thisWeek: totalDates.length > 0 ? totalValues[totalDates[totalDates.length - 1]] ?? 0 : 0,
-    lastWeek: totalDates.length > 1 ? totalValues[totalDates[totalDates.length - 2]] ?? 0 : 0,
-    thisWeekUsers: uniqueDates.length > 0 ? uniqueValues[uniqueDates[uniqueDates.length - 1]] ?? 0 : 0,
-    lastWeekUsers: uniqueDates.length > 1 ? uniqueValues[uniqueDates[uniqueDates.length - 2]] ?? 0 : 0,
+    thisWeek: t.latest,
+    lastWeek: t.prev,
+    thisWeekUsers: u.latest,
+    lastWeekUsers: u.prev,
   };
 }
 
@@ -163,15 +138,14 @@ function parseMonthlyEngagement(
 ): MonthlyEngagement {
   const totalValues = totals?.data?.values?.[eventName] || {};
   const uniqueValues = unique?.data?.values?.[eventName] || {};
-
-  const totalDates = skipIfPartial(Object.keys(totalValues).sort(), 'month');
-  const uniqueDates = skipIfPartial(Object.keys(uniqueValues).sort(), 'month');
+  const t = latestAndPrev(totalValues);
+  const u = latestAndPrev(uniqueValues);
 
   return {
-    thisMonth: totalDates.length > 0 ? totalValues[totalDates[totalDates.length - 1]] ?? 0 : 0,
-    lastMonth: totalDates.length > 1 ? totalValues[totalDates[totalDates.length - 2]] ?? 0 : 0,
-    thisMonthUsers: uniqueDates.length > 0 ? uniqueValues[uniqueDates[uniqueDates.length - 1]] ?? 0 : 0,
-    lastMonthUsers: uniqueDates.length > 1 ? uniqueValues[uniqueDates[uniqueDates.length - 2]] ?? 0 : 0,
+    thisMonth: t.latest,
+    lastMonth: t.prev,
+    thisMonthUsers: u.latest,
+    lastMonthUsers: u.prev,
   };
 }
 

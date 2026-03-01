@@ -69,13 +69,18 @@ async function fetchEngagement(unit: 'week' | 'month', daysBack: number) {
   const from = new Date(today);
   from.setDate(from.getDate() - daysBack);
 
+  // Use yesterday as to_date so Mixpanel doesn't create a partial
+  // current-week or current-month bucket (the cron runs daily at 06:05 UTC)
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
   const events = ['Asteroid Smashed', 'Raffle Ticket Purchased', 'Task Completed'];
   const baseParams = {
     project_id: PROJECT_ID,
     event: JSON.stringify(events),
     unit,
     from_date: toDateStr(from),
-    to_date: toDateStr(today),
+    to_date: toDateStr(yesterday),
   };
 
   // Sequential: totals first, then unique — avoids rate limiting
