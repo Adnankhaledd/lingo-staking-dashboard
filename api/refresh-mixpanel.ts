@@ -179,12 +179,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   let weeklyEngagement = null;
-  try { weeklyEngagement = await fetchEngagement('week', 14); } catch (e) {
+  try { weeklyEngagement = await fetchEngagement('week', 21); } catch (e) {
     errors.weeklyEngagement = e instanceof Error ? e.message : 'Failed';
   }
 
   let monthlyEngagement = null;
-  try { monthlyEngagement = await fetchEngagement('month', 60); } catch (e) {
+  try { monthlyEngagement = await fetchEngagement('month', 90); } catch (e) {
     errors.monthlyEngagement = e instanceof Error ? e.message : 'Failed';
   }
 

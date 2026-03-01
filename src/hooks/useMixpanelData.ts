@@ -105,11 +105,17 @@ function parseWeeklyEngagement(
   const totalValues = totals?.data?.values?.[eventName] || {};
   const uniqueValues = unique?.data?.values?.[eventName] || {};
 
+  // Skip the latest (partial) week — show last complete week instead
+  const totalDates = Object.keys(totalValues).sort();
+  const uniqueDates = Object.keys(uniqueValues).sort();
+  if (totalDates.length > 1) totalDates.pop();
+  if (uniqueDates.length > 1) uniqueDates.pop();
+
   return {
-    thisWeek: latestValue(totalValues),
-    lastWeek: prevValue(totalValues),
-    thisWeekUsers: latestValue(uniqueValues),
-    lastWeekUsers: prevValue(uniqueValues),
+    thisWeek: totalDates.length > 0 ? totalValues[totalDates[totalDates.length - 1]] ?? 0 : 0,
+    lastWeek: totalDates.length > 1 ? totalValues[totalDates[totalDates.length - 2]] ?? 0 : 0,
+    thisWeekUsers: uniqueDates.length > 0 ? uniqueValues[uniqueDates[uniqueDates.length - 1]] ?? 0 : 0,
+    lastWeekUsers: uniqueDates.length > 1 ? uniqueValues[uniqueDates[uniqueDates.length - 2]] ?? 0 : 0,
   };
 }
 
@@ -121,11 +127,17 @@ function parseMonthlyEngagement(
   const totalValues = totals?.data?.values?.[eventName] || {};
   const uniqueValues = unique?.data?.values?.[eventName] || {};
 
+  // Skip the latest (partial) month — show last complete month instead
+  const totalDates = Object.keys(totalValues).sort();
+  const uniqueDates = Object.keys(uniqueValues).sort();
+  if (totalDates.length > 1) totalDates.pop();
+  if (uniqueDates.length > 1) uniqueDates.pop();
+
   return {
-    thisMonth: latestValue(totalValues),
-    lastMonth: prevValue(totalValues),
-    thisMonthUsers: latestValue(uniqueValues),
-    lastMonthUsers: prevValue(uniqueValues),
+    thisMonth: totalDates.length > 0 ? totalValues[totalDates[totalDates.length - 1]] ?? 0 : 0,
+    lastMonth: totalDates.length > 1 ? totalValues[totalDates[totalDates.length - 2]] ?? 0 : 0,
+    thisMonthUsers: uniqueDates.length > 0 ? uniqueValues[uniqueDates[uniqueDates.length - 1]] ?? 0 : 0,
+    lastMonthUsers: uniqueDates.length > 1 ? uniqueValues[uniqueDates[uniqueDates.length - 2]] ?? 0 : 0,
   };
 }
 
