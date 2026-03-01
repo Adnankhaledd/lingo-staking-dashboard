@@ -32,15 +32,15 @@ async function fetchDAU() {
 
 async function fetchWAU() {
   const today = new Date();
-  const lastWeek = new Date(today);
-  lastWeek.setDate(lastWeek.getDate() - 7);
+  const from = new Date(today);
+  from.setDate(from.getDate() - 90); // 12-13 weeks for trend chart
 
   const params = new URLSearchParams({
     project_id: PROJECT_ID,
     event: JSON.stringify(['Wallet Connected']),
     type: 'unique',
     unit: 'week',
-    from_date: toDateStr(lastWeek),
+    from_date: toDateStr(from),
     to_date: toDateStr(today),
   });
 

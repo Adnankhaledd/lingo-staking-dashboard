@@ -43,6 +43,7 @@ export interface MonthlyEngagement {
 
 export interface MixpanelMetrics {
   dauTrend: DailyMetric[];
+  wauTrend: DailyMetric[];
   currentDAU: number;
   currentWAU: number;
   currentMAU: number;
@@ -83,6 +84,27 @@ function transformDAUData(data: DAUReportResponse): DailyMetric[] {
 }
 
 function formatDate(isoStr: string): string {
+  const date = new Date(isoStr);
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function transformWAUData(data: EventsResponse | null): DailyMetric[] {
+  const walletData = data?.data?.values?.['Wallet Connected'] || {};
+  const entries = Object.entries(walletData)
+    .map(([dateStr, value]) => ({
+      date: formatWeekLabel(dateStr),
+      value,
+      sortKey: dateStr,
+    }))
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+  // Skip the latest (partial) week
+  if (entries.length > 1) entries.pop();
+
+  return entries.map(({ date, value }) => ({ date, value }));
+}
+
+function formatWeekLabel(isoStr: string): string {
   const date = new Date(isoStr);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
@@ -170,9 +192,8 @@ export function useMixpanelData() {
 
         // ── Parse WAU ───────────────────────────────────────────────
         const wauData = raw.wau as EventsResponse | null;
-        const walletData = wauData?.data?.values?.['Wallet Connected'] || {};
-        const wauDates = Object.keys(walletData).sort();
-        const currentWAU = wauDates.length > 0 ? walletData[wauDates[wauDates.length - 1]] ?? 0 : 0;
+        const wauTrend = transformWAUData(wauData);
+        const currentWAU = wauTrend.length > 0 ? wauTrend[wauTrend.length - 1].value : 0;
 
         // ── Parse MAU ───────────────────────────────────────────────
         const mauData = raw.mau as EventsResponse | null;
@@ -210,6 +231,7 @@ export function useMixpanelData() {
         // ── Assemble metrics ────────────────────────────────────────
         const metrics: MixpanelMetrics = {
           dauTrend,
+          wauTrend,
           currentDAU,
           currentWAU,
           currentMAU,

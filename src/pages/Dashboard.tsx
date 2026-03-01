@@ -408,14 +408,23 @@ export function Dashboard() {
             />
           </div>
 
-          {/* DAU Trend Chart */}
-          <MixpanelChart
-            title="Daily Active Users Trend"
-            subtitle="Unique active users per day (last 30 days)"
-            data={mixpanelData?.dauTrend ?? []}
-            color="#C4B5D4"
-            isLoading={loadingMixpanel}
-          />
+          {/* DAU & WAU Trend Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+            <MixpanelChart
+              title="Daily Active Users Trend"
+              subtitle="Unique active users per day (last 30 days)"
+              data={mixpanelData?.dauTrend ?? []}
+              color="#C4B5D4"
+              isLoading={loadingMixpanel}
+            />
+            <MixpanelChart
+              title="Weekly Active Users Trend"
+              subtitle="Unique active users per week (last 12 weeks)"
+              data={mixpanelData?.wauTrend ?? []}
+              color="#5EB851"
+              isLoading={loadingMixpanel}
+            />
+          </div>
 
           {/* Weekly Engagement Cards */}
           <h3 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
