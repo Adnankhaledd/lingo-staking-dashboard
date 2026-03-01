@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, Trophy } from 'lucide-react';
+import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, CheckCircle } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
@@ -439,12 +439,12 @@ export function Dashboard() {
               userCount={mixpanelData?.raffleEntries?.thisWeekUsers}
             />
             <MixpanelKPICard
-              title="Rewards Claimed"
-              value={mixpanelData?.rewardsClaimed?.thisWeek ?? 0}
-              icon={Trophy}
+              title="Tasks Completed"
+              value={mixpanelData?.tasksCompleted?.thisWeek ?? 0}
+              icon={CheckCircle}
               color="#5EB851"
               isLoading={loadingMixpanel}
-              userCount={mixpanelData?.rewardsClaimed?.thisWeekUsers}
+              userCount={mixpanelData?.tasksCompleted?.thisWeekUsers}
             />
           </div>
 
@@ -470,12 +470,12 @@ export function Dashboard() {
               userCount={mixpanelData?.monthlyRaffleEntries?.thisMonthUsers}
             />
             <MixpanelKPICard
-              title="Rewards Claimed"
-              value={mixpanelData?.monthlyRewardsClaimed?.thisMonth ?? 0}
-              icon={Trophy}
+              title="Tasks Completed"
+              value={mixpanelData?.monthlyTasksCompleted?.thisMonth ?? 0}
+              icon={CheckCircle}
               color="#5EB851"
               isLoading={loadingMixpanel}
-              userCount={mixpanelData?.monthlyRewardsClaimed?.thisMonthUsers}
+              userCount={mixpanelData?.monthlyTasksCompleted?.thisMonthUsers}
             />
           </div>
         </section>

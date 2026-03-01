@@ -69,7 +69,7 @@ async function fetchEngagement(unit: 'week' | 'month', daysBack: number) {
   const from = new Date(today);
   from.setDate(from.getDate() - daysBack);
 
-  const events = ['Asteroid Smashed', 'Raffle Ticket Purchased', 'Reward Claimed'];
+  const events = ['Asteroid Smashed', 'Raffle Ticket Purchased', 'Task Completed'];
   const baseParams = {
     project_id: PROJECT_ID,
     event: JSON.stringify(events),

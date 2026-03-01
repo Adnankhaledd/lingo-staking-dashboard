@@ -50,11 +50,11 @@ export interface MixpanelMetrics {
   // Weekly engagement
   asteroidsSmashed: WeeklyEngagement;
   raffleEntries: WeeklyEngagement;
-  rewardsClaimed: WeeklyEngagement;
+  tasksCompleted: WeeklyEngagement;
   // Monthly engagement
   monthlyAsteroidsSmashed: MonthlyEngagement;
   monthlyRaffleEntries: MonthlyEngagement;
-  monthlyRewardsClaimed: MonthlyEngagement;
+  monthlyTasksCompleted: MonthlyEngagement;
 }
 
 // ─── Blob response shape (from /api/mixpanel serving blob data) ──────
@@ -187,8 +187,8 @@ export function useMixpanelData() {
         const raffleEntries = raw.weeklyEngagement
           ? parseWeeklyEngagement(weTotals, weUnique, 'Raffle Ticket Purchased')
           : DEFAULT_ENGAGEMENT;
-        const rewardsClaimed = raw.weeklyEngagement
-          ? parseWeeklyEngagement(weTotals, weUnique, 'Reward Claimed')
+        const tasksCompleted = raw.weeklyEngagement
+          ? parseWeeklyEngagement(weTotals, weUnique, 'Task Completed')
           : DEFAULT_ENGAGEMENT;
 
         // ── Parse monthly engagement ────────────────────────────────
@@ -201,8 +201,8 @@ export function useMixpanelData() {
         const monthlyRaffleEntries = raw.monthlyEngagement
           ? parseMonthlyEngagement(meTotals, meUnique, 'Raffle Ticket Purchased')
           : DEFAULT_MONTHLY;
-        const monthlyRewardsClaimed = raw.monthlyEngagement
-          ? parseMonthlyEngagement(meTotals, meUnique, 'Reward Claimed')
+        const monthlyTasksCompleted = raw.monthlyEngagement
+          ? parseMonthlyEngagement(meTotals, meUnique, 'Task Completed')
           : DEFAULT_MONTHLY;
 
         // ── Assemble metrics ────────────────────────────────────────
@@ -214,10 +214,10 @@ export function useMixpanelData() {
           avgDAU,
           asteroidsSmashed,
           raffleEntries,
-          rewardsClaimed,
+          tasksCompleted,
           monthlyAsteroidsSmashed,
           monthlyRaffleEntries,
-          monthlyRewardsClaimed,
+          monthlyTasksCompleted,
         };
 
         setData(metrics);
