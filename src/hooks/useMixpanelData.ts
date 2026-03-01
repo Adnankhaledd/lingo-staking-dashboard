@@ -87,16 +87,6 @@ function formatDate(isoStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function latestValue(obj: Record<string, number>): number {
-  const dates = Object.keys(obj).sort();
-  return dates.length > 0 ? obj[dates[dates.length - 1]] ?? 0 : 0;
-}
-
-function prevValue(obj: Record<string, number>): number {
-  const dates = Object.keys(obj).sort();
-  return dates.length > 1 ? obj[dates[dates.length - 2]] ?? 0 : 0;
-}
-
 function parseWeeklyEngagement(
   totals: EventsResponse | null,
   unique: EventsResponse | null,
