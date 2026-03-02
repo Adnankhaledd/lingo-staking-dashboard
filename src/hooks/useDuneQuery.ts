@@ -304,7 +304,7 @@ export interface APYClaimsRow {
 }
 
 export interface MonthlyStakingFlowRow {
-  month: string;
+  week: string;
   staked: number;
   unstaked: number;
   net_flow: number;

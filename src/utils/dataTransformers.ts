@@ -350,22 +350,19 @@ export function getAPYClaimsTotals(data: APYClaimsRow[] | null) {
 }
 
 /**
- * Transform monthly staking flow data for chart
+ * Transform weekly staking flow data for chart
  */
-export function transformMonthlyStakingFlowData(data: MonthlyStakingFlowRow[] | null) {
+export function transformStakingFlowData(data: MonthlyStakingFlowRow[] | null) {
   if (!data) return [];
 
-  return data.map(row => {
-    const date = new Date(parseDuneDate(row.month));
-    const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-
-    return {
-      month: monthName,
+  return [...data]
+    .sort((a, b) => parseDuneDate(a.week).localeCompare(parseDuneDate(b.week)))
+    .map(row => ({
+      week: parseDuneDate(row.week),
       staked: Math.round(row.staked),
       unstaked: Math.round(row.unstaked),
       netFlow: Math.round(row.net_flow),
-    };
-  });
+    }));
 }
 
 /**

@@ -5,6 +5,7 @@ import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } f
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
+import { StakingFlowChart } from '../components/charts/StakingFlowChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -38,7 +39,7 @@ import {
   getTotalCombinedFees,
   transformAPYClaimsData,
   getAPYClaimsTotals,
-  transformMonthlyStakingFlowData,
+  transformStakingFlowData,
   transformMonthlyNewReturningData,
   transformMonthlyLingoByLockData,
   transformCommunityRewardsData,
@@ -92,7 +93,6 @@ export function Dashboard() {
   const {
     data: monthlyStakingFlow,
     isLoading: loadingStakingFlow,
-    executedAt: stakingFlowExecutedAt,
   } = useDuneQuery<MonthlyStakingFlowRow>(DUNE_QUERIES.MONTHLY_STAKING_FLOW);
 
   const {
@@ -206,9 +206,9 @@ export function Dashboard() {
     [apyClaims]
   );
 
-  // Monthly staking flow data
+  // Weekly staking flow data
   const stakingFlowData = useMemo(
-    () => transformMonthlyStakingFlowData(monthlyStakingFlow),
+    () => transformStakingFlowData(monthlyStakingFlow),
     [monthlyStakingFlow]
   );
 
@@ -572,59 +572,9 @@ export function Dashboard() {
             </ChartCard>
           </div>
 
-          {/* Row 2: Net Flow + Staked vs Unstaked */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-            <ChartCard
-              title="Monthly Net Flow"
-              subtitle="Net LINGO staked minus unstaked per month"
-              isLoading={loadingStakingFlow}
-              lastUpdated={stakingFlowExecutedAt}
-            >
-              {stakingFlowData.length > 0 ? (
-                <SimpleBarChart
-                  data={stakingFlowData}
-                  dataKey="netFlow"
-                  xAxisKey="month"
-                  color="#5EB851"
-                  height={300}
-                />
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                  {loadingStakingFlow ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
-
-            <ChartCard
-              title="Monthly Staked vs Unstaked"
-              subtitle="LINGO staked (green) vs unstaked (red) per month"
-              isLoading={loadingStakingFlow}
-              lastUpdated={stakingFlowExecutedAt}
-            >
-              {stakingFlowData.length > 0 ? (
-                <BarChartComponent
-                  data={stakingFlowData}
-                  xAxisKey="month"
-                  bars={[
-                    {
-                      dataKey: 'staked',
-                      name: 'Staked',
-                      color: '#5EB851',
-                    },
-                    {
-                      dataKey: 'unstaked',
-                      name: 'Unstaked',
-                      color: '#E5484D',
-                    },
-                  ]}
-                  height={300}
-                />
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                  {loadingStakingFlow ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
+          {/* Row 2: Staking Flow */}
+          <div className="mb-5">
+            <StakingFlowChart data={stakingFlowData} isLoading={loadingStakingFlow} />
           </div>
 
           {/* Row 3: Lock Duration Breakdown */}

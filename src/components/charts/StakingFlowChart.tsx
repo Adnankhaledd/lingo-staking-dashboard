@@ -1,0 +1,315 @@
+import { useState, useMemo } from 'react';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  ReferenceLine,
+} from 'recharts';
+import { formatNumber } from '../../utils/formatters';
+
+interface StakingFlowData {
+  week: string;
+  staked: number;
+  unstaked: number;
+  netFlow: number;
+}
+
+interface StakingFlowChartProps {
+  data: StakingFlowData[];
+  isLoading?: boolean;
+}
+
+type ToggleKey = 'staked' | 'unstaked' | 'net';
+type TimePeriod = 'week' | 'month' | 'quarter' | 'year';
+
+const TOGGLE_CONFIG: Record<ToggleKey, { label: string; color: string }> = {
+  staked: { label: 'Staked', color: '#5EB851' },
+  unstaked: { label: 'Unstaked', color: '#E85757' },
+  net: { label: 'Net Flow', color: '#7B68AE' },
+};
+
+const PERIOD_OPTIONS: { key: TimePeriod; label: string }[] = [
+  { key: 'week', label: 'W' },
+  { key: 'month', label: 'M' },
+  { key: 'quarter', label: 'Q' },
+  { key: 'year', label: 'Y' },
+];
+
+function getGroupKey(dateStr: string, period: TimePeriod): string {
+  const d = new Date(dateStr);
+  const year = d.getFullYear();
+  const month = d.getMonth();
+  switch (period) {
+    case 'week':
+      return dateStr;
+    case 'month':
+      return `${year}-${String(month + 1).padStart(2, '0')}`;
+    case 'quarter': {
+      const q = Math.floor(month / 3) + 1;
+      return `${year}-Q${q}`;
+    }
+    case 'year':
+      return `${year}`;
+  }
+}
+
+function formatGroupLabel(key: string, period: TimePeriod): string {
+  switch (period) {
+    case 'week': {
+      const d = new Date(key);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    case 'month': {
+      const [y, m] = key.split('-');
+      const d = new Date(parseInt(y), parseInt(m) - 1);
+      return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+    }
+    case 'quarter':
+      return key;
+    case 'year':
+      return key;
+  }
+}
+
+function aggregateData(data: StakingFlowData[], period: TimePeriod): StakingFlowData[] {
+  if (period === 'week') return data;
+
+  const buckets = new Map<string, StakingFlowData>();
+
+  for (const row of data) {
+    const key = getGroupKey(row.week, period);
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.staked += row.staked;
+      existing.unstaked += row.unstaked;
+      existing.netFlow += row.netFlow;
+    } else {
+      buckets.set(key, { ...row, week: key });
+    }
+  }
+
+  return Array.from(buckets.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, val]) => ({
+      ...val,
+      week: formatGroupLabel(key, period),
+      staked: Math.round(val.staked),
+      unstaked: Math.round(val.unstaked),
+      netFlow: Math.round(val.netFlow),
+    }));
+}
+
+export function StakingFlowChart({ data, isLoading }: StakingFlowChartProps) {
+  const [activeToggles, setActiveToggles] = useState<Set<ToggleKey>>(
+    new Set(['staked', 'unstaked', 'net'])
+  );
+  const [period, setPeriod] = useState<TimePeriod>('week');
+
+  const chartData = useMemo(() => aggregateData(data, period), [data, period]);
+
+  const toggleSeries = (key: ToggleKey) => {
+    setActiveToggles(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        if (next.size > 1) next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flagship-card rounded-2xl p-6">
+        <div className="skeleton h-6 w-48 rounded mb-2 relative z-10" />
+        <div className="skeleton h-4 w-32 rounded mb-6 relative z-10" />
+        <div className="skeleton h-80 w-full rounded-xl relative z-10" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flagship-card rounded-2xl p-6">
+      <div className="flex items-start justify-between mb-4 relative z-10">
+        <div>
+          <h3 className="text-lg font-semibold text-lavender">
+            Staking Flow
+          </h3>
+          <p className="text-sm text-soft-gray mt-1">
+            LINGO staked vs unstaked over time
+          </p>
+        </div>
+
+        <div className="flex bg-white/[0.04] rounded-lg border border-white/[0.06] overflow-hidden">
+          {PERIOD_OPTIONS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setPeriod(key)}
+              className={`px-3 py-1.5 text-xs font-medium transition-all ${
+                period === key
+                  ? 'bg-purple/30 text-white'
+                  : 'text-soft-gray hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex gap-2 mb-5 relative z-10">
+        {(Object.entries(TOGGLE_CONFIG) as [ToggleKey, { label: string; color: string }][]).map(
+          ([key, { label, color }]) => {
+            const isActive = activeToggles.has(key);
+            return (
+              <button
+                key={key}
+                onClick={() => toggleSeries(key)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  isActive
+                    ? 'bg-white/10 text-white border border-white/20'
+                    : 'bg-white/[0.03] text-soft-gray border border-white/[0.06] opacity-50 hover:opacity-75'
+                }`}
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-sm"
+                  style={{ backgroundColor: isActive ? color : 'rgba(255,255,255,0.2)' }}
+                />
+                {label}
+              </button>
+            );
+          }
+        )}
+      </div>
+
+      <div className="h-80 relative z-10">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={chartData}
+            margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+            barCategoryGap="15%"
+          >
+            <defs>
+              <linearGradient id="stakedGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#5EB851" stopOpacity={1} />
+                <stop offset="100%" stopColor="#5EB851" stopOpacity={0.5} />
+              </linearGradient>
+              <linearGradient id="unstakedGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#E85757" stopOpacity={1} />
+                <stop offset="100%" stopColor="#E85757" stopOpacity={0.5} />
+              </linearGradient>
+              <linearGradient id="netFlowGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#7B68AE" stopOpacity={1} />
+                <stop offset="100%" stopColor="#7B68AE" stopOpacity={0.5} />
+              </linearGradient>
+            </defs>
+
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="rgba(255,255,255,0.04)"
+              vertical={false}
+            />
+
+            <XAxis
+              dataKey="week"
+              stroke="rgba(255,255,255,0.15)"
+              tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+              dy={10}
+              interval="preserveStartEnd"
+            />
+
+            <YAxis
+              tickFormatter={(value) => {
+                const abs = Math.abs(value);
+                if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+                if (abs >= 1000) return `${(value / 1000).toFixed(0)}K`;
+                return `${value}`;
+              }}
+              stroke="rgba(255,255,255,0.15)"
+              tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }}
+              axisLine={false}
+              tickLine={false}
+              dx={-5}
+              width={65}
+            />
+
+            <Tooltip
+              content={({ active, payload, label }) => {
+                if (!active || !payload || !payload.length) return null;
+                return (
+                  <div className="custom-tooltip">
+                    <p className="text-soft-gray text-xs mb-2">
+                      {String(label || '')}
+                    </p>
+                    {payload.map((entry, index) => (
+                      <div key={index} className="flex items-center gap-2 mb-1">
+                        <div
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: entry.color }}
+                        />
+                        <span className="text-soft-gray text-sm">{entry.name}:</span>
+                        <span className="text-lavender font-medium">
+                          {formatNumber(Math.abs(entry.value as number))} LINGO
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              }}
+              cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+            />
+
+            {activeToggles.has('net') && (
+              <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" />
+            )}
+
+            <Legend
+              wrapperStyle={{ paddingTop: 15 }}
+              formatter={(value) => (
+                <span className="text-soft-gray text-sm">{value}</span>
+              )}
+            />
+
+            {activeToggles.has('staked') && (
+              <Bar
+                dataKey="staked"
+                name="Staked"
+                fill="url(#stakedGrad)"
+                radius={[4, 4, 0, 0]}
+                animationDuration={800}
+              />
+            )}
+
+            {activeToggles.has('unstaked') && (
+              <Bar
+                dataKey="unstaked"
+                name="Unstaked"
+                fill="url(#unstakedGrad)"
+                radius={[4, 4, 0, 0]}
+                animationDuration={800}
+              />
+            )}
+
+            {activeToggles.has('net') && (
+              <Bar
+                dataKey="netFlow"
+                name="Net Flow"
+                fill="url(#netFlowGrad)"
+                radius={[4, 4, 0, 0]}
+                animationDuration={800}
+              />
+            )}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
