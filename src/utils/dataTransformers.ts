@@ -356,13 +356,20 @@ export function transformStakingFlowData(data: MonthlyStakingFlowRow[] | null) {
   if (!data) return [];
 
   return [...data]
-    .sort((a, b) => parseDuneDate(a.week).localeCompare(parseDuneDate(b.week)))
-    .map(row => ({
-      week: parseDuneDate(row.week),
-      staked: Math.round(row.staked),
-      unstaked: Math.round(row.unstaked),
-      netFlow: Math.round(row.net_flow),
-    }));
+    .sort((a, b) => {
+      const dateA = (a as Record<string, unknown>).week ?? (a as Record<string, unknown>).month ?? '';
+      const dateB = (b as Record<string, unknown>).week ?? (b as Record<string, unknown>).month ?? '';
+      return parseDuneDate(String(dateA)).localeCompare(parseDuneDate(String(dateB)));
+    })
+    .map(row => {
+      const dateField = (row as Record<string, unknown>).week ?? (row as Record<string, unknown>).month ?? '';
+      return {
+        week: parseDuneDate(String(dateField)),
+        staked: Math.round(row.staked),
+        unstaked: Math.round(row.unstaked),
+        netFlow: Math.round(row.net_flow),
+      };
+    });
 }
 
 /**
