@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -10,7 +10,7 @@ import {
   Legend,
   ReferenceLine,
 } from 'recharts';
-import { formatChartDate, formatNumber } from '../../utils/formatters';
+import { formatNumber } from '../../utils/formatters';
 
 interface BuyPressureData {
   week: string;
@@ -27,6 +27,7 @@ interface BuyPressureChartProps {
 }
 
 type ToggleKey = 'buy' | 'sell' | 'net';
+type TimePeriod = 'week' | 'month' | 'quarter' | 'year';
 
 const TOGGLE_CONFIG: Record<ToggleKey, { label: string; color: string }> = {
   buy: { label: 'Buy Volume', color: '#5EB851' },
@@ -34,16 +35,92 @@ const TOGGLE_CONFIG: Record<ToggleKey, { label: string; color: string }> = {
   net: { label: 'Net Buy Pressure', color: '#7B68AE' },
 };
 
+const PERIOD_OPTIONS: { key: TimePeriod; label: string }[] = [
+  { key: 'week', label: 'W' },
+  { key: 'month', label: 'M' },
+  { key: 'quarter', label: 'Q' },
+  { key: 'year', label: 'Y' },
+];
+
+function getGroupKey(dateStr: string, period: TimePeriod): string {
+  const d = new Date(dateStr);
+  const year = d.getFullYear();
+  const month = d.getMonth(); // 0-indexed
+  switch (period) {
+    case 'week':
+      return dateStr;
+    case 'month':
+      return `${year}-${String(month + 1).padStart(2, '0')}`;
+    case 'quarter': {
+      const q = Math.floor(month / 3) + 1;
+      return `${year}-Q${q}`;
+    }
+    case 'year':
+      return `${year}`;
+  }
+}
+
+function formatGroupLabel(key: string, period: TimePeriod): string {
+  switch (period) {
+    case 'week': {
+      const d = new Date(key);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    case 'month': {
+      const [y, m] = key.split('-');
+      const d = new Date(parseInt(y), parseInt(m) - 1);
+      return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+    }
+    case 'quarter':
+      return key; // e.g., "2025-Q1"
+    case 'year':
+      return key;
+  }
+}
+
+function aggregateData(data: BuyPressureData[], period: TimePeriod): BuyPressureData[] {
+  if (period === 'week') return data;
+
+  const buckets = new Map<string, BuyPressureData>();
+
+  for (const row of data) {
+    const key = getGroupKey(row.week, period);
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.buyVolume += row.buyVolume;
+      existing.sellVolume += row.sellVolume;
+      existing.netBuyPressure += row.netBuyPressure;
+      existing.trades += row.trades;
+      existing.totalVolume += row.totalVolume;
+    } else {
+      buckets.set(key, { ...row, week: key });
+    }
+  }
+
+  return Array.from(buckets.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, val]) => ({
+      ...val,
+      week: formatGroupLabel(key, period),
+      netBuyPressure: Math.round(val.netBuyPressure),
+      buyVolume: Math.round(val.buyVolume),
+      sellVolume: Math.round(val.sellVolume),
+      totalVolume: Math.round(val.totalVolume),
+    }));
+}
+
 export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
   const [activeToggles, setActiveToggles] = useState<Set<ToggleKey>>(
     new Set(['buy', 'sell', 'net'])
   );
+  const [period, setPeriod] = useState<TimePeriod>('week');
+
+  const chartData = useMemo(() => aggregateData(data, period), [data, period]);
 
   const toggleSeries = (key: ToggleKey) => {
     setActiveToggles(prev => {
       const next = new Set(prev);
       if (next.has(key)) {
-        // Don't allow turning off all toggles
         if (next.size > 1) next.delete(key);
       } else {
         next.add(key);
@@ -70,12 +147,29 @@ export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
             Buy & Sell Pressure
           </h3>
           <p className="text-sm text-soft-gray mt-1">
-            Weekly trading volume breakdown (USD)
+            Trading volume breakdown (USD)
           </p>
+        </div>
+
+        {/* Time period selector */}
+        <div className="flex bg-white/[0.04] rounded-lg border border-white/[0.06] overflow-hidden">
+          {PERIOD_OPTIONS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setPeriod(key)}
+              className={`px-3 py-1.5 text-xs font-medium transition-all ${
+                period === key
+                  ? 'bg-purple/30 text-white'
+                  : 'text-soft-gray hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Toggle buttons */}
+      {/* Series toggle buttons */}
       <div className="flex gap-2 mb-5 relative z-10">
         {(Object.entries(TOGGLE_CONFIG) as [ToggleKey, { label: string; color: string }][]).map(
           ([key, { label, color }]) => {
@@ -104,7 +198,7 @@ export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
       <div className="h-80 relative z-10">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
-            data={data}
+            data={chartData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
             barCategoryGap="15%"
           >
@@ -131,7 +225,6 @@ export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
 
             <XAxis
               dataKey="week"
-              tickFormatter={formatChartDate}
               stroke="rgba(255,255,255,0.15)"
               tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }}
               axisLine={false}
@@ -142,7 +235,9 @@ export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
 
             <YAxis
               tickFormatter={(value) => {
-                if (Math.abs(value) >= 1000) return `$${(value / 1000).toFixed(0)}K`;
+                const abs = Math.abs(value);
+                if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+                if (abs >= 1000) return `$${(value / 1000).toFixed(0)}K`;
                 return `$${value}`;
               }}
               stroke="rgba(255,255,255,0.15)"
@@ -159,7 +254,7 @@ export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
                 return (
                   <div className="custom-tooltip">
                     <p className="text-soft-gray text-xs mb-2">
-                      {formatChartDate(String(label || ''))}
+                      {String(label || '')}
                     </p>
                     {payload.map((entry, index) => (
                       <div key={index} className="flex items-center gap-2 mb-1">
