@@ -159,7 +159,7 @@ export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
                 return (
                   <div className="custom-tooltip">
                     <p className="text-soft-gray text-xs mb-2">
-                      {formatChartDate(label || '')}
+                      {formatChartDate(String(label || ''))}
                     </p>
                     {payload.map((entry, index) => (
                       <div key={index} className="flex items-center gap-2 mb-1">
