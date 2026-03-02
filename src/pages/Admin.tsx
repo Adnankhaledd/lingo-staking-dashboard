@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { RefreshCw, ArrowLeft, Database, Trash2, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { RefreshCw, ArrowLeft, Database, Trash2, CheckCircle, XCircle, Loader2, List, ExternalLink } from 'lucide-react';
 import lingoLogo from '../assets/logo-lingo.svg';
 import { clearDuneCache } from '../hooks/useDuneQuery';
 
@@ -344,6 +344,86 @@ export function Admin() {
               Cache cleared! Reload the dashboard to fetch fresh data.
             </p>
           )}
+        </section>
+
+        {/* Dune Query Reference */}
+        <section className="glass-card rounded-2xl p-6 mt-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-purple/10 flex items-center justify-center">
+              <List className="w-5 h-5 text-purple" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-lavender">Dune Query Reference</h2>
+              <p className="text-xs text-purple-gray">16 queries &middot; Click ID to open on Dune</p>
+            </div>
+          </div>
+
+          <div className="space-y-0.5">
+            {[
+              { id: '6590984', name: 'TOTAL_STAKED_TREND', section: 'Hero card — Total LINGO Staked trend' },
+              { id: '6534908', name: 'WEEKLY_STATS', section: 'Hero card — Active Stakers & TVL' },
+              { id: '6535206', name: 'WEEKLY_NEW_STAKERS', section: 'Overview — New Stakers per Week' },
+              { id: '6528806', name: 'COHORT_RETENTION', section: 'Retention — Cohort Retention Heatmap' },
+              { id: '6560698', name: 'STAKING_TIERS', section: 'Staking Tiers breakdown (unused)' },
+              { id: '6543709', name: 'UNLOCK_SCHEDULE', section: 'Unlock Schedule timeline (unused)' },
+              { id: '6632385', name: 'TOP_STAKERS', section: 'Top Stakers — Top 50 leaderboard' },
+              { id: '6288543', name: 'TRADING_FEES', section: 'Revenue — Monthly Trading Fees' },
+              { id: '6606898', name: 'APY_CLAIMS', section: 'Revenue — Monthly APY Claims' },
+              { id: '6535334', name: 'MONTHLY_STAKING_FLOW', section: 'Staking — Monthly Stake/Unstake Flow' },
+              { id: '6693660', name: 'WEEKLY_STAKES', section: 'Staking — Weekly Stake Events' },
+              { id: '6693715', name: 'LP_FEES', section: 'Revenue — LP Fees (hero card)' },
+              { id: '6708293', name: 'MEMBERSHIP_TIERS', section: 'Staking — Membership Tiers by Lock' },
+              { id: '6738028', name: 'MONTHLY_NEW_RETURNING', section: 'Staking — New vs Returning Wallets' },
+              { id: '6738074', name: 'STAKING_TIERS_BY_LOCK', section: 'Staking — Tier Distribution by Lock' },
+              { id: '6749292', name: 'MONTHLY_LINGO_BY_LOCK', section: 'Staking — Monthly LINGO by Lock Duration' },
+              { id: '6749507', name: 'COMMUNITY_REWARDS', section: 'Revenue — Community Rewards' },
+              { id: '6760287', name: 'BUY_PRESSURE', section: 'Trading — Buy & Sell Pressure' },
+            ].map(({ id, name, section }) => (
+              <div key={id} className="flex items-start gap-3 py-2.5 border-b border-white/[0.04] last:border-0">
+                <a
+                  href={`https://dune.com/queries/${id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 flex items-center gap-1 text-xs font-mono text-purple hover:text-lavender transition-colors"
+                >
+                  {id}
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+                <div className="min-w-0">
+                  <p className="text-sm text-lavender truncate">{name}</p>
+                  <p className="text-xs text-purple-gray">{section}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Mixpanel Data Reference */}
+        <section className="glass-card rounded-2xl p-6 mt-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-green1/10 flex items-center justify-center">
+              <List className="w-5 h-5 text-green1" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-lavender">Mixpanel Data Reference</h2>
+              <p className="text-xs text-purple-gray">5 data sources &middot; Project 3623820</p>
+            </div>
+          </div>
+
+          <div className="space-y-0.5">
+            {[
+              { name: 'DAU (Insights Report)', detail: 'Report #75454495 — Hero card DAU + trend chart' },
+              { name: 'WAU (Wallet Connected)', detail: 'Unique weekly — WAU trend chart + hero card' },
+              { name: 'MAU (Wallet Connected)', detail: 'Unique monthly — Hero card MAU count' },
+              { name: 'Weekly Engagement', detail: 'Asteroid Smashed, Raffle Ticket Purchased, Task Completed (totals + unique)' },
+              { name: 'Monthly Engagement', detail: 'Same 3 events aggregated monthly (totals + unique)' },
+            ].map(({ name, detail }) => (
+              <div key={name} className="py-2.5 border-b border-white/[0.04] last:border-0">
+                <p className="text-sm text-lavender">{name}</p>
+                <p className="text-xs text-purple-gray">{detail}</p>
+              </div>
+            ))}
+          </div>
         </section>
 
         {/* Info */}
