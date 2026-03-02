@@ -11,6 +11,7 @@ import type {
   MonthlyNewReturningRow,
   MonthlyLingoByLockRow,
   CommunityRewardsRow,
+  BuyPressureRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -648,4 +649,21 @@ export function getCommunityRewardsTotals(data: CommunityRewardsRow[] | null) {
     totalLingo: data.reduce((sum, row) => sum + row.lingo_out, 0),
     totalUsd: data.reduce((sum, row) => sum + row.usd_value, 0),
   };
+}
+
+/**
+ * Transform buy pressure data — sorts chronologically
+ */
+export function transformBuyPressureData(data: BuyPressureRow[] | null) {
+  if (!data || data.length === 0) return [];
+  return [...data]
+    .sort((a, b) => parseDuneDate(a.week).localeCompare(parseDuneDate(b.week)))
+    .map(row => ({
+      week: parseDuneDate(row.week),
+      buyVolume: Math.round(row.buy_volume_usd),
+      sellVolume: Math.round(row.sell_volume_usd),
+      netBuyPressure: Math.round(row.net_buy_pressure),
+      trades: row.trades,
+      totalVolume: Math.round(row.total_volume_usd),
+    }));
 }

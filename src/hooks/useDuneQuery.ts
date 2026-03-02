@@ -229,6 +229,7 @@ export const DUNE_QUERIES = {
   STAKING_TIERS_BY_LOCK: '6738074',
   MONTHLY_LINGO_BY_LOCK: '6749292',
   COMMUNITY_REWARDS: '6749507',
+  BUY_PRESSURE: '6760287',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -373,4 +374,13 @@ export interface StakingTiersByLockRow {
   total_users: number;
   total_lingo: number;
   price_used: number;
+}
+
+export interface BuyPressureRow {
+  week: string;
+  trades: number;
+  total_volume_usd: number;
+  buy_volume_usd: number;
+  sell_volume_usd: number;
+  net_buy_pressure: number;
 }

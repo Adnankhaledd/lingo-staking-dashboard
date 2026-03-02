@@ -4,6 +4,7 @@ import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
+import { BuyPressureChart } from '../components/charts/BuyPressureChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -23,6 +24,7 @@ import {
   type StakingTiersByLockRow,
   type MonthlyLingoByLockRow,
   type CommunityRewardsRow,
+  type BuyPressureRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -41,6 +43,7 @@ import {
   transformMonthlyLingoByLockData,
   transformCommunityRewardsData,
   getCommunityRewardsTotals,
+  transformBuyPressureData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -125,6 +128,11 @@ export function Dashboard() {
     isLoading: loadingCommunityRewards,
     executedAt: communityRewardsExecutedAt,
   } = useDuneQuery<CommunityRewardsRow>(DUNE_QUERIES.COMMUNITY_REWARDS);
+
+  const {
+    data: buyPressureData,
+    isLoading: loadingBuyPressure,
+  } = useDuneQuery<BuyPressureRow>(DUNE_QUERIES.BUY_PRESSURE);
 
   // Mixpanel data
   const {
@@ -225,6 +233,11 @@ export function Dashboard() {
   const communityRewardsTotals = useMemo(
     () => getCommunityRewardsTotals(communityRewards),
     [communityRewards]
+  );
+
+  const buyPressureChartData = useMemo(
+    () => transformBuyPressureData(buyPressureData),
+    [buyPressureData]
   );
 
   // Export handlers
@@ -366,6 +379,19 @@ export function Dashboard() {
               )}
             </ChartCard>
           </div>
+        </section>
+
+        {/* ═══════════════════════════════════════════════════════════════
+            TRADING VOLUME & BUY PRESSURE
+        ═══════════════════════════════════════════════════════════════ */}
+        <section className="mb-10">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
+            Trading Volume & Buy Pressure
+          </h2>
+          <BuyPressureChart
+            data={buyPressureChartData}
+            isLoading={loadingBuyPressure}
+          />
         </section>
 
         {/* ═══════════════════════════════════════════════════════════════

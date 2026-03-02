@@ -23,6 +23,7 @@ const QUERIES: Record<string, number> = {
   '6738074': 50,   // STAKING_TIERS_BY_LOCK
   '6749292': 1000, // MONTHLY_LINGO_BY_LOCK
   '6749507': 1000, // COMMUNITY_REWARDS
+  '6760287': 1000, // BUY_PRESSURE
 };
 
 interface QueryResult {
