@@ -544,14 +544,15 @@ export function Dashboard() {
                       ? ((latest.total_staked - thirtyDaysAgo.total_staked) / thirtyDaysAgo.total_staked) * 100
                       : null;
                     return (
-                      <div className="flex items-baseline gap-3 mb-3">
-                        <span className="text-2xl font-bold text-lavender">
-                          {formatNumber(latest?.total_staked ?? 0)}
+                      <div className="flex items-baseline gap-3 mb-4">
+                        <span className="text-3xl font-bold text-lavender tracking-tight">
+                          {Math.round(latest?.total_staked ?? 0).toLocaleString()}
                         </span>
-                        <span className="text-sm text-soft-gray">LINGO</span>
+                        <span className="text-base text-soft-gray">LINGO</span>
                         {monthPct !== null && (
-                          <span className={`text-sm font-medium ${monthPct >= 0 ? 'text-green1' : 'text-red-400'}`}>
-                            {monthPct >= 0 ? '+' : ''}{monthPct.toFixed(1)}% <span className="text-purple-gray font-normal">30d</span>
+                          <span className={`text-sm font-semibold px-2 py-0.5 rounded-md ${monthPct >= 0 ? 'text-green1 bg-green1/10' : 'text-red-400 bg-red-400/10'}`}>
+                            {monthPct >= 0 ? '+' : ''}{monthPct.toFixed(1)}%
+                            <span className="text-purple-gray font-normal ml-1">30d</span>
                           </span>
                         )}
                       </div>
