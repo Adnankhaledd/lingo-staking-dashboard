@@ -533,15 +533,40 @@ export function Dashboard() {
               lastUpdated={totalStakedExecutedAt}
             >
               {stakingTrendData.length > 0 ? (
-                <AreaChartComponent
-                  data={stakingTrendData}
-                  dataKey="volume"
-                  xAxisKey="date"
-                  color="#C4B5D4"
-                  gradientId="stakingTrendGradient"
-                  height={320}
-                  formatValue={(value) => formatNumber(value) + ' LINGO'}
-                />
+                <>
+                  {(() => {
+                    const latest = totalStakedData?.[totalStakedData.length - 1];
+                    // Find value ~30 days ago for month-over-month change
+                    const thirtyDaysAgo = totalStakedData && totalStakedData.length > 30
+                      ? totalStakedData[totalStakedData.length - 31]
+                      : totalStakedData?.[0];
+                    const monthPct = latest && thirtyDaysAgo && thirtyDaysAgo.total_staked > 0
+                      ? ((latest.total_staked - thirtyDaysAgo.total_staked) / thirtyDaysAgo.total_staked) * 100
+                      : null;
+                    return (
+                      <div className="flex items-baseline gap-3 mb-3">
+                        <span className="text-2xl font-bold text-lavender">
+                          {formatNumber(latest?.total_staked ?? 0)}
+                        </span>
+                        <span className="text-sm text-soft-gray">LINGO</span>
+                        {monthPct !== null && (
+                          <span className={`text-sm font-medium ${monthPct >= 0 ? 'text-green1' : 'text-red-400'}`}>
+                            {monthPct >= 0 ? '+' : ''}{monthPct.toFixed(1)}% <span className="text-purple-gray font-normal">30d</span>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  <AreaChartComponent
+                    data={stakingTrendData}
+                    dataKey="volume"
+                    xAxisKey="date"
+                    color="#C4B5D4"
+                    gradientId="stakingTrendGradient"
+                    height={290}
+                    formatValue={(value) => formatNumber(value) + ' LINGO'}
+                  />
+                </>
               ) : (
                 <div className="h-[320px] flex items-center justify-center text-soft-gray">
                   {loadingTotalStaked ? 'Loading...' : 'No data available'}
