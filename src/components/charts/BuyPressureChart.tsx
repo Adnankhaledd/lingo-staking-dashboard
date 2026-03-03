@@ -10,7 +10,22 @@ import {
   Legend,
   ReferenceLine,
 } from 'recharts';
+import { Clock } from 'lucide-react';
 import { formatNumber } from '../../utils/formatters';
+
+function formatLastUpdated(isoDate: string): string {
+  const date = new Date(isoDate);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
 
 interface BuyPressureData {
   week: string;
@@ -24,6 +39,7 @@ interface BuyPressureData {
 interface BuyPressureChartProps {
   data: BuyPressureData[];
   isLoading?: boolean;
+  lastUpdated?: string | null;
 }
 
 type ToggleKey = 'buy' | 'sell' | 'net';
@@ -109,7 +125,7 @@ function aggregateData(data: BuyPressureData[], period: TimePeriod): BuyPressure
     }));
 }
 
-export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
+export function BuyPressureChart({ data, isLoading, lastUpdated }: BuyPressureChartProps) {
   const [activeToggles, setActiveToggles] = useState<Set<ToggleKey>>(
     new Set(['buy', 'sell', 'net'])
   );
@@ -151,6 +167,13 @@ export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
           </p>
         </div>
 
+        <div className="flex items-center gap-3">
+          {lastUpdated && (
+            <div className="flex items-center gap-1 text-xs text-purple-gray" title={`Query executed: ${new Date(lastUpdated).toLocaleString()}`}>
+              <Clock className="w-3 h-3" />
+              <span>{formatLastUpdated(lastUpdated)}</span>
+            </div>
+          )}
         {/* Time period selector */}
         <div className="flex bg-white/[0.04] rounded-lg border border-white/[0.06] overflow-hidden">
           {PERIOD_OPTIONS.map(({ key, label }) => (
@@ -166,6 +189,7 @@ export function BuyPressureChart({ data, isLoading }: BuyPressureChartProps) {
               {label}
             </button>
           ))}
+        </div>
         </div>
       </div>
 

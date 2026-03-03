@@ -7,6 +7,7 @@ import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, 
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
 import { StakingFlowChart } from '../components/charts/StakingFlowChart';
 import { StakerTiersChart } from '../components/charts/StakerTiersChart';
+import { LockDistributionChart } from '../components/charts/LockDistributionChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -96,6 +97,7 @@ export function Dashboard() {
   const {
     data: monthlyStakingFlow,
     isLoading: loadingStakingFlow,
+    executedAt: stakingFlowExecutedAt,
   } = useDuneQuery<MonthlyStakingFlowRow>(DUNE_QUERIES.MONTHLY_STAKING_FLOW);
 
   const {
@@ -135,11 +137,13 @@ export function Dashboard() {
   const {
     data: buyPressureData,
     isLoading: loadingBuyPressure,
+    executedAt: buyPressureExecutedAt,
   } = useDuneQuery<BuyPressureRow>(DUNE_QUERIES.BUY_PRESSURE);
 
   const {
     data: stakerTiersWeekly,
     isLoading: loadingStakerTiers,
+    executedAt: stakerTiersExecutedAt,
   } = useDuneQuery<StakerTiersWeeklyRow>(DUNE_QUERIES.STAKER_TIERS_WEEKLY);
 
   // Mixpanel data
@@ -404,6 +408,7 @@ export function Dashboard() {
           <BuyPressureChart
             data={buyPressureChartData}
             isLoading={loadingBuyPressure}
+            lastUpdated={buyPressureExecutedAt}
           />
         </section>
 
@@ -477,6 +482,9 @@ export function Dashboard() {
               color="#FF7847"
               isLoading={loadingMixpanel}
               userCount={mixpanelData?.asteroidsSmashed?.thisWeekUsers}
+              changePercent={mixpanelData?.asteroidsSmashed?.lastWeek
+                ? ((mixpanelData.asteroidsSmashed.thisWeek - mixpanelData.asteroidsSmashed.lastWeek) / mixpanelData.asteroidsSmashed.lastWeek) * 100
+                : null}
             />
             <MixpanelKPICard
               title="Raffle Entries"
@@ -485,6 +493,9 @@ export function Dashboard() {
               color="#C4B5D4"
               isLoading={loadingMixpanel}
               userCount={mixpanelData?.raffleEntries?.thisWeekUsers}
+              changePercent={mixpanelData?.raffleEntries?.lastWeek
+                ? ((mixpanelData.raffleEntries.thisWeek - mixpanelData.raffleEntries.lastWeek) / mixpanelData.raffleEntries.lastWeek) * 100
+                : null}
             />
             <MixpanelKPICard
               title="Tasks Completed"
@@ -493,6 +504,9 @@ export function Dashboard() {
               color="#5EB851"
               isLoading={loadingMixpanel}
               userCount={mixpanelData?.tasksCompleted?.thisWeekUsers}
+              changePercent={mixpanelData?.tasksCompleted?.lastWeek
+                ? ((mixpanelData.tasksCompleted.thisWeek - mixpanelData.tasksCompleted.lastWeek) / mixpanelData.tasksCompleted.lastWeek) * 100
+                : null}
             />
           </div>
 
@@ -508,6 +522,9 @@ export function Dashboard() {
               color="#FF7847"
               isLoading={loadingMixpanel}
               userCount={mixpanelData?.monthlyAsteroidsSmashed?.thisMonthUsers}
+              changePercent={mixpanelData?.monthlyAsteroidsSmashed?.lastMonth
+                ? ((mixpanelData.monthlyAsteroidsSmashed.thisMonth - mixpanelData.monthlyAsteroidsSmashed.lastMonth) / mixpanelData.monthlyAsteroidsSmashed.lastMonth) * 100
+                : null}
             />
             <MixpanelKPICard
               title="Raffle Entries"
@@ -516,6 +533,9 @@ export function Dashboard() {
               color="#C4B5D4"
               isLoading={loadingMixpanel}
               userCount={mixpanelData?.monthlyRaffleEntries?.thisMonthUsers}
+              changePercent={mixpanelData?.monthlyRaffleEntries?.lastMonth
+                ? ((mixpanelData.monthlyRaffleEntries.thisMonth - mixpanelData.monthlyRaffleEntries.lastMonth) / mixpanelData.monthlyRaffleEntries.lastMonth) * 100
+                : null}
             />
             <MixpanelKPICard
               title="Tasks Completed"
@@ -524,6 +544,9 @@ export function Dashboard() {
               color="#5EB851"
               isLoading={loadingMixpanel}
               userCount={mixpanelData?.monthlyTasksCompleted?.thisMonthUsers}
+              changePercent={mixpanelData?.monthlyTasksCompleted?.lastMonth
+                ? ((mixpanelData.monthlyTasksCompleted.thisMonth - mixpanelData.monthlyTasksCompleted.lastMonth) / mixpanelData.monthlyTasksCompleted.lastMonth) * 100
+                : null}
             />
           </div>
         </section>
@@ -612,50 +635,58 @@ export function Dashboard() {
 
           {/* Row 2: Staking Flow */}
           <div className="mb-5">
-            <StakingFlowChart data={stakingFlowData} isLoading={loadingStakingFlow} />
+            <StakingFlowChart data={stakingFlowData} isLoading={loadingStakingFlow} lastUpdated={stakingFlowExecutedAt} />
           </div>
 
           {/* Row 2.5: Staker Tiers Trend */}
           <div className="mb-5">
-            <StakerTiersChart data={stakerTiersChartData} isLoading={loadingStakerTiers} />
+            <StakerTiersChart data={stakerTiersChartData} isLoading={loadingStakerTiers} lastUpdated={stakerTiersExecutedAt} />
           </div>
 
           {/* Row 3: Lock Duration Breakdown */}
-          <ChartCard
-            title="Monthly LINGO Staked by Lock Duration"
-            subtitle="New LINGO staked per month broken down by lock period"
-            isLoading={loadingLingoByLock}
-            lastUpdated={lingoByLockExecutedAt}
-          >
-            {monthlyLingoByLockData.length > 0 ? (
-              <BarChartComponent
-                data={monthlyLingoByLockData}
-                xAxisKey="month"
-                bars={[
-                  {
-                    dataKey: 'threeMonth',
-                    name: '3 Month',
-                    color: '#7B68AE',
-                  },
-                  {
-                    dataKey: 'sixMonth',
-                    name: '6 Month',
-                    color: '#5EB851',
-                  },
-                  {
-                    dataKey: 'twelveMonth',
-                    name: '12 Month',
-                    color: '#D4A017',
-                  },
-                ]}
-                height={320}
-              />
-            ) : (
-              <div className="h-[320px] flex items-center justify-center text-soft-gray">
-                {loadingLingoByLock ? 'Loading...' : 'No data available'}
-              </div>
-            )}
-          </ChartCard>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+            <ChartCard
+              title="Monthly LINGO Staked by Lock Duration"
+              subtitle="New LINGO staked per month broken down by lock period"
+              isLoading={loadingLingoByLock}
+              lastUpdated={lingoByLockExecutedAt}
+            >
+              {monthlyLingoByLockData.length > 0 ? (
+                <BarChartComponent
+                  data={monthlyLingoByLockData}
+                  xAxisKey="month"
+                  bars={[
+                    {
+                      dataKey: 'threeMonth',
+                      name: '3 Month',
+                      color: '#7B68AE',
+                    },
+                    {
+                      dataKey: 'sixMonth',
+                      name: '6 Month',
+                      color: '#5EB851',
+                    },
+                    {
+                      dataKey: 'twelveMonth',
+                      name: '12 Month',
+                      color: '#D4A017',
+                    },
+                  ]}
+                  height={320}
+                />
+              ) : (
+                <div className="h-[320px] flex items-center justify-center text-soft-gray">
+                  {loadingLingoByLock ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            <LockDistributionChart
+              data={monthlyLingoByLockData}
+              isLoading={loadingLingoByLock}
+              lastUpdated={lingoByLockExecutedAt}
+            />
+          </div>
         </section>
 
         {/* ═══════════════════════════════════════════════════════════════
