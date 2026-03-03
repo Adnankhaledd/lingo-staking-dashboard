@@ -355,21 +355,20 @@ export function getAPYClaimsTotals(data: APYClaimsRow[] | null) {
 export function transformStakingFlowData(data: MonthlyStakingFlowRow[] | null) {
   if (!data) return [];
 
-  return [...data]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = data as any[];
+  return [...rows]
     .sort((a, b) => {
-      const dateA = (a as Record<string, unknown>).week ?? (a as Record<string, unknown>).month ?? '';
-      const dateB = (b as Record<string, unknown>).week ?? (b as Record<string, unknown>).month ?? '';
+      const dateA = a.week ?? a.month ?? '';
+      const dateB = b.week ?? b.month ?? '';
       return parseDuneDate(String(dateA)).localeCompare(parseDuneDate(String(dateB)));
     })
-    .map(row => {
-      const dateField = (row as Record<string, unknown>).week ?? (row as Record<string, unknown>).month ?? '';
-      return {
-        week: parseDuneDate(String(dateField)),
-        staked: Math.round(row.staked),
-        unstaked: Math.round(row.unstaked),
-        netFlow: Math.round(row.net_flow),
-      };
-    });
+    .map(row => ({
+      week: parseDuneDate(String(row.week ?? row.month ?? '')),
+      staked: Math.round(row.staked ?? 0),
+      unstaked: Math.round(row.unstaked ?? 0),
+      netFlow: Math.round(row.net_flow ?? 0),
+    }));
 }
 
 /**
