@@ -99,8 +99,8 @@ export function StakingTiersByLockTable({ data, isLoading }: StakingTiersByLockT
 
                   {/* Lock period cells */}
                   {LOCK_PERIODS.map(lp => {
-                    const users = row[lp.usersKey] as number;
-                    const lingo = row[lp.lingoKey] as number;
+                    const users = (row[lp.usersKey] as number) ?? 0;
+                    const lingo = (row[lp.lingoKey] as number) ?? 0;
                     return (
                       <td key={lp.label} className="py-4 px-2 text-center">
                         <div className={`inline-flex flex-col items-center rounded-xl px-3 py-1.5 ${lp.bg}`}>
@@ -119,7 +119,7 @@ export function StakingTiersByLockTable({ data, isLoading }: StakingTiersByLockT
                   <td className="py-4 pl-4 text-center">
                     <div className="inline-flex flex-col items-center">
                       <span className="text-sm font-bold text-white">
-                        {row.total_users.toLocaleString()}
+                        {(row.total_users ?? 0).toLocaleString()}
                       </span>
                       <span className="text-[10px] text-white/40">
                         {formatNumber(row.total_lingo)} LINGO
@@ -139,7 +139,7 @@ export function StakingTiersByLockTable({ data, isLoading }: StakingTiersByLockT
           <span className="text-xs font-medium text-white/40 uppercase tracking-wider">All Tiers Combined</span>
           <div className="flex items-center gap-4">
             {LOCK_PERIODS.map(lp => {
-              const totalUsers = sorted.reduce((s, r) => s + (r[lp.usersKey] as number), 0);
+              const totalUsers = sorted.reduce((s, r) => s + ((r[lp.usersKey] as number) ?? 0), 0);
               return (
                 <span key={lp.label} className={`text-xs ${lp.color}`}>
                   {lp.label}: <span className="font-semibold">{totalUsers.toLocaleString()}</span>

@@ -42,10 +42,10 @@ export function MembershipTiersTable({ data, isLoading }: MembershipTiersTablePr
 
   // Calculate totals across all lock periods
   const totals = {
-    users_100_plus: sorted.reduce((s, r) => s + r.users_100_plus, 0),
-    users_500_plus: sorted.reduce((s, r) => s + r.users_500_plus, 0),
-    users_1000_plus: sorted.reduce((s, r) => s + r.users_1000_plus, 0),
-    users_5000_plus: sorted.reduce((s, r) => s + r.users_5000_plus, 0),
+    users_100_plus: sorted.reduce((s, r) => s + (r.users_100_plus ?? 0), 0),
+    users_500_plus: sorted.reduce((s, r) => s + (r.users_500_plus ?? 0), 0),
+    users_1000_plus: sorted.reduce((s, r) => s + (r.users_1000_plus ?? 0), 0),
+    users_5000_plus: sorted.reduce((s, r) => s + (r.users_5000_plus ?? 0), 0),
   };
 
   return (
@@ -78,7 +78,7 @@ export function MembershipTiersTable({ data, isLoading }: MembershipTiersTablePr
               {TIER_CONFIG.map(tier => (
                 <td key={tier.key} className="py-3 px-4 text-right">
                   <span className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-lg text-sm font-semibold ${tier.bg} ${tier.color}`}>
-                    {row[tier.key].toLocaleString()}
+                    {(row[tier.key] ?? 0).toLocaleString()}
                   </span>
                 </td>
               ))}
