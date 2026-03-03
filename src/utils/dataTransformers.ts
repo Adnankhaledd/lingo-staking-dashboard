@@ -12,6 +12,7 @@ import type {
   MonthlyLingoByLockRow,
   CommunityRewardsRow,
   BuyPressureRow,
+  StakerTiersWeeklyRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -668,5 +669,21 @@ export function transformBuyPressureData(data: BuyPressureRow[] | null) {
       netBuyPressure: Math.round(row.net_buy_pressure),
       trades: row.trades,
       totalVolume: Math.round(row.total_volume_usd),
+    }));
+}
+
+/**
+ * Transform staker tiers weekly data
+ */
+export function transformStakerTiersData(data: StakerTiersWeeklyRow[] | null) {
+  if (!data || data.length === 0) return [];
+  return [...data]
+    .sort((a, b) => parseDuneDate(a.week).localeCompare(parseDuneDate(b.week)))
+    .map(row => ({
+      week: parseDuneDate(row.week),
+      stakers100: row.stakers_100_plus,
+      stakers500: row.stakers_500_plus,
+      stakers1000: row.stakers_1000_plus,
+      totalStakers: row.total_stakers,
     }));
 }

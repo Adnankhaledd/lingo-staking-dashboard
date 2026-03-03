@@ -6,6 +6,7 @@ import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
 import { StakingFlowChart } from '../components/charts/StakingFlowChart';
+import { StakerTiersChart } from '../components/charts/StakerTiersChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -26,6 +27,7 @@ import {
   type MonthlyLingoByLockRow,
   type CommunityRewardsRow,
   type BuyPressureRow,
+  type StakerTiersWeeklyRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -45,6 +47,7 @@ import {
   transformCommunityRewardsData,
   getCommunityRewardsTotals,
   transformBuyPressureData,
+  transformStakerTiersData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -133,6 +136,11 @@ export function Dashboard() {
     data: buyPressureData,
     isLoading: loadingBuyPressure,
   } = useDuneQuery<BuyPressureRow>(DUNE_QUERIES.BUY_PRESSURE);
+
+  const {
+    data: stakerTiersWeekly,
+    isLoading: loadingStakerTiers,
+  } = useDuneQuery<StakerTiersWeeklyRow>(DUNE_QUERIES.STAKER_TIERS_WEEKLY);
 
   // Mixpanel data
   const {
@@ -238,6 +246,11 @@ export function Dashboard() {
   const buyPressureChartData = useMemo(
     () => transformBuyPressureData(buyPressureData),
     [buyPressureData]
+  );
+
+  const stakerTiersChartData = useMemo(
+    () => transformStakerTiersData(stakerTiersWeekly),
+    [stakerTiersWeekly]
   );
 
   // Export handlers
@@ -600,6 +613,11 @@ export function Dashboard() {
           {/* Row 2: Staking Flow */}
           <div className="mb-5">
             <StakingFlowChart data={stakingFlowData} isLoading={loadingStakingFlow} />
+          </div>
+
+          {/* Row 2.5: Staker Tiers Trend */}
+          <div className="mb-5">
+            <StakerTiersChart data={stakerTiersChartData} isLoading={loadingStakerTiers} />
           </div>
 
           {/* Row 3: Lock Duration Breakdown */}

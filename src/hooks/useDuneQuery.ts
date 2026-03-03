@@ -230,6 +230,7 @@ export const DUNE_QUERIES = {
   MONTHLY_LINGO_BY_LOCK: '6749292',
   COMMUNITY_REWARDS: '6749507',
   BUY_PRESSURE: '6760287',
+  STAKER_TIERS_WEEKLY: '6770827',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -383,4 +384,15 @@ export interface BuyPressureRow {
   buy_volume_usd: number;
   sell_volume_usd: number;
   net_buy_pressure: number;
+}
+
+export interface StakerTiersWeeklyRow {
+  week: string;
+  total_stakers: number;
+  stakers_100_plus: number;
+  stakers_500_plus: number;
+  stakers_1000_plus: number;
+  total_lingo_staked: number;
+  total_usd_staked: number;
+  avg_weekly_price: number;
 }
