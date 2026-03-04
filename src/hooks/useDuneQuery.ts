@@ -231,6 +231,7 @@ export const DUNE_QUERIES = {
   COMMUNITY_REWARDS: '6749507',
   BUY_PRESSURE: '6760287',
   STAKER_TIERS_WEEKLY: '6770827',
+  LOCK_DISTRIBUTION: '6511860',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -395,4 +396,11 @@ export interface StakerTiersWeeklyRow {
   total_lingo_staked: number;
   total_usd_staked: number;
   avg_weekly_price: number;
+}
+
+export interface LockDistributionRow {
+  lock_period: string;
+  lingo_staked: number;
+  usd_value: number;
+  percentage_of_total: number;
 }

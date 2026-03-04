@@ -29,6 +29,7 @@ import {
   type CommunityRewardsRow,
   type BuyPressureRow,
   type StakerTiersWeeklyRow,
+  type LockDistributionRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -145,6 +146,12 @@ export function Dashboard() {
     isLoading: loadingStakerTiers,
     executedAt: stakerTiersExecutedAt,
   } = useDuneQuery<StakerTiersWeeklyRow>(DUNE_QUERIES.STAKER_TIERS_WEEKLY);
+
+  const {
+    data: lockDistribution,
+    isLoading: loadingLockDistribution,
+    executedAt: lockDistributionExecutedAt,
+  } = useDuneQuery<LockDistributionRow>(DUNE_QUERIES.LOCK_DISTRIBUTION);
 
   // Mixpanel data
   const {
@@ -682,9 +689,9 @@ export function Dashboard() {
             </ChartCard>
 
             <LockDistributionChart
-              data={monthlyLingoByLockData}
-              isLoading={loadingLingoByLock}
-              lastUpdated={lingoByLockExecutedAt}
+              data={lockDistribution}
+              isLoading={loadingLockDistribution}
+              lastUpdated={lockDistributionExecutedAt}
             />
           </div>
         </section>

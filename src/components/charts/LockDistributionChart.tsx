@@ -7,28 +7,20 @@ import {
   Tooltip,
 } from 'recharts';
 import { Clock } from 'lucide-react';
-
-interface LockDistributionData {
-  month: string;
-  flexible: number;
-  threeMonth: number;
-  sixMonth: number;
-  twelveMonth: number;
-  total: number;
-}
+import type { LockDistributionRow } from '../../hooks/useDuneQuery';
 
 interface LockDistributionChartProps {
-  data: LockDistributionData[];
+  data: LockDistributionRow[] | null;
   isLoading?: boolean;
   lastUpdated?: string | null;
 }
 
-const SEGMENTS = [
-  { key: 'flexible', label: 'Flexible', color: '#7B68AE' },
-  { key: 'threeMonth', label: '3 Month', color: '#C4B5D4' },
-  { key: 'sixMonth', label: '6 Month', color: '#5EB851' },
-  { key: 'twelveMonth', label: '12 Month', color: '#FF7847' },
-] as const;
+const COLORS: Record<string, string> = {
+  'Flexible': '#7B68AE',
+  '3 months': '#C4B5D4',
+  '6 months': '#5EB851',
+  '12 months': '#FF7847',
+};
 
 function formatLastUpdated(isoDate: string): string {
   const date = new Date(isoDate);
@@ -47,22 +39,22 @@ function formatLastUpdated(isoDate: string): string {
 }
 
 export function LockDistributionChart({ data, isLoading, lastUpdated }: LockDistributionChartProps) {
-  // Use the latest month's data
   const chartData = useMemo(() => {
     if (!data || data.length === 0) return [];
-    const latest = data[data.length - 1];
-    const total = latest.flexible + latest.threeMonth + latest.sixMonth + latest.twelveMonth;
-    if (total === 0) return [];
 
-    return SEGMENTS.map(seg => ({
-      name: seg.label,
-      value: latest[seg.key],
-      color: seg.color,
-      pct: ((latest[seg.key] / total) * 100).toFixed(1),
-    })).filter(s => s.value > 0);
+    return data
+      .filter(row => row.lock_period !== 'TOTAL')
+      .map(row => ({
+        name: row.lock_period,
+        value: Math.round(row.lingo_staked),
+        usd: Math.round(row.usd_value),
+        pct: row.percentage_of_total.toFixed(1),
+        color: COLORS[row.lock_period] ?? '#888',
+      }))
+      .filter(s => s.value > 0);
   }, [data]);
 
-  const latestMonth = data.length > 0 ? data[data.length - 1].month : '';
+  const totalRow = data?.find(r => r.lock_period === 'TOTAL');
 
   if (isLoading) {
     return (
@@ -82,7 +74,7 @@ export function LockDistributionChart({ data, isLoading, lastUpdated }: LockDist
             Lock Duration Distribution
           </h3>
           <p className="text-sm text-soft-gray mt-1">
-            LINGO staked by lock period — {latestMonth}
+            Current LINGO staked by lock period
           </p>
         </div>
         {lastUpdated && (
@@ -92,6 +84,16 @@ export function LockDistributionChart({ data, isLoading, lastUpdated }: LockDist
           </div>
         )}
       </div>
+
+      {/* Total staked summary */}
+      {totalRow && (
+        <div className="text-center mb-4 relative z-10">
+          <span className="text-2xl font-bold bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent">
+            {Math.round(totalRow.lingo_staked).toLocaleString()}
+          </span>
+          <span className="text-sm text-soft-gray ml-2">LINGO total</span>
+        </div>
+      )}
 
       {chartData.length > 0 ? (
         <div className="flex flex-col sm:flex-row items-center gap-6 relative z-10">
@@ -128,11 +130,14 @@ export function LockDistributionChart({ data, isLoading, lastUpdated }: LockDist
                           <span className="text-soft-gray text-sm">{entry.name}</span>
                         </div>
                         <span className="text-lavender font-medium">
-                          {Math.round(entry.value).toLocaleString()} LINGO
+                          {entry.value.toLocaleString()} LINGO
                         </span>
                         <span className="text-purple-gray text-xs ml-2">
                           ({entry.pct}%)
                         </span>
+                        <div className="text-purple-gray text-xs mt-1">
+                          ${entry.usd.toLocaleString()} USD
+                        </div>
                       </div>
                     );
                   }}
@@ -159,7 +164,7 @@ export function LockDistributionChart({ data, isLoading, lastUpdated }: LockDist
                   {entry.pct}%
                 </div>
                 <div className="text-xs text-purple-gray">
-                  {Math.round(entry.value).toLocaleString()} LINGO
+                  {entry.value.toLocaleString()} LINGO
                 </div>
               </div>
             ))}

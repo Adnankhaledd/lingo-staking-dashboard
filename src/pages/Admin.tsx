@@ -214,7 +214,7 @@ export function Admin() {
             {isRefreshing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Refreshing all 17 queries...
+                Refreshing all 18 queries...
               </>
             ) : (
               <>
@@ -354,7 +354,7 @@ export function Admin() {
             </div>
             <div>
               <h2 className="text-base font-semibold text-lavender">Dune Query Reference</h2>
-              <p className="text-xs text-purple-gray">17 queries &middot; Click ID to open on Dune</p>
+              <p className="text-xs text-purple-gray">18 queries &middot; Click ID to open on Dune</p>
             </div>
           </div>
 
@@ -379,6 +379,7 @@ export function Admin() {
               { id: '6749507', name: 'COMMUNITY_REWARDS', section: 'Revenue — Community Rewards' },
               { id: '6760287', name: 'BUY_PRESSURE', section: 'Trading — Buy & Sell Pressure' },
               { id: '6770827', name: 'STAKER_TIERS_WEEKLY', section: 'Staking — Tier Counts Over Time ($100+/$500+/$1K+)' },
+              { id: '6511860', name: 'LOCK_DISTRIBUTION', section: 'Staking — Lock Duration Distribution (donut chart)' },
             ].map(({ id, name, section }) => (
               <div key={id} className="flex items-start gap-3 py-2.5 border-b border-white/[0.04] last:border-0">
                 <a
@@ -429,7 +430,7 @@ export function Admin() {
 
         {/* Info */}
         <div className="mt-6 text-center text-xs text-purple-gray">
-          <p>Dune cron: 06:00 UTC &middot; 17 queries &middot; Mixpanel cron: 06:05 UTC</p>
+          <p>Dune cron: 06:00 UTC &middot; 18 queries &middot; Mixpanel cron: 06:05 UTC</p>
           <p className="mt-1">Both stored in Vercel Blob &middot; CDN cached 1 min + 5 min stale</p>
         </div>
       </div>
