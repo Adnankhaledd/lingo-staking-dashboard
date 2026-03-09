@@ -88,7 +88,7 @@ async function getRecentStakes(fromBlock?: string): Promise<AlchemyTransfer[]> {
     contractAddresses: [LINGO_TOKEN],
     category: ['erc20'],
     toAddress: STAKING_CONTRACT,
-    maxCount: '0x14', // 20
+    maxCount: '0x32', // 50
     order: 'desc',
     withMetadata: true,
   };
