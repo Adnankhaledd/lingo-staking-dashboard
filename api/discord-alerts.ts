@@ -208,7 +208,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .reverse(); // oldest first so Discord messages appear in order
 
     if (filtered.length === 0) {
-      return res.status(200).json({ message: 'No new stakes', lastBlock });
+      return res.status(200).json({
+        message: 'No new stakes',
+        lastBlock,
+        fromBlock,
+        debug: { totalFetched: stakes.length, allValues: stakes.map(s => s.value) },
+      });
     }
 
     // Get lock duration for each and post to Discord
