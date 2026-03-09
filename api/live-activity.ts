@@ -64,9 +64,34 @@ async function getStakes(): Promise<AlchemyTransfer[]> {
   return data.result?.transfers ?? [];
 }
 
+// Map a raw duration value (seconds or blocks) to a human label
+function durationToLabel(val: bigint): string {
+  if (val === 0n) return 'Flexible';
+
+  // Duration could be in seconds or blocks (~2s per block on Base)
+  const n = Number(val);
+
+  // Check if values look like seconds (large numbers)
+  if (n >= 86_400) {
+    const days = Math.round(n / 86_400);
+    if (days <= 45) return '1 Month';
+    if (days <= 105) return '3 Months';
+    if (days <= 200) return '6 Months';
+    if (days <= 400) return '12 Months';
+    return `${Math.round(days / 30)}M Lock`;
+  }
+
+  // Check if values look like blocks (~2s each on Base)
+  const approxDays = (n * 2) / 86_400;
+  if (approxDays <= 45) return '1 Month';
+  if (approxDays <= 105) return '3 Months';
+  if (approxDays <= 200) return '6 Months';
+  if (approxDays <= 400) return '12 Months';
+  return `${Math.round(approxDays / 30)}M Lock`;
+}
+
 // Read lock durations from the contract to build a value → label map
 async function getLockDurationsMap(): Promise<Map<bigint, string>> {
-  const LABELS = ['Flexible', '3 Months', '6 Months', '12 Months'];
   const map = new Map<bigint, string>();
 
   try {
@@ -108,8 +133,7 @@ async function getLockDurationsMap(): Promise<Map<bigint, string>> {
     for (const r of results) {
       if (r.result) {
         const val = BigInt(r.result);
-        const label = LABELS[r.id] ?? `Lock ${r.id}`;
-        map.set(val, label);
+        map.set(val, durationToLabel(val));
       }
     }
   } catch {
@@ -157,7 +181,7 @@ function extractDuration(receipt: TxReceipt, durationMap: Map<bigint, string>): 
       if (log.data.length >= 130) {
         const durationHex = '0x' + log.data.slice(66);
         const duration = BigInt(durationHex);
-        return durationMap.get(duration) ?? null;
+        return durationMap.get(duration) ?? durationToLabel(duration);
       }
     }
   }
