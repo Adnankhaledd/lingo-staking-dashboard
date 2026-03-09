@@ -7,6 +7,7 @@ export interface StakingEvent {
   txHash: string;
   timestamp: string;
   blockNum: string;
+  lockDuration: string | null;
 }
 
 interface LiveActivityResponse {

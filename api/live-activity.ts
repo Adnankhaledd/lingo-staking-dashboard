@@ -6,6 +6,9 @@ const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const MIN_AMOUNT = 10_000;
 
+// keccak256("Staked(address,uint256,uint256)")
+const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
+
 interface AlchemyTransfer {
   blockNum: string;
   hash: string;
@@ -23,6 +26,18 @@ interface StakingEvent {
   txHash: string;
   timestamp: string;
   blockNum: string;
+  lockDuration: string | null;
+}
+
+interface ReceiptLog {
+  address: string;
+  topics: string[];
+  data: string;
+}
+
+interface TxReceipt {
+  transactionHash: string;
+  logs: ReceiptLog[];
 }
 
 async function getStakes(): Promise<AlchemyTransfer[]> {
@@ -49,6 +64,106 @@ async function getStakes(): Promise<AlchemyTransfer[]> {
   return data.result?.transfers ?? [];
 }
 
+// Read lock durations from the contract to build a value → label map
+async function getLockDurationsMap(): Promise<Map<bigint, string>> {
+  const LABELS = ['Flexible', '3 Months', '6 Months', '12 Months'];
+  const map = new Map<bigint, string>();
+
+  try {
+    // Call lockDurationsCount()
+    const countRes = await fetch(ALCHEMY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'eth_call',
+        params: [{ to: STAKING_CONTRACT, data: '0x5ef35984' }, 'latest'],
+      }),
+    });
+
+    if (!countRes.ok) return map;
+    const countData = await countRes.json();
+    const count = Number(BigInt(countData.result || '0x0'));
+
+    if (count === 0) return map;
+
+    // Batch fetch all lockDurations(i)
+    const batch = Array.from({ length: count }, (_, i) => ({
+      jsonrpc: '2.0', id: i, method: 'eth_call',
+      params: [{
+        to: STAKING_CONTRACT,
+        // lockDurations(uint256) selector + padded index
+        data: '0x32298be1' + i.toString(16).padStart(64, '0'),
+      }, 'latest'],
+    }));
+
+    const batchRes = await fetch(ALCHEMY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(batch),
+    });
+
+    if (!batchRes.ok) return map;
+    const results: { id: number; result?: string }[] = await batchRes.json();
+
+    for (const r of results) {
+      if (r.result) {
+        const val = BigInt(r.result);
+        const label = LABELS[r.id] ?? `Lock ${r.id}`;
+        map.set(val, label);
+      }
+    }
+  } catch {
+    // Fall through — lock durations will be null
+  }
+
+  return map;
+}
+
+// Batch-fetch transaction receipts
+async function batchGetReceipts(txHashes: string[]): Promise<Map<string, TxReceipt>> {
+  const map = new Map<string, TxReceipt>();
+  if (txHashes.length === 0) return map;
+
+  const batch = txHashes.map((hash, i) => ({
+    jsonrpc: '2.0', id: i, method: 'eth_getTransactionReceipt', params: [hash],
+  }));
+
+  const response = await fetch(ALCHEMY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(batch),
+  });
+
+  if (!response.ok) return map;
+  const results: { result?: TxReceipt }[] = await response.json();
+
+  for (const r of results) {
+    if (r.result?.transactionHash) {
+      map.set(r.result.transactionHash.toLowerCase(), r.result);
+    }
+  }
+  return map;
+}
+
+// Extract lock duration from the Staked event in a tx receipt
+function extractDuration(receipt: TxReceipt, durationMap: Map<bigint, string>): string | null {
+  for (const log of receipt.logs) {
+    if (
+      log.address.toLowerCase() === STAKING_CONTRACT &&
+      log.topics[0] === STAKED_EVENT_TOPIC
+    ) {
+      // data = abi.encode(uint256 amount, uint256 duration)
+      // 0x + 64 chars (amount) + 64 chars (duration)
+      if (log.data.length >= 130) {
+        const durationHex = '0x' + log.data.slice(66);
+        const duration = BigInt(durationHex);
+        return durationMap.get(duration) ?? null;
+      }
+    }
+  }
+  return null;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -62,10 +177,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // 1 API call: stakes only (transfers TO the staking contract)
-    const stakes = await getStakes();
+    // Fetch stakes and lock duration config in parallel
+    const [stakes, durationMap] = await Promise.all([
+      getStakes(),
+      getLockDurationsMap(),
+    ]);
 
-    const events: StakingEvent[] = stakes
+    const filtered = stakes
       .map(t => ({
         type: 'stake' as const,
         wallet: t.from,
@@ -76,6 +194,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }))
       .filter(e => e.amount >= MIN_AMOUNT)
       .slice(0, 20);
+
+    // Batch-fetch receipts for filtered events to get lock durations
+    const receipts = await batchGetReceipts(filtered.map(e => e.txHash));
+
+    const events: StakingEvent[] = filtered.map(e => ({
+      ...e,
+      lockDuration: receipts.has(e.txHash.toLowerCase())
+        ? extractDuration(receipts.get(e.txHash.toLowerCase())!, durationMap)
+        : null,
+    }));
 
     return res.status(200).json({ events, configured: true });
   } catch (error) {
