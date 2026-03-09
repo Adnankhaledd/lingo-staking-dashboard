@@ -10,6 +10,7 @@ import { StakerTiersChart } from '../components/charts/StakerTiersChart';
 import { LockDistributionChart } from '../components/charts/LockDistributionChart';
 import { WeeklyLockChart } from '../components/charts/WeeklyLockChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
+import { LiveActivityFeed } from '../components/LiveActivityFeed';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
   useDuneQuery,
@@ -338,6 +339,11 @@ export function Dashboard() {
                   <KPICard key={kpi.label} data={kpi} index={index} />
                 ))}
           </div>
+        </section>
+
+        {/* Live Activity Feed (Alchemy) — hidden if not configured */}
+        <section className="mb-10">
+          <LiveActivityFeed />
         </section>
 
         {/* ═══════════════════════════════════════════════════════════════
@@ -1095,7 +1101,7 @@ export function Dashboard() {
             <span className="text-sm font-medium text-soft-gray">Staking Analytics</span>
           </div>
           <p className="text-xs text-purple-gray">
-            Powered by Dune Analytics & Mixpanel
+            Powered by Dune Analytics, Mixpanel & Alchemy
           </p>
         </footer>
       </main>
