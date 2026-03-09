@@ -4,13 +4,16 @@ import { put, list } from '@vercel/blob';
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const STAKING_CONTRACT = (process.env.STAKING_CONTRACT_ADDRESS || '').toLowerCase();
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
-const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const MIN_AMOUNT = 10_000;
 const BLOB_KEY = 'discord-last-block.json';
+const LINGO_DECIMALS = 18;
 
 // keccak256("Staked(address,uint256,uint256)")
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
+
+// ~7 days of blocks on Base (2 sec/block)
+const DEFAULT_LOOKBACK = 302_400;
 
 const KNOWN_DURATIONS: Record<string, string> = {
   '0': 'Flexible',
@@ -21,36 +24,26 @@ const KNOWN_DURATIONS: Record<string, string> = {
   '30283200': '24 Months',
 };
 
-// Lock duration → Discord embed color
 const DURATION_COLORS: Record<string, number> = {
-  'Flexible': 0x9B8EC2,    // purple-gray
-  '1 Month': 0x5EB851,     // green
-  '3 Months': 0x5EB851,    // green
-  '6 Months': 0xFF7847,    // orange
-  '12 Months': 0xE8B100,   // gold
-  '24 Months': 0xE8B100,   // gold
+  'Flexible': 0x9B8EC2,
+  '1 Month': 0x5EB851,
+  '3 Months': 0x5EB851,
+  '6 Months': 0xFF7847,
+  '12 Months': 0xE8B100,
+  '24 Months': 0xE8B100,
 };
 
-interface AlchemyTransfer {
-  blockNum: string;
-  hash: string;
-  from: string;
-  to: string;
-  value: number | null;
-  metadata: { blockTimestamp: string };
-}
-
-interface ReceiptLog {
-  address: string;
-  topics: string[];
-  data: string;
+interface StakedEvent {
+  wallet: string;
+  amount: number;
+  lockDuration: string;
+  txHash: string;
+  blockNumber: number;
 }
 
 function durationToLabel(val: bigint): string {
-  const known = KNOWN_DURATIONS[val.toString()];
-  if (known) return known;
-  const months = Math.round(Number(val) * 2 / 86_400 / 30);
-  return months > 0 ? `${months} Months` : 'Flexible';
+  return KNOWN_DURATIONS[val.toString()] ??
+    (() => { const m = Math.round(Number(val) * 2 / 86_400 / 30); return m > 0 ? `${m} Months` : 'Flexible'; })();
 }
 
 function formatAmount(amount: number): string {
@@ -63,7 +56,7 @@ function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-async function getLastSeenBlock(): Promise<string | null> {
+async function getLastSeenBlock(): Promise<number | null> {
   try {
     const { blobs } = await list({ prefix: BLOB_KEY });
     if (blobs.length === 0) return null;
@@ -75,108 +68,91 @@ async function getLastSeenBlock(): Promise<string | null> {
   }
 }
 
-async function saveLastSeenBlock(blockHex: string): Promise<void> {
-  await put(BLOB_KEY, JSON.stringify({ lastBlock: blockHex, updatedAt: new Date().toISOString() }), {
+async function saveLastSeenBlock(block: number): Promise<void> {
+  await put(BLOB_KEY, JSON.stringify({ lastBlock: block, updatedAt: new Date().toISOString() }), {
     access: 'public',
     addRandomSuffix: false,
     contentType: 'application/json',
   });
 }
 
-async function getRecentStakes(fromBlock?: string): Promise<AlchemyTransfer[]> {
-  const params: Record<string, unknown> = {
-    contractAddresses: [LINGO_TOKEN],
-    category: ['erc20'],
-    toAddress: STAKING_CONTRACT,
-    maxCount: '0x32', // 50
-    order: 'desc',
-    withMetadata: true,
-  };
+async function getLatestBlock(): Promise<number> {
+  const res = await fetch(ALCHEMY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+  });
+  const data = await res.json();
+  return parseInt(data.result, 16);
+}
 
-  // If we have a last block, only fetch newer events
-  if (fromBlock) {
-    params.fromBlock = fromBlock;
-  }
-
-  const response = await fetch(ALCHEMY_URL, {
+// Query Staked events directly from the contract logs
+async function getStakedEvents(fromBlock: number, toBlock: number): Promise<StakedEvent[]> {
+  const res = await fetch(ALCHEMY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       jsonrpc: '2.0', id: 1,
-      method: 'alchemy_getAssetTransfers',
-      params: [params],
+      method: 'eth_getLogs',
+      params: [{
+        address: STAKING_CONTRACT,
+        topics: [STAKED_EVENT_TOPIC],
+        fromBlock: '0x' + fromBlock.toString(16),
+        toBlock: '0x' + toBlock.toString(16),
+      }],
     }),
   });
 
-  if (!response.ok) return [];
-  const data = await response.json();
-  return data.result?.transfers ?? [];
-}
+  if (!res.ok) return [];
+  const data = await res.json();
+  const logs = data.result ?? [];
 
-async function getReceiptDuration(txHash: string): Promise<string | null> {
-  try {
-    const response = await fetch(ALCHEMY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1,
-        method: 'eth_getTransactionReceipt',
-        params: [txHash],
-      }),
-    });
+  const events: StakedEvent[] = [];
+  for (const log of logs) {
+    if (log.data.length < 130) continue;
 
-    if (!response.ok) return null;
-    const data = await response.json();
-    const logs: ReceiptLog[] = data.result?.logs ?? [];
+    // topics[1] = indexed user address (padded to 32 bytes)
+    const wallet = '0x' + log.topics[1].slice(26);
+    // data = abi.encode(uint256 amount, uint256 duration)
+    const amountRaw = BigInt('0x' + log.data.slice(2, 66));
+    const durationRaw = BigInt('0x' + log.data.slice(66));
 
-    for (const log of logs) {
-      if (
-        log.address.toLowerCase() === STAKING_CONTRACT &&
-        log.topics[0] === STAKED_EVENT_TOPIC &&
-        log.data.length >= 130
-      ) {
-        const duration = BigInt('0x' + log.data.slice(66));
-        return durationToLabel(duration);
-      }
+    const amount = Number(amountRaw / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
+
+    if (amount >= MIN_AMOUNT) {
+      events.push({
+        wallet,
+        amount,
+        lockDuration: durationToLabel(durationRaw),
+        txHash: log.transactionHash,
+        blockNumber: parseInt(log.blockNumber, 16),
+      });
     }
-  } catch { /* ignore */ }
-  return null;
+  }
+
+  return events;
 }
 
-async function sendDiscordEmbed(
-  wallet: string,
-  amount: number,
-  lockDuration: string | null,
-  txHash: string,
-  timestamp: string,
-): Promise<void> {
-  const lock = lockDuration ?? 'Unknown';
-  const color = DURATION_COLORS[lock] ?? 0x5EB851;
-  const lockEmoji = lock === 'Flexible' ? '\uD83D\uDD13' : '\uD83D\uDD12';
-  const amountStr = formatAmount(amount);
+async function sendDiscordEmbed(event: StakedEvent): Promise<void> {
+  const color = DURATION_COLORS[event.lockDuration] ?? 0x5EB851;
+  const lockEmoji = event.lockDuration === 'Flexible' ? '\uD83D\uDD13' : '\uD83D\uDD12';
 
   const embed = {
-    title: `${lockEmoji} ${amountStr} LINGO Staked`,
+    title: `${lockEmoji} ${formatAmount(event.amount)} LINGO Staked`,
     color,
     fields: [
-      { name: 'Wallet', value: `[\`${shortenAddress(wallet)}\`](https://basescan.org/address/${wallet})`, inline: true },
-      { name: 'Lock Duration', value: lock, inline: true },
-      { name: 'Amount', value: `${amount.toLocaleString()} LINGO`, inline: true },
+      { name: 'Wallet', value: `[\`${shortenAddress(event.wallet)}\`](https://basescan.org/address/${event.wallet})`, inline: true },
+      { name: 'Lock Duration', value: event.lockDuration, inline: true },
+      { name: 'Amount', value: `${event.amount.toLocaleString()} LINGO`, inline: true },
     ],
-    timestamp: timestamp || new Date().toISOString(),
-    footer: {
-      text: 'Lingo Staking Bot',
-    },
-    url: `https://basescan.org/tx/${txHash}`,
+    footer: { text: 'Lingo Staking Bot' },
+    url: `https://basescan.org/tx/${event.txHash}`,
   };
 
   await fetch(DISCORD_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username: 'Lingo Staking',
-      embeds: [embed],
-    }),
+    body: JSON.stringify({ username: 'Lingo Staking', embeds: [embed] }),
   });
 }
 
@@ -193,57 +169,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const lastBlock = await getLastSeenBlock();
+    const [lastBlock, latestBlock] = await Promise.all([
+      getLastSeenBlock(),
+      getLatestBlock(),
+    ]);
 
-    // Fetch from one block after the last seen (to avoid duplicates)
-    const fromBlock = lastBlock
-      ? '0x' + (parseInt(lastBlock, 16) + 1).toString(16)
-      : undefined;
+    // First run: look back ~7 days. Subsequent: from last seen block + 1
+    const fromBlock = lastBlock ? lastBlock + 1 : latestBlock - DEFAULT_LOOKBACK;
 
-    const stakes = await getRecentStakes(fromBlock);
+    const events = await getStakedEvents(fromBlock, latestBlock);
 
-    // Filter to 10K+ LINGO
-    const filtered = stakes
-      .filter(t => (t.value ?? 0) >= MIN_AMOUNT)
-      .reverse(); // oldest first so Discord messages appear in order
-
-    if (filtered.length === 0) {
+    if (events.length === 0) {
+      // Save current block so next run starts from here
+      await saveLastSeenBlock(latestBlock);
       return res.status(200).json({
-        message: 'No new stakes',
-        lastBlock,
+        message: 'No new stakes above 10K',
         fromBlock,
-        debug: { totalFetched: stakes.length, allValues: stakes.map(s => s.value) },
+        toBlock: latestBlock,
+        eventsChecked: 0,
       });
     }
 
-    // Get lock duration for each and post to Discord
+    // Post to Discord (oldest first)
     let posted = 0;
-    let highestBlock = lastBlock ?? '0x0';
-
-    for (const stake of filtered) {
-      const lockDuration = await getReceiptDuration(stake.hash);
-
-      await sendDiscordEmbed(
-        stake.from,
-        stake.value ?? 0,
-        lockDuration,
-        stake.hash,
-        stake.metadata?.blockTimestamp || '',
-      );
-
-      // Track highest block
-      if (parseInt(stake.blockNum, 16) > parseInt(highestBlock, 16)) {
-        highestBlock = stake.blockNum;
-      }
+    for (const event of events) {
+      await sendDiscordEmbed(event);
       posted++;
     }
 
-    // Save the highest block we've processed
-    await saveLastSeenBlock(highestBlock);
+    // Save highest block processed
+    await saveLastSeenBlock(latestBlock);
 
     return res.status(200).json({
       message: `Posted ${posted} stake alerts to Discord`,
-      lastBlock: highestBlock,
+      fromBlock,
+      toBlock: latestBlock,
+      posted,
     });
   } catch (error) {
     return res.status(500).json({
