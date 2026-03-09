@@ -44,9 +44,11 @@ function EventRow({ event }: { event: StakingEvent }) {
             <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
               event.lockDuration === 'Flexible'
                 ? 'bg-purple-gray/20 text-purple-gray'
-                : event.lockDuration === '12 Months'
-                  ? 'bg-[#FF7847]/15 text-[#FF7847]'
-                  : 'bg-green1/15 text-green1'
+                : event.lockDuration === '24 Months'
+                  ? 'bg-[#E8B100]/15 text-[#E8B100]'
+                  : event.lockDuration === '12 Months'
+                    ? 'bg-[#FF7847]/15 text-[#FF7847]'
+                    : 'bg-green1/15 text-green1'
             }`}>
               {event.lockDuration === 'Flexible'
                 ? <Unlock className="w-2.5 h-2.5" />

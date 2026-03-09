@@ -64,30 +64,22 @@ async function getStakes(): Promise<AlchemyTransfer[]> {
   return data.result?.transfers ?? [];
 }
 
-// Map a raw duration value (seconds or blocks) to a human label
+// Exact block values from the staking contract (Base = 2 sec/block)
+const KNOWN_DURATIONS: Record<string, string> = {
+  '0': 'Flexible',
+  '1296000': '1 Month',
+  '3888000': '3 Months',
+  '7776000': '6 Months',
+  '15552000': '12 Months',
+  '30283200': '24 Months',
+};
+
 function durationToLabel(val: bigint): string {
-  if (val === 0n) return 'Flexible';
-
-  // Duration could be in seconds or blocks (~2s per block on Base)
-  const n = Number(val);
-
-  // Check if values look like seconds (large numbers)
-  if (n >= 86_400) {
-    const days = Math.round(n / 86_400);
-    if (days <= 45) return '1 Month';
-    if (days <= 105) return '3 Months';
-    if (days <= 200) return '6 Months';
-    if (days <= 400) return '12 Months';
-    return `${Math.round(days / 30)}M Lock`;
-  }
-
-  // Check if values look like blocks (~2s each on Base)
-  const approxDays = (n * 2) / 86_400;
-  if (approxDays <= 45) return '1 Month';
-  if (approxDays <= 105) return '3 Months';
-  if (approxDays <= 200) return '6 Months';
-  if (approxDays <= 400) return '12 Months';
-  return `${Math.round(approxDays / 30)}M Lock`;
+  const known = KNOWN_DURATIONS[val.toString()];
+  if (known) return known;
+  // Fallback: approximate from block count (2 sec/block)
+  const months = Math.round(Number(val) * 2 / 86_400 / 30);
+  return months > 0 ? `${months} Months` : 'Flexible';
 }
 
 // Read lock durations from the contract to build a value → label map
