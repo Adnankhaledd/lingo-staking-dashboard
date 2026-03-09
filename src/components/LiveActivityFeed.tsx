@@ -1,4 +1,4 @@
-import { ArrowUpRight, ArrowDownRight, Activity, ExternalLink, Lock } from 'lucide-react';
+import { ArrowUpRight, Activity, ExternalLink } from 'lucide-react';
 import { useLiveActivity, type StakingEvent } from '../hooks/useLiveActivity';
 
 function formatTimeAgo(isoDate: string): string {
@@ -27,44 +27,19 @@ function formatAmount(amount: number): string {
   return amount.toFixed(0);
 }
 
-const LOCK_COLORS: Record<string, string> = {
-  'Flexible': 'text-purple-gray bg-purple-gray/10',
-  '3 Month': 'text-[#C4B5D4] bg-[#C4B5D4]/10',
-  '6 Month': 'text-green1 bg-green1/10',
-  '12 Month': 'text-[#FF7847] bg-[#FF7847]/10',
-};
-
 function EventRow({ event }: { event: StakingEvent }) {
-  const isStake = event.type === 'stake';
-
   return (
     <div className="flex items-center gap-3 py-2.5 border-b border-white/[0.04] last:border-0 group">
-      <div
-        className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-          isStake ? 'bg-green1/10' : 'bg-red-400/10'
-        }`}
-      >
-        {isStake ? (
-          <ArrowUpRight className="w-4 h-4 text-green1" />
-        ) : (
-          <ArrowDownRight className="w-4 h-4 text-red-400" />
-        )}
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-green1/10">
+        <ArrowUpRight className="w-4 h-4 text-green1" />
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={`text-sm font-medium ${isStake ? 'text-green1' : 'text-red-400'}`}>
-            {isStake ? 'Staked' : 'Unstaked'}
-          </span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-green1">Staked</span>
           <span className="text-sm font-bold text-lavender">
             {formatAmount(event.amount)} LINGO
           </span>
-          {event.lockDuration && (
-            <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${LOCK_COLORS[event.lockDuration] || 'text-purple-gray bg-purple-gray/10'}`}>
-              <Lock className="w-2.5 h-2.5" />
-              {event.lockDuration}
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-2 mt-0.5">
           <span className="text-xs text-purple-gray font-mono">
@@ -92,7 +67,6 @@ function EventRow({ event }: { event: StakingEvent }) {
 export function LiveActivityFeed() {
   const { events, isLoading, isConfigured } = useLiveActivity();
 
-  // Don't render at all if Alchemy is not configured
   if (!isConfigured) return null;
 
   return (
@@ -129,7 +103,7 @@ export function LiveActivityFeed() {
         </div>
       ) : (
         <div className="h-32 flex items-center justify-center text-soft-gray text-sm relative z-10">
-          No recent activity above 10K LINGO
+          No recent stakes above 10K LINGO
         </div>
       )}
     </div>

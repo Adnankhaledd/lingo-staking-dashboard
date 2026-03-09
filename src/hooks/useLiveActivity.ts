@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 
 export interface StakingEvent {
-  type: 'stake' | 'unstake';
+  type: 'stake';
   wallet: string;
   amount: number;
   txHash: string;
   timestamp: string;
   blockNum: string;
-  lockDuration: string | null;
 }
 
 interface LiveActivityResponse {
