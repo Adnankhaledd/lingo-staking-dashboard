@@ -26,10 +26,6 @@
     {
       "path": "/api/refresh-mixpanel",
       "schedule": "5 6 * * *"
-    },
-    {
-      "path": "/api/discord-alerts",
-      "schedule": "*/2 * * * *"
     }
   ]
 }
