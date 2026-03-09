@@ -72,6 +72,7 @@ async function saveLastSeenBlock(block: number): Promise<void> {
   await put(BLOB_KEY, JSON.stringify({ lastBlock: block, updatedAt: new Date().toISOString() }), {
     access: 'public',
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: 'application/json',
   });
 }
