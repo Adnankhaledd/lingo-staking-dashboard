@@ -11,6 +11,7 @@ import { LockDistributionChart } from '../components/charts/LockDistributionChar
 import { WeeklyLockChart } from '../components/charts/WeeklyLockChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { LiveActivityFeed } from '../components/LiveActivityFeed';
+import { useLiveTotalStaked } from '../hooks/useLiveTotalStaked';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
   useDuneQuery,
@@ -161,6 +162,9 @@ export function Dashboard() {
     isLoading: loadingWeeklyLock,
     executedAt: weeklyLockExecutedAt,
   } = useDuneQuery<WeeklyLockBreakdownRow>(DUNE_QUERIES.WEEKLY_LOCK_BREAKDOWN);
+
+  // Alchemy live total staked (polls every 5 min, 1 API call)
+  const { totalStaked: liveTotalStaked } = useLiveTotalStaked();
 
   // Mixpanel data
   const {
@@ -593,6 +597,7 @@ export function Dashboard() {
                 <>
                   {(() => {
                     const latest = totalStakedData?.[totalStakedData.length - 1];
+                    const displayTotal = liveTotalStaked ?? Math.round(latest?.total_staked ?? 0);
                     // Find value ~30 days ago for month-over-month change
                     const thirtyDaysAgo = totalStakedData && totalStakedData.length > 30
                       ? totalStakedData[totalStakedData.length - 31]
@@ -602,9 +607,14 @@ export function Dashboard() {
                       : null;
                     return (
                       <div className="flex flex-col items-center gap-1.5 mb-4">
-                        <span className="text-4xl font-bold bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent tracking-tight">
-                          {Math.round(latest?.total_staked ?? 0).toLocaleString()}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-4xl font-bold bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent tracking-tight">
+                            {displayTotal.toLocaleString()}
+                          </span>
+                          {liveTotalStaked !== null && (
+                            <span className="text-[10px] font-medium text-green1 bg-green1/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Live</span>
+                          )}
+                        </div>
                         {monthPct !== null && (
                           <span className={`text-sm font-semibold px-2.5 py-0.5 rounded-full ${monthPct >= 0 ? 'text-green1 bg-green1/10' : 'text-red-400 bg-red-400/10'}`}>
                             {monthPct >= 0 ? '+' : ''}{monthPct.toFixed(1)}%
