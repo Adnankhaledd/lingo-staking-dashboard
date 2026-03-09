@@ -62,7 +62,11 @@ async function getLastSeenBlock(): Promise<number | null> {
     if (blobs.length === 0) return null;
     const res = await fetch(blobs[0].url);
     const data = await res.json();
-    return data.lastBlock ?? null;
+    const val = data.lastBlock;
+    if (val == null) return null;
+    // Handle both old hex string format and new number format
+    if (typeof val === 'string') return parseInt(val, 16) || null;
+    return typeof val === 'number' ? val : null;
   } catch {
     return null;
   }
