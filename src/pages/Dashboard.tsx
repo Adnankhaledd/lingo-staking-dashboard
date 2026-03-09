@@ -8,6 +8,7 @@ import { BuyPressureChart } from '../components/charts/BuyPressureChart';
 import { StakingFlowChart } from '../components/charts/StakingFlowChart';
 import { StakerTiersChart } from '../components/charts/StakerTiersChart';
 import { LockDistributionChart } from '../components/charts/LockDistributionChart';
+import { WeeklyLockChart } from '../components/charts/WeeklyLockChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
@@ -30,6 +31,7 @@ import {
   type BuyPressureRow,
   type StakerTiersWeeklyRow,
   type LockDistributionRow,
+  type WeeklyLockBreakdownRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -152,6 +154,12 @@ export function Dashboard() {
     isLoading: loadingLockDistribution,
     executedAt: lockDistributionExecutedAt,
   } = useDuneQuery<LockDistributionRow>(DUNE_QUERIES.LOCK_DISTRIBUTION);
+
+  const {
+    data: weeklyLockBreakdown,
+    isLoading: loadingWeeklyLock,
+    executedAt: weeklyLockExecutedAt,
+  } = useDuneQuery<WeeklyLockBreakdownRow>(DUNE_QUERIES.WEEKLY_LOCK_BREAKDOWN);
 
   // Mixpanel data
   const {
@@ -650,7 +658,12 @@ export function Dashboard() {
             <StakerTiersChart data={stakerTiersChartData} isLoading={loadingStakerTiers} lastUpdated={stakerTiersExecutedAt} />
           </div>
 
-          {/* Row 3: Lock Duration Breakdown */}
+          {/* Row 3: Weekly Lock Duration Trend */}
+          <div className="mb-5">
+            <WeeklyLockChart data={weeklyLockBreakdown} isLoading={loadingWeeklyLock} lastUpdated={weeklyLockExecutedAt} />
+          </div>
+
+          {/* Row 4: Lock Duration Breakdown (Monthly bar + Current donut) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
             <ChartCard
               title="Monthly LINGO Staked by Lock Duration"

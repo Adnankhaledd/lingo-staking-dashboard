@@ -26,6 +26,7 @@ const QUERIES: Record<string, number> = {
   '6760287': 1000, // BUY_PRESSURE
   '6770827': 1000, // STAKER_TIERS_WEEKLY
   '6511860': 10,   // LOCK_DISTRIBUTION
+  '6802863': 1000, // WEEKLY_LOCK_BREAKDOWN
 };
 
 interface QueryResult {

@@ -232,6 +232,7 @@ export const DUNE_QUERIES = {
   BUY_PRESSURE: '6760287',
   STAKER_TIERS_WEEKLY: '6770827',
   LOCK_DISTRIBUTION: '6511860',
+  WEEKLY_LOCK_BREAKDOWN: '6802863',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -403,4 +404,17 @@ export interface LockDistributionRow {
   lingo_staked: number;
   usd_value: number;
   percentage_of_total: number;
+}
+
+export interface WeeklyLockBreakdownRow {
+  week: string;
+  flexible_staked: number;
+  flexible_pct: number;
+  '3mo_staked': number;
+  '3mo_pct': number;
+  '6mo_staked': number;
+  '6mo_pct': number;
+  '12mo_staked': number;
+  '12mo_pct': number;
+  total_staked: number;
 }
