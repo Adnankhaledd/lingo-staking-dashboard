@@ -62,17 +62,18 @@ const PERIOD_OPTIONS: { key: TimePeriod; label: string }[] = [
   { key: 'year', label: 'Y' },
 ];
 
+// Parse YYYY-MM-DD directly to avoid timezone issues with new Date()
 function getGroupKey(dateStr: string, period: TimePeriod): string {
-  const d = new Date(dateStr);
-  const year = d.getFullYear();
-  const month = d.getMonth();
+  const parts = dateStr.split('-');
+  const year = parseInt(parts[0]);
+  const month = parseInt(parts[1]); // 1-based
   switch (period) {
     case 'week':
       return dateStr;
     case 'month':
-      return `${year}-${String(month + 1).padStart(2, '0')}`;
+      return `${year}-${String(month).padStart(2, '0')}`;
     case 'quarter': {
-      const q = Math.floor(month / 3) + 1;
+      const q = Math.ceil(month / 3);
       return `${year}-Q${q}`;
     }
     case 'year':
@@ -80,16 +81,17 @@ function getGroupKey(dateStr: string, period: TimePeriod): string {
   }
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 function formatGroupLabel(key: string, period: TimePeriod): string {
   switch (period) {
     case 'week': {
-      const d = new Date(key);
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const [, m, d] = key.split('-').map(Number);
+      return `${MONTH_NAMES[m - 1]} ${d}`;
     }
     case 'month': {
-      const [y, m] = key.split('-');
-      const d = new Date(parseInt(y), parseInt(m) - 1);
-      return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      const [y, m] = key.split('-').map(Number);
+      return `${MONTH_NAMES[m - 1]} '${String(y).slice(2)}`;
     }
     case 'quarter':
       return key;

@@ -187,19 +187,17 @@ export function Claims() {
           />
         </div>
 
-        {/* Charts */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <ClaimsSummaryChart
-            data={summaryChartData}
-            isLoading={loadingSummary}
-            lastUpdated={summaryExecutedAt}
-          />
-          <ClaimsBySourceChart
-            data={sourceChartData}
-            isLoading={loadingSource}
-            lastUpdated={sourceExecutedAt}
-          />
-        </div>
+        {/* Charts — full width, one per row */}
+        <ClaimsSummaryChart
+          data={summaryChartData}
+          isLoading={loadingSummary}
+          lastUpdated={summaryExecutedAt}
+        />
+        <ClaimsBySourceChart
+          data={sourceChartData}
+          isLoading={loadingSource}
+          lastUpdated={sourceExecutedAt}
+        />
 
         {/* Top Claimers Table */}
         <TopClaimersTable
