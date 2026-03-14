@@ -1,6 +1,24 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { put } from '@vercel/blob';
-import { fetchBlobJson } from './_blob-helpers';
+import { put, list } from '@vercel/blob';
+
+// Inline blob helper — direct URL fetch with list() fallback
+async function fetchBlobJson<T = unknown>(pathname: string): Promise<T | null> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN || '';
+  const match = token.match(/^vercel_blob_rw_([^_]+)_/);
+  if (match) {
+    try {
+      const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${pathname}?t=${Date.now()}`);
+      if (res.ok) return (await res.json()) as T;
+    } catch { /* fall through */ }
+  }
+  try {
+    const { blobs } = await list({ prefix: pathname });
+    if (blobs.length === 0) return null;
+    const res = await fetch(`${blobs[blobs.length - 1].url}?t=${Date.now()}`);
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch { return null; }
+}
 
 const DUNE_API_KEY = process.env.DUNE_API_KEY || process.env.VITE_DUNE_API_KEY || '';
 const DUNE_API_BASE = 'https://api.dune.com/api/v1';
