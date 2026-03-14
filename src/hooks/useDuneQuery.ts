@@ -233,6 +233,9 @@ export const DUNE_QUERIES = {
   STAKER_TIERS_WEEKLY: '6770827',
   LOCK_DISTRIBUTION: '6511860',
   WEEKLY_LOCK_BREAKDOWN: '6802863',
+  WEEKLY_CLAIM_SUMMARY: '6828788',
+  WEEKLY_CLAIMS_BY_SOURCE: '6828804',
+  TOP_CLAIMERS: '6828795',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -417,4 +420,36 @@ export interface WeeklyLockBreakdownRow {
   '12mo_staked': number;
   '12mo_pct': number;
   total_staked: number;
+}
+
+// ─── Claims row types ────────────────────────────────────────────────
+
+export interface WeeklyClaimSummaryRow {
+  week: string;
+  num_claims: number;
+  unique_claimers: number;
+  total_lingo_claimed: number;
+  usd_value: number;
+  avg_claim_size: number;
+  cumulative_claimed: number;
+}
+
+export interface WeeklyClaimsBySourceRow {
+  week: string;
+  team_claimed: number;
+  private_rounds_claimed: number;
+  kol_claimed: number;
+  public_claimed: number;
+  airdrop_claimed: number;
+  partners_claimed: number;
+  total_claimed: number;
+}
+
+export interface TopClaimerRow {
+  wallet: string;
+  num_claims: number;
+  total_lingo_claimed: number;
+  usd_value: number;
+  first_claim: string;
+  last_claim: string;
 }
