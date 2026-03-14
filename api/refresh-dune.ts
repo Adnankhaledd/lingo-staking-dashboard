@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { put, list, del } from '@vercel/blob';
+import { put } from '@vercel/blob';
+import { fetchBlobJson } from './_blob-helpers';
 
 const DUNE_API_KEY = process.env.DUNE_API_KEY || process.env.VITE_DUNE_API_KEY || '';
 const DUNE_API_BASE = 'https://api.dune.com/api/v1';
@@ -73,34 +74,9 @@ async function fetchQueryResults(queryId: string, limit: number): Promise<QueryR
   }
 }
 
-// Read existing blob data for merge
+// Read existing blob data for merge — uses direct URL fetch (zero Blob ops)
 async function getExistingBlobData(): Promise<BlobPayload | null> {
-  try {
-    const { blobs } = await list({ prefix: BLOB_FILENAME });
-    if (blobs.length === 0) return null;
-
-    // Fetch the most recent blob
-    const latestBlob = blobs[blobs.length - 1];
-    const response = await fetch(latestBlob.url);
-    if (!response.ok) return null;
-
-    return await response.json() as BlobPayload;
-  } catch {
-    return null;
-  }
-}
-
-// Delete all existing blobs with this filename to avoid duplicates
-async function deleteExistingBlobs(): Promise<void> {
-  try {
-    const { blobs } = await list({ prefix: BLOB_FILENAME });
-    if (blobs.length > 0) {
-      await del(blobs.map(b => b.url));
-      console.log(`Deleted ${blobs.length} existing blob(s)`);
-    }
-  } catch (err) {
-    console.warn('Failed to delete old blobs:', err);
-  }
+  return fetchBlobJson<BlobPayload>(BLOB_FILENAME);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -190,13 +166,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     successCount: mergedSuccessCount,
   };
 
-  // Delete old blobs first, then write fresh
+  // Write directly — allowOverwrite replaces the existing blob (no list+del needed)
   try {
-    await deleteExistingBlobs();
-
     const blob = await put(BLOB_FILENAME, JSON.stringify(payload), {
       access: 'public',
       addRandomSuffix: false,
+      allowOverwrite: true,
       contentType: 'application/json',
     });
 

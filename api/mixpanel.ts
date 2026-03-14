@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { list } from '@vercel/blob';
+import { fetchBlobJson } from './_blob-helpers';
 
 /**
  * Serves Mixpanel data from Vercel Blob (pre-fetched by /api/refresh-mixpanel).
- * Same pattern as api/dune-data.ts — no live Mixpanel API calls.
+ * Uses direct URL fetch — zero Blob SDK operations.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -16,21 +16,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { blobs } = await list({ prefix: 'mixpanel-data.json' });
+    // Direct fetch by known pathname — zero Blob SDK operations
+    const data = await fetchBlobJson('mixpanel-data.json');
 
-    if (blobs.length === 0) {
+    if (!data) {
       return res.status(404).json({ error: 'No cached Mixpanel data available. Run /api/refresh-mixpanel first.' });
     }
-
-    const latestBlob = blobs[blobs.length - 1];
-
-    // Fetch blob content with cache-busting
-    const response = await fetch(`${latestBlob.url}?t=${Date.now()}`);
-    if (!response.ok) {
-      return res.status(502).json({ error: 'Failed to read cached Mixpanel data' });
-    }
-
-    const data = await response.json();
 
     // Cache at CDN for 1 minute, allow stale for 5 minutes while revalidating
     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');

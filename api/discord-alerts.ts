@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { put, list } from '@vercel/blob';
+import { put } from '@vercel/blob';
+import { fetchBlobJson } from './_blob-helpers';
 
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const STAKING_CONTRACT = (process.env.STAKING_CONTRACT_ADDRESS || '').toLowerCase();
@@ -11,6 +12,8 @@ const LINGO_DECIMALS = 18;
 
 // keccak256("Staked(address,uint256,uint256)")
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
+// keccak256("Unstaked(address,uint256,uint256)")
+const UNSTAKED_EVENT_TOPIC = '0x7fc4727e062e336010f2c282598ef5f14facb3de68cf8195c2f23e1454b2b74e';
 
 // ~7 days of blocks on Base (2 sec/block)
 const DEFAULT_LOOKBACK = 302_400;
@@ -24,6 +27,9 @@ const KNOWN_DURATIONS: Record<string, string> = {
   '30283200': '24 Months',
 };
 
+// Known block duration values (for reverse-matching unstakes)
+const KNOWN_DURATION_BLOCKS = [0, 1296000, 3888000, 7776000, 15552000, 30283200];
+
 const DURATION_COLORS: Record<string, number> = {
   'Flexible': 0x9B8EC2,
   '1 Month': 0x5EB851,
@@ -33,7 +39,11 @@ const DURATION_COLORS: Record<string, number> = {
   '24 Months': 0xE8B100,
 };
 
-interface StakedEvent {
+// Red shades for unstake embeds
+const UNSTAKE_COLOR = 0xE84040;
+
+interface StakingEvent {
+  type: 'stake' | 'unstake';
   wallet: string;
   amount: number;
   lockDuration: string;
@@ -56,15 +66,18 @@ function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+function parseAmount(hex: string): number {
+  const raw = BigInt('0x' + hex);
+  return Number(raw / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
+}
+
 async function getLastSeenBlock(): Promise<number | null> {
   try {
-    const { blobs } = await list({ prefix: BLOB_KEY });
-    if (blobs.length === 0) return null;
-    const res = await fetch(blobs[0].url);
-    const data = await res.json();
+    // Direct URL fetch — zero Blob SDK operations
+    const data = await fetchBlobJson<{ lastBlock: unknown }>(BLOB_KEY);
+    if (!data) return null;
     const val = data.lastBlock;
     if (val == null) return null;
-    // Handle both old hex string format and new number format
     if (typeof val === 'string') return parseInt(val, 16) || null;
     return typeof val === 'number' ? val : null;
   } catch {
@@ -91,63 +104,134 @@ async function getLatestBlock(): Promise<number> {
   return parseInt(data.result, 16);
 }
 
-// Query Staked events directly from the contract logs
-async function getStakedEvents(fromBlock: number, toBlock: number): Promise<StakedEvent[]> {
-  const res = await fetch(ALCHEMY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0', id: 1,
-      method: 'eth_getLogs',
-      params: [{
-        address: STAKING_CONTRACT,
-        topics: [STAKED_EVENT_TOPIC],
-        fromBlock: '0x' + fromBlock.toString(16),
-        toBlock: '0x' + toBlock.toString(16),
-      }],
+// For an unstake, derive the lock duration from unlockBlock
+// unlockBlock = stakeBlock + lockDuration
+// We try each known duration and pick the one where stakeBlock is most reasonable
+function deriveLockDuration(unlockBlock: bigint, unstakeBlock: number): string {
+  const unlock = Number(unlockBlock);
+
+  for (const dur of KNOWN_DURATION_BLOCKS) {
+    if (dur === 0) {
+      // Flexible: unlockBlock would equal the stakeBlock (0 duration)
+      // So the stakeBlock = unlockBlock, and it must be <= unstakeBlock
+      if (unlock <= unstakeBlock && unlock > 0) {
+        // Check if it's plausible (staked within last ~2 years)
+        const blockAge = unstakeBlock - unlock;
+        if (blockAge < 31_536_000) { // ~2 years of blocks
+          continue; // Skip flexible, try longer durations first
+        }
+      }
+    }
+
+    const stakeBlock = unlock - dur;
+    // Must have staked before unstaking, and within a reasonable timeframe
+    if (stakeBlock > 0 && stakeBlock < unstakeBlock) {
+      return KNOWN_DURATIONS[dur.toString()] ?? 'Unknown';
+    }
+  }
+  return 'Unknown';
+}
+
+// Query Staked + Unstaked events from the contract
+async function getStakingEvents(fromBlock: number, toBlock: number): Promise<StakingEvent[]> {
+  // Fetch both event types in parallel
+  const [stakesRes, unstakesRes] = await Promise.all([
+    fetch(ALCHEMY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'eth_getLogs',
+        params: [{
+          address: STAKING_CONTRACT,
+          topics: [STAKED_EVENT_TOPIC],
+          fromBlock: '0x' + fromBlock.toString(16),
+          toBlock: '0x' + toBlock.toString(16),
+        }],
+      }),
     }),
-  });
+    fetch(ALCHEMY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 2, method: 'eth_getLogs',
+        params: [{
+          address: STAKING_CONTRACT,
+          topics: [UNSTAKED_EVENT_TOPIC],
+          fromBlock: '0x' + fromBlock.toString(16),
+          toBlock: '0x' + toBlock.toString(16),
+        }],
+      }),
+    }),
+  ]);
 
-  if (!res.ok) return [];
-  const data = await res.json();
-  const logs = data.result ?? [];
+  const events: StakingEvent[] = [];
 
-  const events: StakedEvent[] = [];
-  for (const log of logs) {
-    if (log.data.length < 130) continue;
+  // Parse Staked events: data = abi.encode(uint256 amount, uint256 duration)
+  if (stakesRes.ok) {
+    const data = await stakesRes.json();
+    for (const log of data.result ?? []) {
+      if (log.data.length < 130) continue;
+      const wallet = '0x' + log.topics[1].slice(26);
+      const amount = parseAmount(log.data.slice(2, 66));
+      const durationRaw = BigInt('0x' + log.data.slice(66));
 
-    // topics[1] = indexed user address (padded to 32 bytes)
-    const wallet = '0x' + log.topics[1].slice(26);
-    // data = abi.encode(uint256 amount, uint256 duration)
-    const amountRaw = BigInt('0x' + log.data.slice(2, 66));
-    const durationRaw = BigInt('0x' + log.data.slice(66));
-
-    const amount = Number(amountRaw / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
-
-    if (amount >= MIN_AMOUNT) {
-      events.push({
-        wallet,
-        amount,
-        lockDuration: durationToLabel(durationRaw),
-        txHash: log.transactionHash,
-        blockNumber: parseInt(log.blockNumber, 16),
-      });
+      if (amount >= MIN_AMOUNT) {
+        events.push({
+          type: 'stake',
+          wallet,
+          amount,
+          lockDuration: durationToLabel(durationRaw),
+          txHash: log.transactionHash,
+          blockNumber: parseInt(log.blockNumber, 16),
+        });
+      }
     }
   }
 
+  // Parse Unstaked events: data = abi.encode(uint256 amount, uint256 unlockBlock)
+  if (unstakesRes.ok) {
+    const data = await unstakesRes.json();
+    for (const log of data.result ?? []) {
+      if (log.data.length < 130) continue;
+      const wallet = '0x' + log.topics[1].slice(26);
+      const amount = parseAmount(log.data.slice(2, 66));
+      const unlockBlock = BigInt('0x' + log.data.slice(66));
+      const blockNumber = parseInt(log.blockNumber, 16);
+
+      if (amount >= MIN_AMOUNT) {
+        events.push({
+          type: 'unstake',
+          wallet,
+          amount,
+          lockDuration: deriveLockDuration(unlockBlock, blockNumber),
+          txHash: log.transactionHash,
+          blockNumber,
+        });
+      }
+    }
+  }
+
+  // Sort by block number (oldest first)
+  events.sort((a, b) => a.blockNumber - b.blockNumber);
   return events;
 }
 
-async function sendDiscordEmbed(event: StakedEvent): Promise<void> {
-  const color = DURATION_COLORS[event.lockDuration] ?? 0x5EB851;
-  const lockEmoji = event.lockDuration === 'Flexible' ? '\uD83D\uDD13' : '\uD83D\uDD12';
+async function sendDiscordEmbed(event: StakingEvent): Promise<void> {
+  const isStake = event.type === 'stake';
+  const color = isStake
+    ? (DURATION_COLORS[event.lockDuration] ?? 0x5EB851)
+    : UNSTAKE_COLOR;
+  const emoji = isStake
+    ? (event.lockDuration === 'Flexible' ? '\uD83D\uDD13' : '\uD83D\uDD12')
+    : '\uD83D\uDCE4'; // 📤
+  const action = isStake ? 'Staked' : 'Unstaked';
 
   const embed = {
-    title: `${lockEmoji} ${formatAmount(event.amount)} LINGO Staked`,
+    title: `${emoji} ${formatAmount(event.amount)} LINGO ${action}`,
     color,
     fields: [
       { name: 'Wallet', value: `[\`${shortenAddress(event.wallet)}\`](https://basescan.org/address/${event.wallet})`, inline: true },
-      { name: 'Lock Duration', value: event.lockDuration, inline: true },
+      { name: isStake ? 'Lock Duration' : 'Was Locked', value: event.lockDuration, inline: true },
       { name: 'Amount', value: `${event.amount.toLocaleString()} LINGO`, inline: true },
     ],
     footer: { text: 'Lingo Staking Bot' },
@@ -179,37 +263,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       getLatestBlock(),
     ]);
 
-    // First run: look back ~7 days. Subsequent: from last seen block + 1
     const fromBlock = lastBlock ? lastBlock + 1 : latestBlock - DEFAULT_LOOKBACK;
-
-    const events = await getStakedEvents(fromBlock, latestBlock);
+    const events = await getStakingEvents(fromBlock, latestBlock);
 
     if (events.length === 0) {
-      // Save current block so next run starts from here
       await saveLastSeenBlock(latestBlock);
       return res.status(200).json({
-        message: 'No new stakes above 10K',
+        message: 'No new activity above 10K',
         fromBlock,
         toBlock: latestBlock,
-        eventsChecked: 0,
       });
     }
 
-    // Post to Discord (oldest first)
-    let posted = 0;
+    let staked = 0;
+    let unstaked = 0;
     for (const event of events) {
       await sendDiscordEmbed(event);
-      posted++;
+      if (event.type === 'stake') staked++;
+      else unstaked++;
     }
 
-    // Save highest block processed
     await saveLastSeenBlock(latestBlock);
 
     return res.status(200).json({
-      message: `Posted ${posted} stake alerts to Discord`,
+      message: `Posted ${staked} stakes + ${unstaked} unstakes to Discord`,
       fromBlock,
       toBlock: latestBlock,
-      posted,
+      staked,
+      unstaked,
     });
   } catch (error) {
     return res.status(500).json({

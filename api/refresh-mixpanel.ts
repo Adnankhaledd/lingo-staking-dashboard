@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { put, list, del } from '@vercel/blob';
+import { put } from '@vercel/blob';
+import { fetchBlobJson } from './_blob-helpers';
 
 const MIXPANEL_API_SECRET = process.env.MIXPANEL_API_SECRET || '010125f09fef119ad08d0eb062be12b6';
 const PROJECT_ID = '3623820';
@@ -106,31 +107,9 @@ interface MixpanelBlobPayload {
   refreshedAt: string;
 }
 
+// Read existing blob data for merge — uses direct URL fetch (zero Blob ops)
 async function getExistingBlobData(): Promise<MixpanelBlobPayload | null> {
-  try {
-    const { blobs } = await list({ prefix: BLOB_FILENAME });
-    if (blobs.length === 0) return null;
-
-    const latestBlob = blobs[blobs.length - 1];
-    const response = await fetch(latestBlob.url);
-    if (!response.ok) return null;
-
-    return await response.json() as MixpanelBlobPayload;
-  } catch {
-    return null;
-  }
-}
-
-async function deleteExistingBlobs(): Promise<void> {
-  try {
-    const { blobs } = await list({ prefix: BLOB_FILENAME });
-    if (blobs.length > 0) {
-      await del(blobs.map(b => b.url));
-      console.log(`Deleted ${blobs.length} existing Mixpanel blob(s)`);
-    }
-  } catch (err) {
-    console.warn('Failed to delete old Mixpanel blobs:', err);
-  }
+  return fetchBlobJson<MixpanelBlobPayload>(BLOB_FILENAME);
 }
 
 // ─── Handler ─────────────────────────────────────────────────────────
@@ -219,11 +198,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Write to blob
   try {
-    await deleteExistingBlobs();
-
     const blob = await put(BLOB_FILENAME, JSON.stringify(payload), {
       access: 'public',
       addRandomSuffix: false,
+      allowOverwrite: true,
       contentType: 'application/json',
     });
 
