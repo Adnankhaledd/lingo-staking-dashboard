@@ -68,16 +68,8 @@ function buildBarData(data: TotalStakedRow[], period: Period): BarDataPoint[] {
     a[0].localeCompare(b[0])
   );
 
-  // How many bars to show
-  let showCount: number;
-  switch (period) {
-    case 'week': showCount = 12; break;
-    case 'month': showCount = 12; break;
-    case 'quarter': showCount = 8; break;
-    case 'year': showCount = 6; break;
-  }
-
-  const recent = sortedBuckets.slice(-showCount);
+  // Show all data from the start
+  const recent = sortedBuckets;
 
   return recent.map(([key, { total, date }], index) => {
     let label: string;
