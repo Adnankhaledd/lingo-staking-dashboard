@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, CheckCircle } from 'lucide-react';
 import { Header } from '../components/layout';
-import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard } from '../components/cards';
+import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, StakingUpdateCard } from '../components/cards';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
@@ -343,6 +343,11 @@ export function Dashboard() {
                   <KPICard key={kpi.label} data={kpi} index={index} />
                 ))}
           </div>
+        </section>
+
+        {/* Staking Update — period comparison card */}
+        <section className="mb-10">
+          <StakingUpdateCard data={totalStakedData} isLoading={loadingTotalStaked} />
         </section>
 
         {/* Live Activity Feed (Alchemy) — hidden if not configured */}
