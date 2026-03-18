@@ -177,25 +177,25 @@ export function StakingUpdateCard({ data, isLoading }: StakingUpdateCardProps) {
           </div>
         </div>
 
-        {/* Current value + change */}
-        <div className="flex items-center gap-4 mb-4">
+        {/* Hero number — centered, full amount */}
+        <div className="flex flex-col items-center gap-2 my-5">
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl lg:text-3xl font-bold text-lavender">
-              {formatNumber(latestChange?.total ?? 0, 1)}
+            <span className="text-4xl sm:text-5xl lg:text-6xl font-bold bg-gradient-to-r from-purple via-light1 to-lavender bg-clip-text text-transparent tracking-tight">
+              {Math.round(latestChange?.total ?? 0).toLocaleString('en-US')}
             </span>
-            <span className="text-sm text-purple-gray font-medium">LINGO</span>
+            <span className="text-base sm:text-lg text-purple-gray font-medium">LINGO</span>
           </div>
 
           {latestChange?.changePct !== null && latestChange?.changePct !== undefined && (
-            <div className="flex items-center gap-2">
-              <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg ${trendBg}`}>
-                <TrendIcon className={`w-3.5 h-3.5 ${trendColor}`} />
-                <span className={`text-xs font-semibold ${trendColor}`}>
+            <div className="flex items-center gap-3">
+              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${trendBg}`}>
+                <TrendIcon className={`w-4 h-4 ${trendColor}`} />
+                <span className={`text-sm font-semibold ${trendColor}`}>
                   {isUp ? '+' : ''}{latestChange.changePct.toFixed(2)}%
                 </span>
               </div>
-              <span className="text-xs text-purple-gray">
-                {change > 0 ? '+' : ''}{formatNumber(change, 1)}
+              <span className="text-sm text-purple-gray">
+                {change > 0 ? '+' : ''}{Math.round(Math.abs(change)).toLocaleString('en-US')} LINGO
               </span>
             </div>
           )}
