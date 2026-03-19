@@ -68,7 +68,32 @@ function buildBarData(data: TotalStakedRow[], period: Period): BarDataPoint[] {
     a[0].localeCompare(b[0])
   );
 
-  // Show all data from the start
+  // Identify the current (incomplete) period key
+  const now = new Date();
+  let currentKey: string;
+  switch (period) {
+    case 'week': {
+      const d = new Date(now);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      d.setDate(diff);
+      currentKey = d.toISOString().split('T')[0];
+      break;
+    }
+    case 'month':
+      currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      break;
+    case 'quarter': {
+      const q = Math.floor(now.getMonth() / 3) + 1;
+      currentKey = `${now.getFullYear()}-Q${q}`;
+      break;
+    }
+    case 'year':
+      currentKey = `${now.getFullYear()}`;
+      break;
+  }
+
+  // Keep all periods but mark current as incomplete
   const recent = sortedBuckets;
 
   return recent.map(([key, { total, date }], index) => {
@@ -99,7 +124,7 @@ function buildBarData(data: TotalStakedRow[], period: Period): BarDataPoint[] {
       label,
       total,
       changePct,
-      isCurrent: index === recent.length - 1,
+      isCurrent: key >= currentKey,
     };
   });
 }
@@ -124,9 +149,10 @@ export function StakingUpdateCard({ data, isLoading }: StakingUpdateCardProps) {
     return buildBarData(data, period);
   }, [data, period]);
 
-  // Get the latest change for the header
-  const latestChange = barData.length > 0 ? barData[barData.length - 1] : null;
-  const prevBar = barData.length > 1 ? barData[barData.length - 2] : null;
+  // Use the last COMPLETED period for the hero number (skip incomplete current period)
+  const completedBars = barData.filter((b) => !b.isCurrent);
+  const latestChange = completedBars.length > 0 ? completedBars[completedBars.length - 1] : null;
+  const prevBar = completedBars.length > 1 ? completedBars[completedBars.length - 2] : null;
 
   if (isLoading) {
     return (
@@ -214,8 +240,8 @@ export function StakingUpdateCard({ data, isLoading }: StakingUpdateCardProps) {
                 <stop offset="100%" stopColor="#7B68AE" stopOpacity={0.4} />
               </linearGradient>
               <linearGradient id="stakingBarCurrentGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#C4B5D4" stopOpacity={1} />
-                <stop offset="100%" stopColor="#C4B5D4" stopOpacity={0.5} />
+                <stop offset="0%" stopColor="#7B68AE" stopOpacity={0.35} />
+                <stop offset="100%" stopColor="#7B68AE" stopOpacity={0.15} />
               </linearGradient>
             </defs>
 
@@ -255,7 +281,10 @@ export function StakingUpdateCard({ data, isLoading }: StakingUpdateCardProps) {
                     <p className="text-lavender font-semibold text-lg mb-1">
                       {formatNumber(d.total, 1)} LINGO
                     </p>
-                    {d.changePct !== null && (
+                    {d.isCurrent && (
+                      <p className="text-xs text-purple-gray italic">In progress</p>
+                    )}
+                    {d.changePct !== null && !d.isCurrent && (
                       <p className={`text-xs font-medium ${d.changePct >= 0 ? 'text-green1' : 'text-red-400'}`}>
                         {d.changePct >= 0 ? '+' : ''}{d.changePct.toFixed(2)}% vs prev {period}
                       </p>
@@ -276,6 +305,9 @@ export function StakingUpdateCard({ data, isLoading }: StakingUpdateCardProps) {
                 <Cell
                   key={index}
                   fill={entry.isCurrent ? 'url(#stakingBarCurrentGradient)' : 'url(#stakingBarGradient)'}
+                  stroke={entry.isCurrent ? '#7B68AE' : 'none'}
+                  strokeWidth={entry.isCurrent ? 1 : 0}
+                  strokeDasharray={entry.isCurrent ? '4 3' : undefined}
                 />
               ))}
             </Bar>
