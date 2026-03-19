@@ -113,6 +113,37 @@ function latestAndPrev(obj: Record<string, number>): { latest: number; prev: num
   };
 }
 
+/** Drop the current incomplete period and return the last two completed ones. */
+function completedLatestAndPrev(
+  obj: Record<string, number>,
+  period: 'week' | 'month'
+): { latest: number; prev: number } {
+  const now = new Date();
+  let currentPeriodStart: string;
+
+  if (period === 'week') {
+    // Monday of current week
+    const d = new Date(now);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    d.setDate(diff);
+    currentPeriodStart = d.toISOString().split('T')[0];
+  } else {
+    // First of current month
+    currentPeriodStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  }
+
+  // Keep only dates before the current period start
+  const completedDates = Object.keys(obj)
+    .sort()
+    .filter((d) => d < currentPeriodStart);
+
+  return {
+    latest: completedDates.length > 0 ? obj[completedDates[completedDates.length - 1]] ?? 0 : 0,
+    prev: completedDates.length > 1 ? obj[completedDates[completedDates.length - 2]] ?? 0 : 0,
+  };
+}
+
 function parseWeeklyEngagement(
   totals: EventsResponse | null,
   unique: EventsResponse | null,
@@ -120,8 +151,8 @@ function parseWeeklyEngagement(
 ): WeeklyEngagement {
   const totalValues = totals?.data?.values?.[eventName] || {};
   const uniqueValues = unique?.data?.values?.[eventName] || {};
-  const t = latestAndPrev(totalValues);
-  const u = latestAndPrev(uniqueValues);
+  const t = completedLatestAndPrev(totalValues, 'week');
+  const u = completedLatestAndPrev(uniqueValues, 'week');
 
   return {
     thisWeek: t.latest,
@@ -138,8 +169,8 @@ function parseMonthlyEngagement(
 ): MonthlyEngagement {
   const totalValues = totals?.data?.values?.[eventName] || {};
   const uniqueValues = unique?.data?.values?.[eventName] || {};
-  const t = latestAndPrev(totalValues);
-  const u = latestAndPrev(uniqueValues);
+  const t = completedLatestAndPrev(totalValues, 'month');
+  const u = completedLatestAndPrev(uniqueValues, 'month');
 
   return {
     thisMonth: t.latest,
