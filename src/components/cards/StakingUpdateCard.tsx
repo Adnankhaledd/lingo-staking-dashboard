@@ -124,7 +124,16 @@ export function StakingUpdateCard({ data, isLoading }: StakingUpdateCardProps) {
     return buildBarData(data, period);
   }, [data, period]);
 
-  // Get the latest change for the header
+  // Absolute latest total from raw data (matches the overview KPI)
+  const currentTotal = useMemo(() => {
+    if (!data || data.length === 0) return 0;
+    const sorted = [...data].sort((a, b) =>
+      parseDuneDate(a.day).localeCompare(parseDuneDate(b.day))
+    );
+    return sorted[sorted.length - 1].total_staked;
+  }, [data]);
+
+  // Use last completed bar for the % change comparison
   const latestChange = barData.length > 0 ? barData[barData.length - 1] : null;
   const prevBar = barData.length > 1 ? barData[barData.length - 2] : null;
 
@@ -181,7 +190,7 @@ export function StakingUpdateCard({ data, isLoading }: StakingUpdateCardProps) {
         <div className="flex flex-col items-center gap-2 my-5">
           <div className="flex items-baseline gap-2">
             <span className="text-4xl sm:text-5xl lg:text-6xl font-bold bg-gradient-to-r from-purple via-light1 to-lavender bg-clip-text text-transparent tracking-tight">
-              {Math.round(latestChange?.total ?? 0).toLocaleString('en-US')}
+              {Math.round(currentTotal).toLocaleString('en-US')}
             </span>
             <span className="text-base sm:text-lg text-purple-gray font-medium">LINGO</span>
           </div>
