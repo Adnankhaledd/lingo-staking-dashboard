@@ -105,14 +105,6 @@ function formatWeekLabel(isoStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function latestAndPrev(obj: Record<string, number>): { latest: number; prev: number } {
-  const dates = Object.keys(obj).sort();
-  return {
-    latest: dates.length > 0 ? obj[dates[dates.length - 1]] ?? 0 : 0,
-    prev: dates.length > 1 ? obj[dates[dates.length - 2]] ?? 0 : 0,
-  };
-}
-
 /** Drop the current incomplete period and return the last two completed ones. */
 function completedLatestAndPrev(
   obj: Record<string, number>,
