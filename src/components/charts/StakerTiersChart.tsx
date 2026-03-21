@@ -131,17 +131,17 @@ export function StakerTiersChart({ data, isLoading, lastUpdated }: StakerTiersCh
     });
   };
 
-  // Latest values + week-over-week change
+  // Period-over-period change using aggregated data
   const summaryData = useMemo(() => {
-    if (data.length < 2) return null;
-    const latest = data[data.length - 1];
-    const prev = data[data.length - 2];
+    if (chartData.length < 2) return null;
+    const latest = chartData[chartData.length - 1];
+    const prev = chartData[chartData.length - 2];
     return {
       s100: { value: latest.stakers100, change: latest.stakers100 - prev.stakers100 },
       s500: { value: latest.stakers500, change: latest.stakers500 - prev.stakers500 },
       s1000: { value: latest.stakers1000, change: latest.stakers1000 - prev.stakers1000 },
     };
-  }, [data]);
+  }, [chartData]);
 
   if (isLoading) {
     return (
@@ -161,7 +161,7 @@ export function StakerTiersChart({ data, isLoading, lastUpdated }: StakerTiersCh
             Staker Tiers Over Time
           </h3>
           <p className="text-sm text-soft-gray mt-1">
-            Users above USD thresholds per week
+            Users above USD thresholds per {{ week: 'week', month: 'month', quarter: 'quarter', year: 'year' }[period]}
           </p>
         </div>
 
@@ -206,7 +206,7 @@ export function StakerTiersChart({ data, isLoading, lastUpdated }: StakerTiersCh
                     {s.value.toLocaleString()}
                   </div>
                   <span className={`text-xs font-medium ${s.change >= 0 ? 'text-green1' : 'text-red-400'}`}>
-                    {s.change >= 0 ? '+' : ''}{s.change} <span className="text-purple-gray font-normal">WoW</span>
+                    {s.change >= 0 ? '+' : ''}{s.change} <span className="text-purple-gray font-normal">{{ week: 'WoW', month: 'MoM', quarter: 'QoQ', year: 'YoY' }[period]}</span>
                   </span>
                 </div>
               );
