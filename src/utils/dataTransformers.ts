@@ -64,54 +64,30 @@ export function calculateKPIs(
       previousValue: previousStaked?.total_staked,
       format: 'number',
       suffix: ' LINGO',
-      trend: latestStaked && previousStaked
-        ? latestStaked.total_staked > previousStaked.total_staked ? 'up' : 'down'
-        : 'neutral',
-      trendValue: latestStaked?.change_pct ?? 0,
     },
     {
       label: 'Active Stakers',
       value: latestWeekStats?.active_stakers ?? 0,
       previousValue: previousWeekStats?.active_stakers,
       format: 'number',
-      trend: latestWeekStats && previousWeekStats
-        ? latestWeekStats.active_stakers > previousWeekStats.active_stakers ? 'up' : 'down'
-        : 'neutral',
-      trendValue: latestWeekStats && previousWeekStats
-        ? ((latestWeekStats.active_stakers - previousWeekStats.active_stakers) / previousWeekStats.active_stakers) * 100
-        : 0,
     },
     {
       label: 'Stakes This Week',
       value: thisWeekStakes?.total_stake_events ?? 0,
       previousValue: lastWeekStakes?.total_stake_events,
       format: 'number',
-      trend: thisWeekStakes && lastWeekStakes
-        ? thisWeekStakes.total_stake_events > lastWeekStakes.total_stake_events ? 'up' : 'down'
-        : 'neutral',
-      trendValue: thisWeekStakes && lastWeekStakes && lastWeekStakes.total_stake_events > 0
-        ? ((thisWeekStakes.total_stake_events - lastWeekStakes.total_stake_events) / lastWeekStakes.total_stake_events) * 100
-        : 0,
     },
     {
       label: 'Stakers This Week',
       value: thisWeekStakes?.unique_wallets_staked ?? 0,
       previousValue: lastWeekStakes?.unique_wallets_staked,
       format: 'number',
-      trend: thisWeekStakes && lastWeekStakes
-        ? thisWeekStakes.unique_wallets_staked > lastWeekStakes.unique_wallets_staked ? 'up' : 'down'
-        : 'neutral',
-      trendValue: thisWeekStakes && lastWeekStakes && lastWeekStakes.unique_wallets_staked > 0
-        ? ((thisWeekStakes.unique_wallets_staked - lastWeekStakes.unique_wallets_staked) / lastWeekStakes.unique_wallets_staked) * 100
-        : 0,
     },
     {
       label: 'Retention Rate',
       value: avgRetention,
       previousValue: prevAvgRetention,
       format: 'percent',
-      trend: avgRetention > prevAvgRetention ? 'up' : avgRetention < prevAvgRetention ? 'down' : 'neutral',
-      trendValue: prevAvgRetention > 0 ? ((avgRetention - prevAvgRetention) / prevAvgRetention) * 100 : 0,
     },
   ];
 }
