@@ -220,7 +220,7 @@ export function BuyPressureChart({ data, isLoading, lastUpdated }: BuyPressureCh
       </div>
 
       <div className="h-80 relative z-10">
-        <ResponsiveContainer minWidth={0} width="100%" height="100%">
+        <ResponsiveContainer minWidth={0} width="100%" height={320}>
           <BarChart
             data={chartData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}

@@ -44,7 +44,7 @@ export function MixpanelChart({
       </div>
 
       <div className="h-64 relative z-10">
-        <ResponsiveContainer minWidth={0} width="100%" height="100%">
+        <ResponsiveContainer minWidth={0} width="100%" height={256}>
           <AreaChart data={data}>
             <defs>
               <linearGradient id={`gradient-${title.replace(/\s/g, '')}`} x1="0" y1="0" x2="0" y2="1">

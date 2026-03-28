@@ -277,7 +277,7 @@ export function WeeklyLockChart({ data, isLoading, lastUpdated }: WeeklyLockChar
       </div>
 
       <div className="h-80 relative z-10">
-        <ResponsiveContainer minWidth={0} width="100%" height="100%">
+        <ResponsiveContainer minWidth={0} width="100%" height={320}>
           <AreaChart
             data={chartData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
