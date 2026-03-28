@@ -85,7 +85,7 @@ export function Dashboard() {
   const {
     data: topStakers,
     isLoading: loadingTopStakers,
-  } = useDuneQuery<TopStakerRow>(DUNE_QUERIES.TOP_STAKERS, { limit: 50 });
+  } = useDuneQuery<TopStakerRow>(DUNE_QUERIES.TOP_STAKERS, { limit: 300 });
 
   const {
     data: tradingFees,

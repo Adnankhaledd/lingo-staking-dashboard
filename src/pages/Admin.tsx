@@ -366,7 +366,7 @@ export function Admin() {
               { id: '6528806', name: 'COHORT_RETENTION', section: 'Retention — Cohort Retention Heatmap' },
               { id: '6560698', name: 'STAKING_TIERS', section: 'Staking Tiers breakdown (unused)' },
               { id: '6543709', name: 'UNLOCK_SCHEDULE', section: 'Unlock Schedule timeline (unused)' },
-              { id: '6632385', name: 'TOP_STAKERS', section: 'Top Stakers — Top 50 leaderboard' },
+              { id: '6919472', name: 'TOP_STAKERS', section: 'Top Stakers — Top 300 leaderboard with local curation' },
               { id: '6288543', name: 'TRADING_FEES', section: 'Revenue — Monthly Trading Fees' },
               { id: '6606898', name: 'APY_CLAIMS', section: 'Revenue — Monthly APY Claims' },
               { id: '6535334', name: 'MONTHLY_STAKING_FLOW', section: 'Staking — Monthly Stake/Unstake Flow' },

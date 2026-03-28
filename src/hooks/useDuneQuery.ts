@@ -218,7 +218,7 @@ export const DUNE_QUERIES = {
   COHORT_RETENTION: '6528806',
   STAKING_TIERS: '6560698',
   UNLOCK_SCHEDULE: '6543709',
-  TOP_STAKERS: '6632385',
+  TOP_STAKERS: '6919472',
   TRADING_FEES: '6288543',
   APY_CLAIMS: '6606898',
   MONTHLY_STAKING_FLOW: '6535334',
@@ -290,6 +290,7 @@ export interface TopStakerRow {
   lingo_staked: number;
   usd_value: number;
   pct_of_total: number;
+  local_curation?: string;
 }
 
 export interface TradingFeesRow {

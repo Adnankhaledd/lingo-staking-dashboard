@@ -1,4 +1,5 @@
-import { Download, ExternalLink, Trophy, Medal, Award } from 'lucide-react';
+import { useState } from 'react';
+import { Download, ExternalLink, Trophy, Medal, Award, Search, X } from 'lucide-react';
 import { formatNumber, formatCurrency, exportToCSV } from '../../utils/formatters';
 import { GlowButton } from '../ui/GlowButton';
 import type { TopStakerRow } from '../../hooks/useDuneQuery';
@@ -19,6 +20,10 @@ function truncateWallet(wallet: string): string {
 function getCleanWalletAddress(wallet: string): string {
   // Remove leading zeros for etherscan link
   return wallet.replace(/^0x0+/, '0x');
+}
+
+function normalizeWallet(wallet: string): string {
+  return wallet.replace(/^0x0+/, '0x').toLowerCase();
 }
 
 function getRankDisplay(rank: number) {
@@ -51,6 +56,10 @@ function getRankDisplay(rank: number) {
 }
 
 export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const hasLocalCuration = data.some(s => s.local_curation);
+
   const handleExport = () => {
     const exportData = data.map(staker => ({
       Rank: staker.rank,
@@ -58,9 +67,19 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
       'LINGO Staked': staker.lingo_staked,
       'USD Value': staker.usd_value,
       '% of Total': staker.pct_of_total,
+      ...(hasLocalCuration ? { 'Local Curation': staker.local_curation ?? '' } : {}),
     }));
     exportToCSV(exportData, 'lingo_top_stakers');
   };
+
+  // Filter: if search is active, show only matching wallet; otherwise show all
+  const trimmed = searchQuery.trim();
+  const displayData = trimmed.length > 0
+    ? data.filter(s => normalizeWallet(s.wallet).includes(trimmed.toLowerCase()))
+    : data;
+
+  const searchResult = trimmed.length > 0 ? displayData[0] ?? null : null;
+  const isSearchActive = trimmed.length > 0;
 
   return (
     <div className="flagship-card rounded-2xl">
@@ -68,7 +87,7 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
       <div className="flex items-center justify-between p-6 border-b border-white/5 relative z-10">
         <div>
           <h3 className="text-lg font-semibold text-lavender">Top Stakers Leaderboard</h3>
-          <p className="text-sm text-soft-gray mt-1">Top 50 wallets by LINGO staked</p>
+          <p className="text-sm text-soft-gray mt-1">Top 300 wallets by LINGO staked</p>
         </div>
         <GlowButton
           onClick={handleExport}
@@ -77,6 +96,42 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
           <Download className="w-4 h-4" />
           <span className="text-sm">Export</span>
         </GlowButton>
+      </div>
+
+      {/* Search bar */}
+      <div className="px-6 py-4 border-b border-white/5 relative z-10">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-soft-gray pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search wallet address…"
+            className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl pl-9 pr-9 py-2.5 text-sm text-lavender placeholder-soft-gray/50 focus:outline-none focus:border-purple/50 focus:bg-white/[0.06] transition-all font-mono"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-soft-gray hover:text-lavender transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Search result summary */}
+        {isSearchActive && (
+          <div className="mt-2">
+            {searchResult ? (
+              <p className="text-xs text-green1">
+                Found at rank <span className="font-semibold">#{searchResult.rank}</span> — {formatNumber(searchResult.lingo_staked)} LINGO ({formatCurrency(searchResult.usd_value)})
+                {searchResult.local_curation ? <span className="text-purple-gray"> · {searchResult.local_curation}</span> : null}
+              </p>
+            ) : (
+              <p className="text-xs text-red-400">Wallet not found in top 300</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Table Container with Scroll */}
@@ -90,6 +145,11 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
               <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">
                 Wallet
               </th>
+              {hasLocalCuration && (
+                <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">
+                  Local Curation
+                </th>
+              )}
               <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">
                 LINGO Staked
               </th>
@@ -111,6 +171,11 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
                   <td className="py-4 px-4">
                     <div className="skeleton h-5 w-28 rounded" />
                   </td>
+                  {hasLocalCuration && (
+                    <td className="py-4 px-4">
+                      <div className="skeleton h-5 w-20 rounded" />
+                    </td>
+                  )}
                   <td className="py-4 px-4">
                     <div className="skeleton h-5 w-24 rounded ml-auto" />
                   </td>
@@ -123,10 +188,12 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
                 </tr>
               ))
             ) : (
-              data.map((staker) => (
+              displayData.map((staker) => (
                 <tr
                   key={staker.wallet}
-                  className="border-b border-white/5 hover:bg-white/[0.02] transition-colors group"
+                  className={`border-b border-white/5 hover:bg-white/[0.02] transition-colors group ${
+                    isSearchActive && searchResult?.wallet === staker.wallet ? 'bg-purple/5 border-purple/20' : ''
+                  }`}
                 >
                   <td className="py-4 px-6">
                     {getRankDisplay(staker.rank)}
@@ -153,6 +220,17 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
                       </div>
                     </div>
                   </td>
+                  {hasLocalCuration && (
+                    <td className="py-4 px-4">
+                      {staker.local_curation ? (
+                        <span className="text-xs px-2 py-1 rounded-lg bg-purple/10 text-purple border border-purple/20">
+                          {staker.local_curation}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-soft-gray/40">—</span>
+                      )}
+                    </td>
+                  )}
                   <td className="py-4 px-4 text-right">
                     <span className="font-semibold text-lavender">
                       {formatNumber(staker.lingo_staked)}
@@ -185,7 +263,7 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
       {data && data.length > 0 && (
         <div className="px-6 py-4 border-t border-white/5 bg-white/[0.02] relative z-10">
           <p className="text-xs text-purple-gray text-center">
-            Showing {data.length} wallets &bull; Data from Dune Analytics
+            Showing {isSearchActive ? `${displayData.length} result${displayData.length !== 1 ? 's' : ''} of` : ''} {data.length} wallets &bull; Data from Dune Analytics
           </p>
         </div>
       )}
