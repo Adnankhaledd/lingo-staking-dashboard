@@ -124,7 +124,7 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
           <div className="mt-2">
             {searchResult ? (
               <p className="text-xs text-green1">
-                Found at rank <span className="font-semibold">#{searchResult.rank}</span> — {formatNumber(searchResult.lingo_staked)} LINGO ({formatCurrency(searchResult.usd_value)})
+                Found at rank <span className="font-semibold">#{searchResult.rank}</span> — {formatNumber(searchResult.lingo_staked ?? 0)} LINGO ({formatCurrency(searchResult.usd_value ?? 0)})
                 {searchResult.local_curation ? <span className="text-purple-gray"> · {searchResult.local_curation}</span> : null}
               </p>
             ) : (
@@ -233,22 +233,22 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
                   )}
                   <td className="py-4 px-4 text-right">
                     <span className="font-semibold text-lavender">
-                      {formatNumber(staker.lingo_staked)}
+                      {formatNumber(staker.lingo_staked ?? 0)}
                     </span>
                   </td>
                   <td className="py-4 px-4 text-right text-soft-gray">
-                    {formatCurrency(staker.usd_value)}
+                    {formatCurrency(staker.usd_value ?? 0)}
                   </td>
                   <td className="py-4 px-6 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <div className="w-16 h-1.5 bg-dark3 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-gradient-to-r from-purple to-sosiska rounded-full"
-                          style={{ width: `${Math.min(staker.pct_of_total * 10, 100)}%` }}
+                          style={{ width: `${Math.min((staker.pct_of_total ?? 0) * 10, 100)}%` }}
                         />
                       </div>
                       <span className="text-sm text-soft-gray w-12 text-right">
-                        {staker.pct_of_total.toFixed(2)}%
+                        {(staker.pct_of_total ?? 0).toFixed(2)}%
                       </span>
                     </div>
                   </td>
