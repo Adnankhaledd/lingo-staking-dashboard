@@ -99,7 +99,7 @@ export function LockDistributionChart({ data, isLoading, lastUpdated }: LockDist
         <div className="flex flex-col sm:flex-row items-center gap-6 relative z-10">
           {/* Donut chart */}
           <div className="h-64 w-64 flex-shrink-0">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer minWidth={0} width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={chartData}

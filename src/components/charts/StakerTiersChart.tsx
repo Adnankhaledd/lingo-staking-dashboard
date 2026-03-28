@@ -242,7 +242,7 @@ export function StakerTiersChart({ data, isLoading, lastUpdated }: StakerTiersCh
       </div>
 
       <div className="h-80 relative z-10">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer minWidth={0} width="100%" height="100%">
           <AreaChart
             data={chartData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}

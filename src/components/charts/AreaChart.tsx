@@ -52,7 +52,7 @@ export function AreaChartComponent<T extends object>({
   formatValue,
 }: AreaChartProps<T>) {
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer minWidth={0} width="100%" height={height}>
       <RechartsAreaChart
         data={data}
         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}

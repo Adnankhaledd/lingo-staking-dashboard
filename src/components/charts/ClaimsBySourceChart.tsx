@@ -229,7 +229,7 @@ export function ClaimsBySourceChart({ data, isLoading, lastUpdated }: ClaimsBySo
       </div>
 
       <div className="h-80 relative z-10">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer minWidth={0} width="100%" height="100%">
           <BarChart
             data={chartData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}

@@ -211,7 +211,7 @@ export function StakingUpdateCard({ data, isLoading }: StakingUpdateCardProps) {
         </div>
 
         {/* Bar Chart */}
-        <ResponsiveContainer width="100%" height={280}>
+        <ResponsiveContainer minWidth={0} width="100%" height={280}>
           <BarChart
             data={barData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}

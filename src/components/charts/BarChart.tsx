@@ -61,7 +61,7 @@ export function BarChartComponent<T extends object>({
   formatXAxis = formatChartDate,
 }: BarChartProps<T>) {
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer minWidth={0} width="100%" height={height}>
       <RechartsBarChart
         data={data}
         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
@@ -156,7 +156,7 @@ export function SimpleBarChart<T extends object>({
   height?: number;
 }) {
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer minWidth={0} width="100%" height={height}>
       <RechartsBarChart
         data={data}
         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
