@@ -11,19 +11,23 @@ interface TopStakersTableProps {
 
 function truncateWallet(wallet: string): string {
   if (!wallet) return '—';
-  // Remove leading zeros from Dune's format
   const cleanWallet = wallet.replace(/^0x0+/, '0x');
   if (cleanWallet.length <= 13) return cleanWallet;
   return `${cleanWallet.slice(0, 6)}...${cleanWallet.slice(-4)}`;
 }
 
 function getCleanWalletAddress(wallet: string): string {
-  // Remove leading zeros for etherscan link
   return wallet.replace(/^0x0+/, '0x');
 }
 
 function normalizeWallet(wallet: string): string {
   return wallet.replace(/^0x0+/, '0x').toLowerCase();
+}
+
+function formatDate(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
 }
 
 function getRankDisplay(rank: number) {
@@ -55,24 +59,58 @@ function getRankDisplay(rank: number) {
   );
 }
 
+const LOCK_COLORS: Record<string, string> = {
+  flexible: '#3B82F6',
+  three_months: '#8B5CF6',
+  six_months: '#F59E0B',
+  twelve_months: '#10B981',
+};
+
+function LockBreakdownBar({ staker }: { staker: TopStakerRow }) {
+  const total = staker.total_staked || 1;
+  const segments = [
+    { key: 'twelve_months', label: '12M', value: staker.twelve_months ?? 0, color: LOCK_COLORS.twelve_months },
+    { key: 'six_months', label: '6M', value: staker.six_months ?? 0, color: LOCK_COLORS.six_months },
+    { key: 'three_months', label: '3M', value: staker.three_months ?? 0, color: LOCK_COLORS.three_months },
+    { key: 'flexible', label: 'Flex', value: staker.flexible ?? 0, color: LOCK_COLORS.flexible },
+  ].filter(s => s.value > 0);
+
+  return (
+    <div className="flex items-center gap-2 min-w-[120px]">
+      <div className="flex-1 h-2 bg-dark3 rounded-full overflow-hidden flex">
+        {segments.map(s => (
+          <div
+            key={s.key}
+            className="h-full"
+            style={{ width: `${(s.value / total) * 100}%`, backgroundColor: s.color }}
+            title={`${s.label}: ${formatNumber(s.value)}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
   const [searchQuery, setSearchQuery] = useState('');
-
-  const hasLocalCuration = data.some(s => s.local_curation);
 
   const handleExport = () => {
     const exportData = data.map(staker => ({
       Rank: staker.rank,
       Wallet: getCleanWalletAddress(staker.wallet),
-      'LINGO Staked': staker.lingo_staked,
-      'USD Value': staker.usd_value,
-      '% of Total': staker.pct_of_total,
-      ...(hasLocalCuration ? { 'Local Curation': staker.local_curation ?? '' } : {}),
+      'Total Staked': staker.total_staked,
+      'USD Value': staker.total_usd,
+      'Flexible': staker.flexible,
+      '3 Month': staker.three_months,
+      '6 Month': staker.six_months,
+      '12 Month': staker.twelve_months,
+      'Stake Events': staker.total_stake_events,
+      'First Stake': staker.first_stake,
+      'Last Stake': staker.last_stake,
     }));
     exportToCSV(exportData, 'lingo_top_stakers');
   };
 
-  // Filter: if search is active, show only matching wallet; otherwise show all
   const trimmed = searchQuery.trim();
   const displayData = trimmed.length > 0
     ? data.filter(s => normalizeWallet(s.wallet).includes(trimmed.toLowerCase()))
@@ -87,7 +125,7 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
       <div className="flex items-center justify-between p-6 border-b border-white/5 relative z-10">
         <div>
           <h3 className="text-lg font-semibold text-lavender">Top Stakers Leaderboard</h3>
-          <p className="text-sm text-soft-gray mt-1">Top 300 wallets by LINGO staked</p>
+          <p className="text-sm text-soft-gray mt-1">Top 300 wallets by LINGO staked (USD value, 12-month lock)</p>
         </div>
         <GlowButton
           onClick={handleExport}
@@ -98,8 +136,23 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
         </GlowButton>
       </div>
 
+      {/* Lock duration legend */}
+      <div className="flex items-center gap-4 px-6 pt-4 pb-2 relative z-10">
+        {[
+          { label: '12 Month', color: LOCK_COLORS.twelve_months },
+          { label: '6 Month', color: LOCK_COLORS.six_months },
+          { label: '3 Month', color: LOCK_COLORS.three_months },
+          { label: 'Flexible', color: LOCK_COLORS.flexible },
+        ].map(({ label, color }) => (
+          <div key={label} className="flex items-center gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: color }} />
+            <span className="text-xs text-soft-gray">{label}</span>
+          </div>
+        ))}
+      </div>
+
       {/* Search bar */}
-      <div className="px-6 py-4 border-b border-white/5 relative z-10">
+      <div className="px-6 py-3 border-b border-white/5 relative z-10">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-soft-gray pointer-events-none" />
           <input
@@ -119,13 +172,11 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
           )}
         </div>
 
-        {/* Search result summary */}
         {isSearchActive && (
           <div className="mt-2">
             {searchResult ? (
               <p className="text-xs text-green1">
-                Found at rank <span className="font-semibold">#{searchResult.rank}</span> — {formatNumber(searchResult.lingo_staked ?? 0)} LINGO ({formatCurrency(searchResult.usd_value ?? 0)})
-                {searchResult.local_curation ? <span className="text-purple-gray"> · {searchResult.local_curation}</span> : null}
+                Found at rank <span className="font-semibold">#{searchResult.rank}</span> — {formatNumber(searchResult.total_staked)} LINGO ({formatCurrency(searchResult.total_usd)})
               </p>
             ) : (
               <p className="text-xs text-red-400">Wallet not found in top 300</p>
@@ -134,57 +185,31 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
         )}
       </div>
 
-      {/* Table Container with Scroll */}
+      {/* Table */}
       <div className="max-h-[600px] overflow-y-auto relative z-10">
         <table className="w-full">
           <thead className="sticky top-0 z-10" style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
             <tr className="border-b border-white/5">
-              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-6">
-                Rank
-              </th>
-              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">
-                Wallet
-              </th>
-              {hasLocalCuration && (
-                <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">
-                  Local Curation
-                </th>
-              )}
-              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">
-                LINGO Staked
-              </th>
-              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">
-                USD Value
-              </th>
-              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-6">
-                % of Total
-              </th>
+              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-6">Rank</th>
+              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">Wallet</th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">Total Staked</th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">USD Value</th>
+              <th className="text-center text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">Lock Breakdown</th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-4">Events</th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-4 px-6">Last Stake</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               [...Array(10)].map((_, i) => (
                 <tr key={i} className="border-b border-white/5">
-                  <td className="py-4 px-6">
-                    <div className="skeleton w-9 h-9 rounded-xl" />
-                  </td>
-                  <td className="py-4 px-4">
-                    <div className="skeleton h-5 w-28 rounded" />
-                  </td>
-                  {hasLocalCuration && (
-                    <td className="py-4 px-4">
-                      <div className="skeleton h-5 w-20 rounded" />
-                    </td>
-                  )}
-                  <td className="py-4 px-4">
-                    <div className="skeleton h-5 w-24 rounded ml-auto" />
-                  </td>
-                  <td className="py-4 px-4">
-                    <div className="skeleton h-5 w-20 rounded ml-auto" />
-                  </td>
-                  <td className="py-4 px-6">
-                    <div className="skeleton h-5 w-16 rounded ml-auto" />
-                  </td>
+                  <td className="py-4 px-6"><div className="skeleton w-9 h-9 rounded-xl" /></td>
+                  <td className="py-4 px-4"><div className="skeleton h-5 w-28 rounded" /></td>
+                  <td className="py-4 px-4"><div className="skeleton h-5 w-24 rounded ml-auto" /></td>
+                  <td className="py-4 px-4"><div className="skeleton h-5 w-20 rounded ml-auto" /></td>
+                  <td className="py-4 px-4"><div className="skeleton h-2 w-24 rounded mx-auto" /></td>
+                  <td className="py-4 px-4"><div className="skeleton h-5 w-10 rounded ml-auto" /></td>
+                  <td className="py-4 px-6"><div className="skeleton h-5 w-20 rounded ml-auto" /></td>
                 </tr>
               ))
             ) : (
@@ -220,37 +245,22 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
                       </div>
                     </div>
                   </td>
-                  {hasLocalCuration && (
-                    <td className="py-4 px-4">
-                      {staker.local_curation ? (
-                        <span className="text-xs px-2 py-1 rounded-lg bg-purple/10 text-purple border border-purple/20">
-                          {staker.local_curation}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-soft-gray/40">—</span>
-                      )}
-                    </td>
-                  )}
                   <td className="py-4 px-4 text-right">
                     <span className="font-semibold text-lavender">
-                      {formatNumber(staker.lingo_staked ?? 0)}
+                      {formatNumber(staker.total_staked)}
                     </span>
                   </td>
                   <td className="py-4 px-4 text-right text-soft-gray">
-                    {formatCurrency(staker.usd_value ?? 0)}
+                    {formatCurrency(staker.total_usd)}
                   </td>
-                  <td className="py-4 px-6 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <div className="w-16 h-1.5 bg-dark3 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-purple to-sosiska rounded-full"
-                          style={{ width: `${Math.min((staker.pct_of_total ?? 0) * 10, 100)}%` }}
-                        />
-                      </div>
-                      <span className="text-sm text-soft-gray w-12 text-right">
-                        {(staker.pct_of_total ?? 0).toFixed(2)}%
-                      </span>
-                    </div>
+                  <td className="py-4 px-4">
+                    <LockBreakdownBar staker={staker} />
+                  </td>
+                  <td className="py-4 px-4 text-right text-soft-gray text-sm">
+                    {staker.total_stake_events}
+                  </td>
+                  <td className="py-4 px-6 text-right text-soft-gray text-sm">
+                    {formatDate(staker.last_stake)}
                   </td>
                 </tr>
               ))
@@ -263,7 +273,7 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
       {data && data.length > 0 && (
         <div className="px-6 py-4 border-t border-white/5 bg-white/[0.02] relative z-10">
           <p className="text-xs text-purple-gray text-center">
-            Showing {isSearchActive ? `${displayData.length} result${displayData.length !== 1 ? 's' : ''} of` : ''} {data.length} wallets &bull; Data from Dune Analytics
+            Showing {isSearchActive ? `${displayData.length} result${displayData.length !== 1 ? 's' : ''} of ` : ''}{data.length} wallets &bull; Data from Dune Analytics
           </p>
         </div>
       )}

@@ -287,10 +287,15 @@ export interface UnlockScheduleRow {
 export interface TopStakerRow {
   rank: number;
   wallet: string;
-  lingo_staked: number;
-  usd_value: number;
-  pct_of_total: number;
-  local_curation?: string;
+  total_staked: number;
+  total_usd: number;
+  flexible: number;
+  three_months: number;
+  six_months: number;
+  twelve_months: number;
+  first_stake: string;
+  last_stake: string;
+  total_stake_events: number;
 }
 
 export interface TradingFeesRow {
