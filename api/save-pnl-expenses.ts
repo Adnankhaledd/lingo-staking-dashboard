@@ -40,7 +40,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { expenses } = req.body as { expenses: ExpenseEntry[] };
+    const { expenses, budgets, settings } = req.body as {
+      expenses: ExpenseEntry[];
+      budgets?: { month: string; category: string; budget: number }[];
+      settings?: { treasuryBalance?: number; annualRevenueTarget?: number; annualExpenseTarget?: number };
+    };
 
     if (!Array.isArray(expenses)) {
       return res.status(400).json({ error: 'expenses must be an array' });
@@ -60,6 +64,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const payload = {
       expenses,
+      budgets: budgets ?? [],
+      settings: settings ?? {},
       updatedAt: new Date().toISOString(),
     };
 
@@ -71,7 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     return res.status(200).json({
-      message: `Saved ${expenses.length} expense entries`,
+      message: `Saved ${expenses.length} expenses, ${(budgets ?? []).length} budgets`,
       updatedAt: payload.updatedAt,
     });
   } catch (error) {
