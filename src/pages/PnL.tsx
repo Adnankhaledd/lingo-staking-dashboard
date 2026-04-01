@@ -11,7 +11,6 @@ import { formatCurrency } from '../utils/formatters';
 import {
   useDuneQuery, DUNE_QUERIES,
   type TradingFeesRow, type LPFeesRow,
-  type APYClaimsRow, type CommunityRewardsRow,
 } from '../hooks/useDuneQuery';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -43,8 +42,6 @@ interface MonthlyRecord {
   label: string;
   tradingFees: number;
   lpFees: number;
-  apyClaims: number;
-  communityRewards: number;
   totalRevenue: number;
   expenses: Record<string, number>;
   totalExpenses: number;
@@ -63,8 +60,6 @@ const EXPENSE_COLORS: Record<string, string> = {
 const REVENUE_COLORS = {
   tradingFees: '#5EB851',
   lpFees: '#7B68AE',
-  apyClaims: '#3B82F6',
-  communityRewards: '#E8B100',
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -152,8 +147,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   // Revenue data from Dune
   const { data: tradingFees } = useDuneQuery<TradingFeesRow>(DUNE_QUERIES.TRADING_FEES);
   const { data: lpFees } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
-  const { data: apyClaims } = useDuneQuery<APYClaimsRow>(DUNE_QUERIES.APY_CLAIMS);
-  const { data: communityRewards } = useDuneQuery<CommunityRewardsRow>(DUNE_QUERIES.COMMUNITY_REWARDS);
 
   // Expense data from blob
   const [expenses, setExpenses] = useState<ExpenseEntry[]>([]);
@@ -225,21 +218,15 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
 
   const monthlyData = useMemo<MonthlyRecord[]>(() => {
     const months = new Set<string>();
-    const revenueMap = new Map<string, { tradingFees: number; lpFees: number; apyClaims: number; communityRewards: number }>();
+    const revenueMap = new Map<string, { tradingFees: number; lpFees: number }>();
 
     const ensure = (m: string) => {
       months.add(m);
-      if (!revenueMap.has(m)) revenueMap.set(m, { tradingFees: 0, lpFees: 0, apyClaims: 0, communityRewards: 0 });
+      if (!revenueMap.has(m)) revenueMap.set(m, { tradingFees: 0, lpFees: 0 });
     };
 
     tradingFees?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.tradingFees += r.usd_value ?? 0; } });
     lpFees?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.lpFees += r.fees_usd ?? 0; } });
-    apyClaims?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.apyClaims += r.usd_value ?? 0; } });
-    communityRewards?.forEach(r => {
-      const dateStr = r.week?.split('T')[0] || r.week?.split(' ')[0] || '';
-      const m = dateStr.slice(0, 7);
-      if (m) { ensure(m); revenueMap.get(m)!.communityRewards += r.usd_value ?? 0; }
-    });
 
     expenses.forEach(e => months.add(e.month));
 
@@ -252,9 +239,9 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     return Array.from(months)
       .sort()
       .map(m => {
-        const rev = revenueMap.get(m) ?? { tradingFees: 0, lpFees: 0, apyClaims: 0, communityRewards: 0 };
+        const rev = revenueMap.get(m) ?? { tradingFees: 0, lpFees: 0 };
         const exp = expenseMap.get(m) ?? {};
-        const totalRevenue = rev.tradingFees + rev.lpFees + rev.apyClaims + rev.communityRewards;
+        const totalRevenue = rev.tradingFees + rev.lpFees;
         const totalExpenses = Object.values(exp).reduce((s, v) => s + v, 0);
         return {
           month: m,
@@ -266,7 +253,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
           netPnL: totalRevenue - totalExpenses,
         };
       });
-  }, [tradingFees, lpFees, apyClaims, communityRewards, expenses]);
+  }, [tradingFees, lpFees, expenses]);
 
   // KPIs
   const kpis = useMemo(() => {
@@ -289,8 +276,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       label: m.label,
       tradingFees: Math.round(m.tradingFees),
       lpFees: Math.round(m.lpFees),
-      apyClaims: Math.round(m.apyClaims),
-      communityRewards: Math.round(m.communityRewards),
     })),
   [monthlyData]);
 
@@ -407,8 +392,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
                   <Legend wrapperStyle={{ paddingTop: 15 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
                   <Bar dataKey="tradingFees" name="Trading Fees" stackId="rev" fill={REVENUE_COLORS.tradingFees} />
                   <Bar dataKey="lpFees" name="LP Fees" stackId="rev" fill={REVENUE_COLORS.lpFees} />
-                  <Bar dataKey="apyClaims" name="APY Claims" stackId="rev" fill={REVENUE_COLORS.apyClaims} />
-                  <Bar dataKey="communityRewards" name="Community Rewards" stackId="rev" fill={REVENUE_COLORS.communityRewards} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -466,8 +449,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
                   <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4 sticky left-0 bg-[#14141f]">Month</th>
                   <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">Trading Fees</th>
                   <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">LP Fees</th>
-                  <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">APY Claims</th>
-                  <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">Community</th>
                   <th className="text-right text-xs font-medium text-green1/80 uppercase tracking-wider py-3 px-4 border-l border-white/5">Revenue</th>
                   <th className="text-right text-xs font-medium text-red-400/80 uppercase tracking-wider py-3 px-4 border-l border-white/5">Expenses</th>
                   <th className="text-right text-xs font-medium text-lavender uppercase tracking-wider py-3 px-4 border-l border-white/5">Net P&L</th>
@@ -479,8 +460,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
                     <td className="py-3 px-4 text-lavender font-medium sticky left-0 bg-[#14141f]">{m.label}</td>
                     <td className="py-3 px-4 text-right text-soft-gray">{formatCurrency(m.tradingFees)}</td>
                     <td className="py-3 px-4 text-right text-soft-gray">{formatCurrency(m.lpFees)}</td>
-                    <td className="py-3 px-4 text-right text-soft-gray">{formatCurrency(m.apyClaims)}</td>
-                    <td className="py-3 px-4 text-right text-soft-gray">{formatCurrency(m.communityRewards)}</td>
                     <td className="py-3 px-4 text-right text-green1 font-medium border-l border-white/5">{formatCurrency(m.totalRevenue)}</td>
                     <td className="py-3 px-4 text-right text-red-400 border-l border-white/5">{m.totalExpenses > 0 ? formatCurrency(m.totalExpenses) : '—'}</td>
                     <td className={`py-3 px-4 text-right font-semibold border-l border-white/5 ${m.netPnL >= 0 ? 'text-green1' : 'text-red-400'}`}>
@@ -494,8 +473,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
                     <td className="py-3 px-4 text-lavender font-bold sticky left-0 bg-[#1a1a2e]">Total</td>
                     <td className="py-3 px-4 text-right text-lavender font-semibold">{formatCurrency(monthlyData.reduce((s, m) => s + m.tradingFees, 0))}</td>
                     <td className="py-3 px-4 text-right text-lavender font-semibold">{formatCurrency(monthlyData.reduce((s, m) => s + m.lpFees, 0))}</td>
-                    <td className="py-3 px-4 text-right text-lavender font-semibold">{formatCurrency(monthlyData.reduce((s, m) => s + m.apyClaims, 0))}</td>
-                    <td className="py-3 px-4 text-right text-lavender font-semibold">{formatCurrency(monthlyData.reduce((s, m) => s + m.communityRewards, 0))}</td>
                     <td className="py-3 px-4 text-right text-green1 font-bold border-l border-white/5">{formatCurrency(kpis.totalRev)}</td>
                     <td className="py-3 px-4 text-right text-red-400 font-bold border-l border-white/5">{kpis.totalExp > 0 ? formatCurrency(kpis.totalExp) : '—'}</td>
                     <td className={`py-3 px-4 text-right font-bold border-l border-white/5 ${kpis.net >= 0 ? 'text-green1' : 'text-red-400'}`}>{formatCurrency(kpis.net)}</td>
