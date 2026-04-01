@@ -43,6 +43,14 @@ interface BudgetEntry {
   budget: number;
 }
 
+interface TeamMember {
+  name: string;
+  role: string;
+  monthlySalary: number;
+  startMonth: string; // "2025-01"
+  endMonth?: string;  // optional — still active if empty
+}
+
 interface PnLSettings {
   treasuryBalance: number;
   annualRevenueTarget: number;
@@ -158,9 +166,10 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   const { data: lpFees } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
   const { data: weeklyStats } = useDuneQuery<WeeklyStatsRow>(DUNE_QUERIES.WEEKLY_STATS);
 
-  // Expense + budget + settings data from blob
+  // Expense + budget + settings + team data from blob
   const [expenses, setExpenses] = useState<ExpenseEntry[]>([]);
   const [budgets, setBudgets] = useState<BudgetEntry[]>([]);
+  const [team, setTeam] = useState<TeamMember[]>([]);
   const [settings, setSettings] = useState<PnLSettings>({ treasuryBalance: 0, annualRevenueTarget: 0, annualExpenseTarget: 0 });
   const [expensesLoaded, setExpensesLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -173,6 +182,12 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   const [formNote, setFormNote] = useState('');
   const [formType, setFormType] = useState<'expense' | 'budget'>('expense');
 
+  // Team form
+  const [teamName, setTeamName] = useState('');
+  const [teamRole, setTeamRole] = useState('');
+  const [teamSalary, setTeamSalary] = useState('');
+  const [teamStart, setTeamStart] = useState(currentYM);
+
   // Fetch
   const fetchExpenses = useCallback(async () => {
     try {
@@ -181,6 +196,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
         const data = await res.json();
         setExpenses(data.expenses ?? []);
         setBudgets(data.budgets ?? []);
+        setTeam(data.team ?? []);
         setSettings(prev => ({ ...prev, ...(data.settings ?? {}) }));
       }
     } catch { /* ignore */ }
@@ -198,7 +214,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       const res = await fetch(`${API_BASE}/api/save-pnl-expenses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
-        body: JSON.stringify({ expenses, budgets, settings }),
+        body: JSON.stringify({ expenses, budgets, team, settings }),
       });
       const data = await res.json();
       setSaveMsg(res.ok ? 'Saved!' : data.error || 'Failed');
@@ -235,6 +251,56 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     setBudgets(prev => prev.filter(b => !(b.month === month && b.category === category)));
   };
 
+  // Team member management
+  const handleAddTeamMember = () => {
+    const salary = parseFloat(teamSalary);
+    if (!teamName.trim() || isNaN(salary) || salary <= 0) return;
+    setTeam(prev => [...prev, { name: teamName.trim(), role: teamRole.trim(), monthlySalary: salary, startMonth: teamStart }]);
+    setTeamName('');
+    setTeamRole('');
+    setTeamSalary('');
+  };
+
+  const handleDeleteTeamMember = (index: number) => {
+    setTeam(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Compute team expenses: each member generates a "Team Compensation" expense for each active month
+  const teamExpenses = useMemo<ExpenseEntry[]>(() => {
+    const entries: ExpenseEntry[] = [];
+    const now = currentYM();
+    for (const member of team) {
+      let m = member.startMonth;
+      while (m <= now && (!member.endMonth || m <= member.endMonth)) {
+        entries.push({ month: m, category: 'Team Compensation', amount: member.monthlySalary, note: member.name });
+        // Increment month
+        const [y, mo] = m.split('-').map(Number);
+        const next = mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`;
+        m = next;
+      }
+    }
+    return entries;
+  }, [team]);
+
+  // Merge manual expenses + team-generated expenses
+  const allExpenses = useMemo(() => {
+    // Team expenses aggregate into Team Compensation per month
+    const merged = [...expenses.filter(e => e.category !== 'Team Compensation')];
+    // Group team expenses by month
+    const teamByMonth = new Map<string, number>();
+    for (const te of teamExpenses) {
+      teamByMonth.set(te.month, (teamByMonth.get(te.month) ?? 0) + te.amount);
+    }
+    // Also add any manual "Team Compensation" entries that aren't from team members
+    for (const e of expenses.filter(e => e.category === 'Team Compensation')) {
+      teamByMonth.set(e.month, (teamByMonth.get(e.month) ?? 0) + e.amount);
+    }
+    for (const [month, amount] of teamByMonth) {
+      merged.push({ month, category: 'Team Compensation', amount });
+    }
+    return merged;
+  }, [expenses, teamExpenses]);
+
   // ─── Build monthly P&L records ────────────────────────────────────
 
   const monthlyData = useMemo<MonthlyRecord[]>(() => {
@@ -249,13 +315,13 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     tradingFees?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.tradingFees += r.usd_value ?? 0; } });
     lpFees?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.lpFees += r.fees_usd ?? 0; } });
 
-    expenses.forEach(e => months.add(e.month));
+    allExpenses.forEach(e => months.add(e.month));
     budgets.forEach(b => months.add(b.month));
 
     const expenseMap = new Map<string, Record<string, number>>();
-    expenses.forEach(e => {
+    allExpenses.forEach(e => {
       if (!expenseMap.has(e.month)) expenseMap.set(e.month, {});
-      expenseMap.get(e.month)![e.category] = e.amount;
+      expenseMap.get(e.month)![e.category] = (expenseMap.get(e.month)![e.category] ?? 0) + e.amount;
     });
 
     const budgetMap = new Map<string, Record<string, number>>();
@@ -273,7 +339,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       const totalBudget = Object.values(bud).reduce((s, v) => s + v, 0);
       return { month: m, label: monthLabel(m), ...rev, totalRevenue, expenses: exp, budgets: bud, totalExpenses, totalBudget, netPnL: totalRevenue - totalExpenses };
     });
-  }, [tradingFees, lpFees, expenses, budgets]);
+  }, [tradingFees, lpFees, allExpenses, budgets]);
 
   // ─── KPIs ─────────────────────────────────────────────────────────
 
@@ -789,6 +855,96 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
 
           {expenses.length === 0 && budgets.length === 0 && expensesLoaded && (
             <p className="text-sm text-soft-gray/50 text-center py-6 relative z-10">No entries yet. Use the form above to add expenses or budgets.</p>
+          )}
+        </div>
+
+        {/* Team Expenses */}
+        <div className="flagship-card rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-6 relative z-10">
+            <div>
+              <h3 className="text-lg font-semibold text-lavender">Team Expenses</h3>
+              <p className="text-sm text-soft-gray mt-1">
+                Individual team members — auto-generates monthly "Team Compensation" expenses
+              </p>
+            </div>
+            <div className="text-right relative z-10">
+              <p className="text-xs text-soft-gray">Monthly team cost</p>
+              <p className="text-lg font-bold text-red-400">
+                {formatCurrency(team.reduce((s, m) => {
+                  const now = currentYM();
+                  if (m.startMonth > now) return s;
+                  if (m.endMonth && m.endMonth < now) return s;
+                  return s + m.monthlySalary;
+                }, 0))}
+              </p>
+            </div>
+          </div>
+
+          {/* Add team member form */}
+          <div className="flex flex-wrap items-end gap-3 mb-6 relative z-10">
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">Name</label>
+              <input type="text" value={teamName} onChange={e => setTeamName(e.target.value)} placeholder="e.g. John"
+                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-36 focus:outline-none focus:border-purple/50" />
+            </div>
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">Role</label>
+              <input type="text" value={teamRole} onChange={e => setTeamRole(e.target.value)} placeholder="e.g. Dev"
+                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-32 focus:outline-none focus:border-purple/50" />
+            </div>
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">Monthly Salary (USD)</label>
+              <input type="number" value={teamSalary} onChange={e => setTeamSalary(e.target.value)} placeholder="0" min="0"
+                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-32 focus:outline-none focus:border-purple/50" />
+            </div>
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">Start Month</label>
+              <input type="month" value={teamStart} onChange={e => setTeamStart(e.target.value)}
+                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
+            </div>
+            <button onClick={handleAddTeamMember}
+              className="flex items-center gap-1.5 px-4 py-2 bg-green1/20 hover:bg-green1/30 text-green1 text-sm font-medium rounded-lg border border-green1/30 transition-colors">
+              <Plus className="w-4 h-4" />Add Member
+            </button>
+          </div>
+
+          {/* Team members table */}
+          {team.length > 0 && (
+            <div className="overflow-x-auto relative z-10">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-white/5">
+                  <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Name</th>
+                  <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Role</th>
+                  <th className="text-right text-xs font-medium text-soft-gray uppercase py-2 px-3">Monthly Salary</th>
+                  <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Since</th>
+                  <th className="text-right text-xs font-medium text-soft-gray uppercase py-2 px-3">Total Cost</th>
+                  <th className="py-2 px-3 w-10"></th>
+                </tr></thead>
+                <tbody>
+                  {team.map((m, i) => {
+                    // Count active months
+                    const end = m.endMonth || currentYM();
+                    const [sy, sm] = m.startMonth.split('-').map(Number);
+                    const [ey, em] = end.split('-').map(Number);
+                    const activeMonths = Math.max(0, (ey - sy) * 12 + (em - sm) + 1);
+                    return (
+                      <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02]">
+                        <td className="py-2 px-3 text-lavender font-medium">{m.name}</td>
+                        <td className="py-2 px-3 text-soft-gray">{m.role || '—'}</td>
+                        <td className="py-2 px-3 text-right text-red-400">{formatCurrency(m.monthlySalary)}</td>
+                        <td className="py-2 px-3 text-soft-gray text-xs">{monthLabel(m.startMonth)}{m.endMonth ? ` → ${monthLabel(m.endMonth)}` : ' → Present'}</td>
+                        <td className="py-2 px-3 text-right text-lavender font-medium">{formatCurrency(m.monthlySalary * activeMonths)}</td>
+                        <td className="py-2 px-3"><button onClick={() => handleDeleteTeamMember(i)} className="text-soft-gray/30 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {team.length === 0 && (
+            <p className="text-sm text-soft-gray/50 text-center py-6 relative z-10">No team members added. Add members above — their salaries will auto-populate monthly Team Compensation expenses.</p>
           )}
         </div>
       </main>
