@@ -206,7 +206,8 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   useEffect(() => { fetchExpenses(); }, [fetchExpenses]);
 
   // Save all
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
+    if (!expensesLoaded) return; // Don't overwrite blob before data is loaded
     setSaving(true);
     setSaveMsg('');
     try {
@@ -221,7 +222,16 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       setTimeout(() => setSaveMsg(''), 3000);
     } catch { setSaveMsg('Network error'); }
     setSaving(false);
-  };
+  }, [expenses, budgets, team, settings, expensesLoaded]);
+
+  // Auto-save: persist to blob whenever data changes (after initial load)
+  const [hasEdited, setHasEdited] = useState(false);
+  useEffect(() => {
+    if (expensesLoaded && hasEdited) {
+      const timer = setTimeout(() => handleSave(), 800); // debounce 800ms
+      return () => clearTimeout(timer);
+    }
+  }, [expenses, budgets, team, settings, expensesLoaded, hasEdited, handleSave]);
 
   // Add entry
   const handleAddEntry = () => {
@@ -241,14 +251,17 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     }
     setFormAmount('');
     setFormNote('');
+    setHasEdited(true);
   };
 
   const handleDeleteExpense = (month: string, category: string) => {
     setExpenses(prev => prev.filter(e => !(e.month === month && e.category === category)));
+    setHasEdited(true);
   };
 
   const handleDeleteBudget = (month: string, category: string) => {
     setBudgets(prev => prev.filter(b => !(b.month === month && b.category === category)));
+    setHasEdited(true);
   };
 
   // Team member management
@@ -259,10 +272,12 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     setTeamName('');
     setTeamRole('');
     setTeamSalary('');
+    setHasEdited(true);
   };
 
   const handleDeleteTeamMember = (index: number) => {
     setTeam(prev => prev.filter((_, i) => i !== index));
+    setHasEdited(true);
   };
 
   // Compute team expenses: each member generates a "Team Compensation" expense for each active month
@@ -719,21 +734,21 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 relative z-10">
             <div>
               <label className="text-xs text-soft-gray block mb-1">Treasury Balance (USD)</label>
-              <input type="number" value={settings.treasuryBalance || ''} onChange={e => setSettings(p => ({ ...p, treasuryBalance: parseFloat(e.target.value) || 0 }))}
+              <input type="number" value={settings.treasuryBalance || ''} onChange={e => { setSettings(p => ({ ...p, treasuryBalance: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
                 placeholder="e.g. 500000" min="0"
                 className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
               <p className="text-xs text-soft-gray/50 mt-1">Used for runway calculation</p>
             </div>
             <div>
               <label className="text-xs text-soft-gray block mb-1">Annual Revenue Target (USD)</label>
-              <input type="number" value={settings.annualRevenueTarget || ''} onChange={e => setSettings(p => ({ ...p, annualRevenueTarget: parseFloat(e.target.value) || 0 }))}
+              <input type="number" value={settings.annualRevenueTarget || ''} onChange={e => { setSettings(p => ({ ...p, annualRevenueTarget: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
                 placeholder="e.g. 2000000" min="0"
                 className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
               <p className="text-xs text-soft-gray/50 mt-1">Shows as target line on projection chart</p>
             </div>
             <div>
               <label className="text-xs text-soft-gray block mb-1">Annual Expense Target (USD)</label>
-              <input type="number" value={settings.annualExpenseTarget || ''} onChange={e => setSettings(p => ({ ...p, annualExpenseTarget: parseFloat(e.target.value) || 0 }))}
+              <input type="number" value={settings.annualExpenseTarget || ''} onChange={e => { setSettings(p => ({ ...p, annualExpenseTarget: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
                 placeholder="e.g. 1000000" min="0"
                 className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
               <p className="text-xs text-soft-gray/50 mt-1">Annual expense budget cap</p>
@@ -752,7 +767,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
               {saveMsg && <span className={`text-xs ${saveMsg === 'Saved!' ? 'text-green1' : 'text-red-400'}`}>{saveMsg}</span>}
               <button onClick={handleSave} disabled={saving}
                 className="flex items-center gap-1.5 px-4 py-2 bg-purple/20 hover:bg-purple/30 text-lavender text-sm font-medium rounded-xl border border-purple/30 transition-colors disabled:opacity-50">
-                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}Save All
+                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}{saving ? 'Saving...' : 'Save Now'}
               </button>
             </div>
           </div>
