@@ -1,9 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend, Cell, ReferenceLine,
-} from 'recharts';
-import {
   Lock, DollarSign, TrendingUp, TrendingDown, Minus,
   Plus, Trash2, LogOut, Users, Wallet, Calendar,
 } from 'lucide-react';
@@ -18,15 +14,6 @@ import lingoLogo from '../assets/logo-lingo.svg';
 
 const SESSION_KEY = 'admin_password';
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : '';
-
-const EXPENSE_CATEGORIES = [
-  'Team Compensation',
-  'Infrastructure',
-  'Marketing & Partnerships',
-  'Gas Costs',
-  'Legal & Compliance',
-  'Other OpEx',
-] as const;
 
 interface ExpenseEntry {
   month: string;
@@ -93,19 +80,6 @@ interface MonthlyRecord {
   netPnL: number;
 }
 
-const EXPENSE_COLORS: Record<string, string> = {
-  'Team Compensation': '#E85757',
-  'Infrastructure': '#FF7847',
-  'Marketing & Partnerships': '#E8B100',
-  'Gas Costs': '#8B5CF6',
-  'Legal & Compliance': '#3B82F6',
-  'Other OpEx': '#9B8EC2',
-};
-
-const REVENUE_COLORS = {
-  tradingFees: '#5EB851',
-  lpFees: '#7B68AE',
-};
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -118,16 +92,6 @@ function monthLabel(ym: string): string {
   const [y, m] = ym.split('-');
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${MONTHS[parseInt(m) - 1]} '${y.slice(2)}`;
-}
-
-function fmtUsd(n: number): string {
-  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
-  return `$${n.toFixed(0)}`;
-}
-
-function currentYear(): number {
-  return new Date().getFullYear();
 }
 
 // ─── Main Component ─────────────────────────────────────────────────
@@ -300,64 +264,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     return { totalRev, totalExp, net, currentMonthRev: current?.totalRevenue ?? 0, margin, arpu, latestStakers, avgMonthlyBurn, avgMonthlyNet, runway };
   }, [monthlyData, weeklyStats, settings.treasuryBalance]);
 
-  // ─── Annual Projection ────────────────────────────────────────────
-
-  const projection = useMemo(() => {
-    const year = currentYear();
-    const yearMonths = monthlyData.filter(m => m.month.startsWith(`${year}`));
-    const completedMonths = yearMonths.length;
-    const ytdRevenue = yearMonths.reduce((s, m) => s + m.totalRevenue, 0);
-    const ytdExpenses = yearMonths.reduce((s, m) => s + m.totalExpenses, 0);
-
-    // Run rate: extrapolate from completed months
-    const monthsRemaining = 12 - completedMonths;
-    const avgMonthlyRev = completedMonths > 0 ? ytdRevenue / completedMonths : 0;
-    const avgMonthlyExp = completedMonths > 0 ? ytdExpenses / completedMonths : 0;
-    const projectedRevenue = ytdRevenue + avgMonthlyRev * monthsRemaining;
-    const projectedExpenses = ytdExpenses + avgMonthlyExp * monthsRemaining;
-    const projectedNet = projectedRevenue - projectedExpenses;
-
-    // Break-even: when cumulative net turns positive (if currently negative)
-    let breakEvenMonth: string | null = null;
-    if (kpis.avgMonthlyNet > 0 && kpis.net < 0) {
-      const monthsToBreakEven = Math.ceil(Math.abs(kpis.net) / kpis.avgMonthlyNet);
-      const d = new Date();
-      d.setMonth(d.getMonth() + monthsToBreakEven);
-      breakEvenMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    } else if (kpis.net >= 0) {
-      breakEvenMonth = 'Already profitable';
-    }
-
-    // Build projection line chart data
-    const projData = [];
-    for (let mo = 1; mo <= 12; mo++) {
-      const key = `${year}-${String(mo).padStart(2, '0')}`;
-      const actual = yearMonths.find(m => m.month === key);
-      projData.push({
-        label: monthLabel(key),
-        actual: actual ? Math.round(actual.totalRevenue) : null,
-        projected: !actual ? Math.round(avgMonthlyRev) : null,
-        target: settings.annualRevenueTarget > 0 ? Math.round(settings.annualRevenueTarget / 12) : null,
-      });
-    }
-
-    return { year, completedMonths, ytdRevenue, ytdExpenses, projectedRevenue, projectedExpenses, projectedNet, breakEvenMonth, projData, avgMonthlyRev };
-  }, [monthlyData, settings.annualRevenueTarget, kpis]);
-
-  // ─── Budget vs Actual ─────────────────────────────────────────────
-
-  const budgetVsActual = useMemo(() => {
-    const year = currentYear();
-    return monthlyData
-      .filter(m => m.month.startsWith(`${year}`) && (m.totalBudget > 0 || m.totalExpenses > 0))
-      .map(m => ({
-        label: m.label,
-        actual: Math.round(m.totalExpenses),
-        budget: Math.round(m.totalBudget),
-        variance: Math.round(m.totalBudget - m.totalExpenses),
-      }));
-  }, [monthlyData]);
-
   // ─── Revenue Models (MM Capture + Product + Trading Fees) ─────────
 
   const revenueModelMonths = useMemo(generateMonthRange, []);
@@ -416,13 +322,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     }
     return { map, autoLabels };
   }, [revenueModelResults]);
-
-  // Chart data
-  const netTrendData = useMemo(() => monthlyData.map(m => ({ label: m.label, net: Math.round(m.netPnL) })), [monthlyData]);
-  const revenueChartData = useMemo(() => monthlyData.map(m => ({ label: m.label, tradingFees: Math.round(m.tradingFees), lpFees: Math.round(m.lpFees) })), [monthlyData]);
-  const expenseChartData = useMemo(() => monthlyData.filter(m => m.totalExpenses > 0).map(m => ({
-    label: m.label, ...Object.fromEntries(EXPENSE_CATEGORIES.map(c => [c, m.expenses[c] ?? 0])),
-  })), [monthlyData]);
 
   const isUp = kpis.net > 0;
   const isDown = kpis.net < 0;
@@ -567,237 +466,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
 
         {/* Interactive Monthly Projections */}
         <ProjectionsTable projections={projections} setProjections={setProjections} onEdit={() => setHasEdited(true)} autoRevenue={autoRevenueByMonth} />
-
-        {/* Annual Projection */}
-        <div className="flagship-card rounded-2xl p-6">
-          <div className="flex items-start justify-between mb-4 relative z-10">
-            <div>
-              <h3 className="text-lg font-semibold text-lavender">{projection.year} Annual Projection</h3>
-              <p className="text-sm text-soft-gray mt-1">
-                {projection.completedMonths} months completed &bull; Run rate extrapolation
-                {projection.breakEvenMonth && projection.breakEvenMonth !== 'Already profitable' && (
-                  <span className="text-green1 ml-2">Break-even: {monthLabel(projection.breakEvenMonth)}</span>
-                )}
-                {projection.breakEvenMonth === 'Already profitable' && (
-                  <span className="text-green1 ml-2">Already profitable</span>
-                )}
-              </p>
-            </div>
-          </div>
-
-          {/* Projection summary cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5 relative z-10">
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
-              <span className="text-xs text-soft-gray">YTD Revenue</span>
-              <div className="text-lg font-bold text-green1 mt-0.5">{formatCurrency(projection.ytdRevenue)}</div>
-            </div>
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
-              <span className="text-xs text-soft-gray">Projected Full Year</span>
-              <div className="text-lg font-bold text-lavender mt-0.5">{formatCurrency(projection.projectedRevenue)}</div>
-            </div>
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
-              <span className="text-xs text-soft-gray">Projected Expenses</span>
-              <div className="text-lg font-bold text-red-400 mt-0.5">{formatCurrency(projection.projectedExpenses)}</div>
-            </div>
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
-              <span className="text-xs text-soft-gray">Projected Net P&L</span>
-              <div className={`text-lg font-bold mt-0.5 ${projection.projectedNet >= 0 ? 'text-green1' : 'text-red-400'}`}>{formatCurrency(projection.projectedNet)}</div>
-            </div>
-          </div>
-
-          {/* Projection chart */}
-          <div className="relative z-10" style={{ height: 280 }}>
-            <ResponsiveContainer minWidth={0} width="100%" height={280}>
-              <BarChart data={projection.projData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
-                <YAxis tickFormatter={fmtUsd} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={65} />
-                <Tooltip content={({ active, payload, label }) => {
-                  if (!active || !payload?.length) return null;
-                  return (
-                    <div className="custom-tooltip">
-                      <p className="text-soft-gray text-xs mb-1">{label}</p>
-                      {payload.filter(e => e.value != null).map((e, i) => (
-                        <div key={i} className="flex items-center gap-2 mb-1">
-                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: e.color }} />
-                          <span className="text-soft-gray text-sm">{e.name}:</span>
-                          <span className="text-lavender font-medium">{formatCurrency(e.value as number)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                }} />
-                <Legend wrapperStyle={{ paddingTop: 10 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
-                <Bar dataKey="actual" name="Actual" fill="#5EB851" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="projected" name="Projected" fill="#5EB851" fillOpacity={0.3} radius={[4, 4, 0, 0]} />
-                {settings.annualRevenueTarget > 0 && (
-                  <ReferenceLine y={Math.round(settings.annualRevenueTarget / 12)} stroke="#E8B100" strokeDasharray="6 3" label={{ value: 'Target', position: 'right', fill: '#E8B100', fontSize: 11 }} />
-                )}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Budget vs Actual */}
-        {budgetVsActual.length > 0 && (
-          <div className="flagship-card rounded-2xl p-6">
-            <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Budget vs Actual</h3>
-            <p className="text-sm text-soft-gray mb-4 relative z-10">Monthly expense budget vs actual spending</p>
-            <div className="relative z-10" style={{ height: 280 }}>
-              <ResponsiveContainer minWidth={0} width="100%" height={280}>
-                <BarChart data={budgetVsActual} margin={{ top: 10, right: 10, left: 0, bottom: 0 }} barCategoryGap="25%">
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                  <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
-                  <YAxis tickFormatter={fmtUsd} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={65} />
-                  <Tooltip content={({ active, payload, label }) => {
-                    if (!active || !payload?.length) return null;
-                    const bud = (payload.find(p => p.dataKey === 'budget')?.value ?? 0) as number;
-                    const act = (payload.find(p => p.dataKey === 'actual')?.value ?? 0) as number;
-                    const variance = bud - act;
-                    return (
-                      <div className="custom-tooltip">
-                        <p className="text-soft-gray text-xs mb-2">{label}</p>
-                        <p className="text-soft-gray text-sm">Budget: <span className="text-lavender font-medium">{formatCurrency(bud)}</span></p>
-                        <p className="text-soft-gray text-sm">Actual: <span className="text-lavender font-medium">{formatCurrency(act)}</span></p>
-                        <p className={`text-sm font-medium ${variance >= 0 ? 'text-green1' : 'text-red-400'}`}>
-                          {variance >= 0 ? 'Under budget' : 'Over budget'}: {formatCurrency(Math.abs(variance))}
-                        </p>
-                      </div>
-                    );
-                  }} />
-                  <Legend wrapperStyle={{ paddingTop: 10 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
-                  <Bar dataKey="budget" name="Budget" fill="#3B82F6" fillOpacity={0.4} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="actual" name="Actual" fill="#E85757" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-
-        {/* Net P&L Trend */}
-        <div className="flagship-card rounded-2xl p-6">
-          <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Net P&L Trend</h3>
-          <p className="text-sm text-soft-gray mb-4 relative z-10">Monthly profit/loss over time</p>
-          <div className="relative z-10" style={{ height: 320 }}>
-            <ResponsiveContainer minWidth={0} width="100%" height={320}>
-              <BarChart data={netTrendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
-                <YAxis tickFormatter={fmtUsd} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={65} />
-                <Tooltip content={({ active, payload, label }) => {
-                  if (!active || !payload?.length) return null;
-                  const v = payload[0].value as number;
-                  return (<div className="custom-tooltip"><p className="text-soft-gray text-xs mb-1">{label}</p><p className={`font-semibold ${v >= 0 ? 'text-green1' : 'text-red-400'}`}>{formatCurrency(v)}</p></div>);
-                }} />
-                <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" />
-                <Bar dataKey="net" radius={[4, 4, 0, 0]} animationDuration={800}>
-                  {netTrendData.map((entry, i) => (<Cell key={i} fill={entry.net >= 0 ? '#5EB851' : '#E85757'} fillOpacity={0.8} />))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Revenue & Expense Charts */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <div className="flagship-card rounded-2xl p-6">
-            <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Revenue Breakdown</h3>
-            <p className="text-sm text-soft-gray mb-4 relative z-10">Monthly revenue by source</p>
-            <div className="relative z-10" style={{ height: 320 }}>
-              <ResponsiveContainer minWidth={0} width="100%" height={320}>
-                <BarChart data={revenueChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                  <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
-                  <YAxis tickFormatter={fmtUsd} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={65} />
-                  <Tooltip content={({ active, payload, label }) => {
-                    if (!active || !payload?.length) return null;
-                    return (<div className="custom-tooltip"><p className="text-soft-gray text-xs mb-2">{label}</p>
-                      {payload.map((e, i) => (<div key={i} className="flex items-center gap-2 mb-1"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: e.color }} /><span className="text-soft-gray text-sm">{e.name}:</span><span className="text-lavender font-medium">{formatCurrency(e.value as number)}</span></div>))}
-                    </div>);
-                  }} />
-                  <Legend wrapperStyle={{ paddingTop: 15 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
-                  <Bar dataKey="tradingFees" name="Trading Fees" stackId="rev" fill={REVENUE_COLORS.tradingFees} />
-                  <Bar dataKey="lpFees" name="LP Fees" stackId="rev" fill={REVENUE_COLORS.lpFees} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="flagship-card rounded-2xl p-6">
-            <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Expense Breakdown</h3>
-            <p className="text-sm text-soft-gray mb-4 relative z-10">Monthly expenses by category</p>
-            <div className="relative z-10" style={{ height: 320 }}>
-              {expenseChartData.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-soft-gray text-sm">No expenses entered yet</div>
-              ) : (
-                <ResponsiveContainer minWidth={0} width="100%" height={320}>
-                  <BarChart data={expenseChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                    <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
-                    <YAxis tickFormatter={fmtUsd} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={65} />
-                    <Tooltip content={({ active, payload, label }) => {
-                      if (!active || !payload?.length) return null;
-                      return (<div className="custom-tooltip"><p className="text-soft-gray text-xs mb-2">{label}</p>
-                        {payload.filter(e => (e.value as number) > 0).map((e, i) => (<div key={i} className="flex items-center gap-2 mb-1"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: e.color }} /><span className="text-soft-gray text-sm">{e.name}:</span><span className="text-lavender font-medium">{formatCurrency(e.value as number)}</span></div>))}
-                      </div>);
-                    }} />
-                    <Legend wrapperStyle={{ paddingTop: 15 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
-                    {EXPENSE_CATEGORIES.map(cat => (<Bar key={cat} dataKey={cat} name={cat} stackId="exp" fill={EXPENSE_COLORS[cat]} />))}
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Monthly Income Statement Table */}
-        <div className="flagship-card rounded-2xl">
-          <div className="p-6 border-b border-white/5 relative z-10">
-            <h3 className="text-lg font-semibold text-lavender">Monthly Income Statement</h3>
-            <p className="text-sm text-soft-gray mt-1">Revenue and expenses by month</p>
-          </div>
-          <div className="overflow-x-auto relative z-10">
-            <table className="w-full text-sm">
-              <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
-                <tr className="border-b border-white/5">
-                  <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4 sticky left-0 bg-[#14141f]">Month</th>
-                  <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">Trading Fees</th>
-                  <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">LP Fees</th>
-                  <th className="text-right text-xs font-medium text-green1/80 uppercase tracking-wider py-3 px-4 border-l border-white/5">Revenue</th>
-                  <th className="text-right text-xs font-medium text-red-400/80 uppercase tracking-wider py-3 px-4 border-l border-white/5">Expenses</th>
-                  {budgets.length > 0 && <th className="text-right text-xs font-medium text-blue-400/80 uppercase tracking-wider py-3 px-4">Budget</th>}
-                  <th className="text-right text-xs font-medium text-lavender uppercase tracking-wider py-3 px-4 border-l border-white/5">Net P&L</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...monthlyData].reverse().map(m => (
-                  <tr key={m.month} className="border-b border-white/5 hover:bg-white/[0.02]">
-                    <td className="py-3 px-4 text-lavender font-medium sticky left-0 bg-[#14141f]">{m.label}</td>
-                    <td className="py-3 px-4 text-right text-soft-gray">{formatCurrency(m.tradingFees)}</td>
-                    <td className="py-3 px-4 text-right text-soft-gray">{formatCurrency(m.lpFees)}</td>
-                    <td className="py-3 px-4 text-right text-green1 font-medium border-l border-white/5">{formatCurrency(m.totalRevenue)}</td>
-                    <td className="py-3 px-4 text-right text-red-400 border-l border-white/5">{m.totalExpenses > 0 ? formatCurrency(m.totalExpenses) : '—'}</td>
-                    {budgets.length > 0 && (
-                      <td className="py-3 px-4 text-right text-blue-400">{m.totalBudget > 0 ? formatCurrency(m.totalBudget) : '—'}</td>
-                    )}
-                    <td className={`py-3 px-4 text-right font-semibold border-l border-white/5 ${m.netPnL >= 0 ? 'text-green1' : 'text-red-400'}`}>{formatCurrency(m.netPnL)}</td>
-                  </tr>
-                ))}
-                {monthlyData.length > 0 && (
-                  <tr className="border-t-2 border-white/10 bg-white/[0.02]">
-                    <td className="py-3 px-4 text-lavender font-bold sticky left-0 bg-[#1a1a2e]">Total</td>
-                    <td className="py-3 px-4 text-right text-lavender font-semibold">{formatCurrency(monthlyData.reduce((s, m) => s + m.tradingFees, 0))}</td>
-                    <td className="py-3 px-4 text-right text-lavender font-semibold">{formatCurrency(monthlyData.reduce((s, m) => s + m.lpFees, 0))}</td>
-                    <td className="py-3 px-4 text-right text-green1 font-bold border-l border-white/5">{formatCurrency(kpis.totalRev)}</td>
-                    <td className="py-3 px-4 text-right text-red-400 font-bold border-l border-white/5">{kpis.totalExp > 0 ? formatCurrency(kpis.totalExp) : '—'}</td>
-                    {budgets.length > 0 && <td className="py-3 px-4 text-right text-blue-400 font-bold">{formatCurrency(monthlyData.reduce((s, m) => s + m.totalBudget, 0))}</td>}
-                    <td className={`py-3 px-4 text-right font-bold border-l border-white/5 ${kpis.net >= 0 ? 'text-green1' : 'text-red-400'}`}>{formatCurrency(kpis.net)}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
 
       </main>
     </div>
