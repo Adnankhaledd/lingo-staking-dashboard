@@ -158,16 +158,23 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   const stateRef = useRef({ expenses, budgets, team, projections, revenueModels, settings });
   stateRef.current = { expenses, budgets, team, projections, revenueModels, settings };
 
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
   const handleSave = useCallback(async () => {
     if (!expensesLoaded) return;
+    setSaveStatus('saving');
     try {
       const pw = sessionStorage.getItem(SESSION_KEY) || '';
-      await fetch(`${API_BASE}/api/save-pnl-expenses`, {
+      const res = await fetch(`${API_BASE}/api/save-pnl-expenses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
         body: JSON.stringify(stateRef.current),
       });
-    } catch { /* ignore */ }
+      setSaveStatus(res.ok ? 'saved' : 'error');
+      if (res.ok) setTimeout(() => setSaveStatus('idle'), 2000);
+    } catch {
+      setSaveStatus('error');
+    }
   }, [expensesLoaded]);
 
   // Auto-save on any data change
@@ -353,6 +360,9 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {saveStatus === 'saving' && <span className="text-xs text-purple animate-pulse">Saving...</span>}
+              {saveStatus === 'saved' && <span className="text-xs text-green1">Saved</span>}
+              {saveStatus === 'error' && <span className="text-xs text-red-400">Save failed</span>}
               <a href="/" className="text-xs text-soft-gray hover:text-lavender px-3 py-1.5 rounded-lg border border-white/5 hover:bg-white/5 transition-colors">Dashboard</a>
               <a href="/admin" className="text-xs text-soft-gray hover:text-lavender px-3 py-1.5 rounded-lg border border-white/5 hover:bg-white/5 transition-colors">Admin</a>
               <button onClick={onLogout} className="flex items-center gap-1.5 text-xs text-soft-gray hover:text-red-400 px-3 py-1.5 rounded-lg border border-white/5 hover:bg-white/5 transition-colors">
