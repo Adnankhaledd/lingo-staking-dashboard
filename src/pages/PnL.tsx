@@ -80,6 +80,20 @@ const DEFAULT_ASSUMPTIONS: ScenarioAssumptions = {
   growthRatePct: 5,
 };
 
+// Per-month revenue model inputs
+interface MonthRevenueModel {
+  month: string;
+  // MM Capture
+  mmBuyPressure: number;
+  mmCaptureRate: number;   // %
+  // Product
+  productUsers: number;
+  productPricePerUser: number;
+  // Trading Fees
+  tradingVolume: number;
+  tradingFeeRate: number;  // %
+}
+
 interface PnLSettings {
   treasuryBalance: number;
   annualRevenueTarget: number;
@@ -196,11 +210,12 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   const { data: lpFees } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
   const { data: weeklyStats } = useDuneQuery<WeeklyStatsRow>(DUNE_QUERIES.WEEKLY_STATS);
 
-  // Expense + budget + settings + team + projections data from blob
+  // Expense + budget + settings + team + projections + revenue models data from blob
   const [expenses, setExpenses] = useState<ExpenseEntry[]>([]);
   const [budgets, setBudgets] = useState<BudgetEntry[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [projections, setProjections] = useState<MonthProjection[]>([]);
+  const [revenueModels, setRevenueModels] = useState<MonthRevenueModel[]>([]);
   const [settings, setSettings] = useState<PnLSettings>({ treasuryBalance: 0, annualRevenueTarget: 0, annualExpenseTarget: 0 });
   const [expensesLoaded, setExpensesLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -229,6 +244,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
         setBudgets(data.budgets ?? []);
         setTeam(data.team ?? []);
         setProjections(data.projections ?? []);
+        setRevenueModels(data.revenueModels ?? []);
         setSettings(prev => ({ ...prev, ...(data.settings ?? {}) }));
       }
     } catch { /* ignore */ }
@@ -247,23 +263,23 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       const res = await fetch(`${API_BASE}/api/save-pnl-expenses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
-        body: JSON.stringify({ expenses, budgets, team, projections, settings }),
+        body: JSON.stringify({ expenses, budgets, team, projections, revenueModels, settings }),
       });
       const data = await res.json();
       setSaveMsg(res.ok ? 'Saved!' : data.error || 'Failed');
       setTimeout(() => setSaveMsg(''), 3000);
     } catch { setSaveMsg('Network error'); }
     setSaving(false);
-  }, [expenses, budgets, team, projections, settings, expensesLoaded]);
+  }, [expenses, budgets, team, projections, revenueModels, settings, expensesLoaded]);
 
   // Auto-save: persist to blob whenever data changes (after initial load)
   const [hasEdited, setHasEdited] = useState(false);
   useEffect(() => {
     if (expensesLoaded && hasEdited) {
-      const timer = setTimeout(() => handleSave(), 800); // debounce 800ms
+      const timer = setTimeout(() => handleSave(), 800);
       return () => clearTimeout(timer);
     }
-  }, [expenses, budgets, team, projections, settings, expensesLoaded, hasEdited, handleSave]);
+  }, [expenses, budgets, team, projections, revenueModels, settings, expensesLoaded, hasEdited, handleSave]);
 
   // Add entry
   const handleAddEntry = () => {
@@ -513,6 +529,88 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     totalLpFees: scenarioData.reduce((s, m) => s + m.lpFees, 0),
   }), [scenarioData]);
 
+  // ─── Revenue Models (MM Capture + Product + Trading Fees) ─────────
+
+  const revenueModelMonths = useMemo(generateMonthRange, []);
+
+  const getRevenueModel = useCallback((month: string): MonthRevenueModel => {
+    return revenueModels.find(r => r.month === month) ?? {
+      month, mmBuyPressure: 0, mmCaptureRate: 20, productUsers: 0, productPricePerUser: 40, tradingVolume: 0, tradingFeeRate: 1.5,
+    };
+  }, [revenueModels]);
+
+  const updateRevenueModel = useCallback((month: string, field: keyof MonthRevenueModel, value: number) => {
+    setRevenueModels(prev => {
+      const existing = prev.find(r => r.month === month);
+      if (existing) {
+        return prev.map(r => r.month === month ? { ...r, [field]: value } : r);
+      }
+      return [...prev, { ...getRevenueModel(month), month, [field]: value }];
+    });
+    setHasEdited(true);
+  }, [getRevenueModel]);
+
+  // Compute per-month revenue from models
+  const revenueModelResults = useMemo(() => {
+    return revenueModelMonths.map(m => {
+      const model = getRevenueModel(m);
+      const mmCapture = model.mmBuyPressure * (model.mmCaptureRate / 100);
+      const productRev = model.productUsers * model.productPricePerUser;
+      const tradingFeeRev = model.tradingVolume * (model.tradingFeeRate / 100);
+      return {
+        month: m,
+        label: monthLabel(m),
+        mmBuyPressure: model.mmBuyPressure,
+        mmCaptureRate: model.mmCaptureRate,
+        mmCapture,
+        productUsers: model.productUsers,
+        productPricePerUser: model.productPricePerUser,
+        productRev,
+        tradingVolume: model.tradingVolume,
+        tradingFeeRate: model.tradingFeeRate,
+        tradingFeeRev,
+        totalRevenue: mmCapture + productRev + tradingFeeRev,
+      };
+    });
+  }, [revenueModelMonths, getRevenueModel]);
+
+  // Auto-inject revenue model results into projections as revenue items
+  // This creates/updates items labeled "MM Capture", "Product Revenue", "Trading Fees" in each month
+  useEffect(() => {
+    if (!expensesLoaded) return;
+    const autoLabels = ['MM Capture', 'Product Revenue', 'Trading Fees'];
+
+    setProjections(prev => {
+      let changed = false;
+      const updated = [...prev];
+
+      for (const result of revenueModelResults) {
+        if (result.mmCapture === 0 && result.productRev === 0 && result.tradingFeeRev === 0) continue;
+
+        const idx = updated.findIndex(p => p.month === result.month);
+        const proj = idx >= 0 ? { ...updated[idx] } : { month: result.month, revenueItems: [], expenseItems: [] };
+
+        // Remove old auto-generated items, keep manually added ones
+        const manualItems = proj.revenueItems.filter(i => !autoLabels.includes(i.label));
+        const autoItems: ProjectionLineItem[] = [];
+        if (result.mmCapture > 0) autoItems.push({ label: 'MM Capture', amount: Math.round(result.mmCapture) });
+        if (result.productRev > 0) autoItems.push({ label: 'Product Revenue', amount: Math.round(result.productRev) });
+        if (result.tradingFeeRev > 0) autoItems.push({ label: 'Trading Fees', amount: Math.round(result.tradingFeeRev) });
+
+        proj.revenueItems = [...autoItems, ...manualItems];
+
+        if (idx >= 0) {
+          updated[idx] = proj;
+        } else if (autoItems.length > 0) {
+          updated.push(proj);
+        }
+        changed = true;
+      }
+
+      return changed ? updated : prev;
+    });
+  }, [revenueModelResults, expensesLoaded]);
+
   // Chart data
   const netTrendData = useMemo(() => monthlyData.map(m => ({ label: m.label, net: Math.round(m.netPnL) })), [monthlyData]);
   const revenueChartData = useMemo(() => monthlyData.map(m => ({ label: m.label, tradingFees: Math.round(m.tradingFees), lpFees: Math.round(m.lpFees) })), [monthlyData]);
@@ -693,6 +791,97 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
                   <td className="py-2.5 px-4 text-right text-[#E8B100] font-bold">{formatCurrency(scenarioTotals.totalSellRevenue)}</td>
                   <td className="py-2.5 px-4 text-right text-purple font-bold">{formatCurrency(scenarioTotals.totalLpFees)}</td>
                   <td className="py-2.5 px-4 text-right text-lavender font-bold border-l border-white/5">{formatCurrency(scenarioTotals.totalRevenue)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Market Maker Capture + Product + Trading Fees */}
+        <div className="flagship-card rounded-2xl p-6">
+          <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Market Maker Capture</h3>
+          <p className="text-sm text-soft-gray mb-5 relative z-10">
+            Set buy pressure and capture rate per month. Values auto-feed into the Monthly Projections table below.
+          </p>
+
+          <div className="overflow-x-auto relative z-10">
+            <table className="w-full text-sm">
+              <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
+                <tr className="border-b border-white/5">
+                  <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-3 w-24">Month</th>
+                  <th className="text-center text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-2" colSpan={3}>
+                    <span className="text-green1/80">MM Capture</span>
+                  </th>
+                  <th className="text-center text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-2 border-l border-white/5" colSpan={3}>
+                    <span className="text-[#E8B100]/80">Product Revenue</span>
+                  </th>
+                  <th className="text-center text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-2 border-l border-white/5" colSpan={3}>
+                    <span className="text-purple/80">Trading Fees</span>
+                  </th>
+                  <th className="text-right text-xs font-medium text-lavender uppercase tracking-wider py-3 px-3 border-l border-white/5">Total</th>
+                </tr>
+                <tr className="border-b border-white/5">
+                  <th></th>
+                  <th className="text-right text-[10px] text-soft-gray/60 py-1 px-2">Buy Pressure</th>
+                  <th className="text-right text-[10px] text-soft-gray/60 py-1 px-2">Capture %</th>
+                  <th className="text-right text-[10px] text-green1/60 py-1 px-2">= Revenue</th>
+                  <th className="text-right text-[10px] text-soft-gray/60 py-1 px-2 border-l border-white/5">Users</th>
+                  <th className="text-right text-[10px] text-soft-gray/60 py-1 px-2">$/User</th>
+                  <th className="text-right text-[10px] text-[#E8B100]/60 py-1 px-2">= Revenue</th>
+                  <th className="text-right text-[10px] text-soft-gray/60 py-1 px-2 border-l border-white/5">Volume</th>
+                  <th className="text-right text-[10px] text-soft-gray/60 py-1 px-2">Fee %</th>
+                  <th className="text-right text-[10px] text-purple/60 py-1 px-2">= Revenue</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {revenueModelResults.map(r => (
+                  <tr key={r.month} className="border-b border-white/5 hover:bg-white/[0.02]">
+                    <td className="py-2 px-3 text-lavender font-medium text-sm">{r.label}</td>
+                    {/* MM Capture */}
+                    <td className="py-1 px-1">
+                      <input type="number" value={getRevenueModel(r.month).mmBuyPressure || ''} onChange={e => updateRevenueModel(r.month, 'mmBuyPressure', parseFloat(e.target.value) || 0)}
+                        placeholder="0" className="w-24 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1 text-xs text-lavender text-right focus:outline-none focus:border-green1/50" />
+                    </td>
+                    <td className="py-1 px-1">
+                      <input type="number" value={getRevenueModel(r.month).mmCaptureRate || ''} step="1" onChange={e => updateRevenueModel(r.month, 'mmCaptureRate', parseFloat(e.target.value) || 0)}
+                        placeholder="20" className="w-16 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1 text-xs text-lavender text-right focus:outline-none focus:border-green1/50" />
+                    </td>
+                    <td className="py-2 px-2 text-right text-green1 text-xs font-medium">{formatCurrency(r.mmCapture)}</td>
+                    {/* Product */}
+                    <td className="py-1 px-1 border-l border-white/5">
+                      <input type="number" value={getRevenueModel(r.month).productUsers || ''} onChange={e => updateRevenueModel(r.month, 'productUsers', parseFloat(e.target.value) || 0)}
+                        placeholder="0" className="w-20 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1 text-xs text-lavender text-right focus:outline-none focus:border-[#E8B100]/50" />
+                    </td>
+                    <td className="py-1 px-1">
+                      <input type="number" value={getRevenueModel(r.month).productPricePerUser || ''} step="1" onChange={e => updateRevenueModel(r.month, 'productPricePerUser', parseFloat(e.target.value) || 0)}
+                        placeholder="40" className="w-16 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1 text-xs text-lavender text-right focus:outline-none focus:border-[#E8B100]/50" />
+                    </td>
+                    <td className="py-2 px-2 text-right text-[#E8B100] text-xs font-medium">{formatCurrency(r.productRev)}</td>
+                    {/* Trading Fees */}
+                    <td className="py-1 px-1 border-l border-white/5">
+                      <input type="number" value={getRevenueModel(r.month).tradingVolume || ''} onChange={e => updateRevenueModel(r.month, 'tradingVolume', parseFloat(e.target.value) || 0)}
+                        placeholder="0" className="w-24 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1 text-xs text-lavender text-right focus:outline-none focus:border-purple/50" />
+                    </td>
+                    <td className="py-1 px-1">
+                      <input type="number" value={getRevenueModel(r.month).tradingFeeRate || ''} step="0.1" onChange={e => updateRevenueModel(r.month, 'tradingFeeRate', parseFloat(e.target.value) || 0)}
+                        placeholder="1.5" className="w-16 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1 text-xs text-lavender text-right focus:outline-none focus:border-purple/50" />
+                    </td>
+                    <td className="py-2 px-2 text-right text-purple text-xs font-medium">{formatCurrency(r.tradingFeeRev)}</td>
+                    {/* Total */}
+                    <td className="py-2 px-3 text-right text-lavender font-semibold text-sm border-l border-white/5">{r.totalRevenue > 0 ? formatCurrency(r.totalRevenue) : <span className="text-soft-gray/30">—</span>}</td>
+                  </tr>
+                ))}
+                {/* Totals row */}
+                <tr className="border-t-2 border-white/10 bg-white/[0.02]">
+                  <td className="py-2 px-3 text-lavender font-bold text-sm">Total</td>
+                  <td colSpan={2}></td>
+                  <td className="py-2 px-2 text-right text-green1 font-bold text-xs">{formatCurrency(revenueModelResults.reduce((s, r) => s + r.mmCapture, 0))}</td>
+                  <td colSpan={2} className="border-l border-white/5"></td>
+                  <td className="py-2 px-2 text-right text-[#E8B100] font-bold text-xs">{formatCurrency(revenueModelResults.reduce((s, r) => s + r.productRev, 0))}</td>
+                  <td colSpan={2} className="border-l border-white/5"></td>
+                  <td className="py-2 px-2 text-right text-purple font-bold text-xs">{formatCurrency(revenueModelResults.reduce((s, r) => s + r.tradingFeeRev, 0))}</td>
+                  <td className="py-2 px-3 text-right text-lavender font-bold text-sm border-l border-white/5">{formatCurrency(revenueModelResults.reduce((s, r) => s + r.totalRevenue, 0))}</td>
                 </tr>
               </tbody>
             </table>
