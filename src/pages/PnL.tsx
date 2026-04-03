@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine,
@@ -154,7 +154,10 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => { fetchExpenses(); }, [fetchExpenses]);
 
-  // Save all
+  // Save all — uses ref to always capture latest state
+  const stateRef = useRef({ expenses, budgets, team, projections, revenueModels, settings });
+  stateRef.current = { expenses, budgets, team, projections, revenueModels, settings };
+
   const handleSave = useCallback(async () => {
     if (!expensesLoaded) return;
     try {
@@ -162,12 +165,12 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       await fetch(`${API_BASE}/api/save-pnl-expenses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
-        body: JSON.stringify({ expenses, budgets, team, projections, revenueModels, settings }),
+        body: JSON.stringify(stateRef.current),
       });
     } catch { /* ignore */ }
-  }, [expenses, budgets, team, projections, revenueModels, settings, expensesLoaded]);
+  }, [expensesLoaded]);
 
-  // Auto-save
+  // Auto-save on any data change
   const [hasEdited, setHasEdited] = useState(false);
   useEffect(() => {
     if (expensesLoaded && hasEdited) {
@@ -370,7 +373,8 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
             </div>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-soft-gray">$</span>
-              <input type="number" value={settings.treasuryBalance || ''} onChange={e => { setSettings(p => ({ ...p, treasuryBalance: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
+              <input type="number" value={settings.treasuryBalance || ''}
+                onChange={e => { setSettings(p => ({ ...p, treasuryBalance: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
                 placeholder="e.g. 500000" min="0"
                 className="bg-white/[0.04] border border-white/[0.08] rounded-lg pl-7 pr-3 py-2 text-sm text-lavender w-48 focus:outline-none focus:border-purple/50" />
             </div>
