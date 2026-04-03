@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, Cell, ReferenceLine,
@@ -49,6 +49,17 @@ interface TeamMember {
   monthlySalary: number;
   startMonth: string; // "2025-01"
   endMonth?: string;  // optional — still active if empty
+}
+
+interface ProjectionLineItem {
+  label: string;
+  amount: number;
+}
+
+interface MonthProjection {
+  month: string;  // "2026-04"
+  revenueItems: ProjectionLineItem[];
+  expenseItems: ProjectionLineItem[];
 }
 
 interface PnLSettings {
@@ -166,10 +177,11 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   const { data: lpFees } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
   const { data: weeklyStats } = useDuneQuery<WeeklyStatsRow>(DUNE_QUERIES.WEEKLY_STATS);
 
-  // Expense + budget + settings + team data from blob
+  // Expense + budget + settings + team + projections data from blob
   const [expenses, setExpenses] = useState<ExpenseEntry[]>([]);
   const [budgets, setBudgets] = useState<BudgetEntry[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
+  const [projections, setProjections] = useState<MonthProjection[]>([]);
   const [settings, setSettings] = useState<PnLSettings>({ treasuryBalance: 0, annualRevenueTarget: 0, annualExpenseTarget: 0 });
   const [expensesLoaded, setExpensesLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -197,6 +209,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
         setExpenses(data.expenses ?? []);
         setBudgets(data.budgets ?? []);
         setTeam(data.team ?? []);
+        setProjections(data.projections ?? []);
         setSettings(prev => ({ ...prev, ...(data.settings ?? {}) }));
       }
     } catch { /* ignore */ }
@@ -215,14 +228,14 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       const res = await fetch(`${API_BASE}/api/save-pnl-expenses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
-        body: JSON.stringify({ expenses, budgets, team, settings }),
+        body: JSON.stringify({ expenses, budgets, team, projections, settings }),
       });
       const data = await res.json();
       setSaveMsg(res.ok ? 'Saved!' : data.error || 'Failed');
       setTimeout(() => setSaveMsg(''), 3000);
     } catch { setSaveMsg('Network error'); }
     setSaving(false);
-  }, [expenses, budgets, team, settings, expensesLoaded]);
+  }, [expenses, budgets, team, projections, settings, expensesLoaded]);
 
   // Auto-save: persist to blob whenever data changes (after initial load)
   const [hasEdited, setHasEdited] = useState(false);
@@ -231,7 +244,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       const timer = setTimeout(() => handleSave(), 800); // debounce 800ms
       return () => clearTimeout(timer);
     }
-  }, [expenses, budgets, team, settings, expensesLoaded, hasEdited, handleSave]);
+  }, [expenses, budgets, team, projections, settings, expensesLoaded, hasEdited, handleSave]);
 
   // Add entry
   const handleAddEntry = () => {
@@ -496,6 +509,9 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
             sub={settings.treasuryBalance > 0 ? `Treasury: ${formatCurrency(settings.treasuryBalance)}` : undefined}
           />
         </div>
+
+        {/* Interactive Monthly Projections */}
+        <ProjectionsTable projections={projections} setProjections={setProjections} onEdit={() => setHasEdited(true)} />
 
         {/* Annual Projection */}
         <div className="flagship-card rounded-2xl p-6">
@@ -978,6 +994,245 @@ function KPI({ icon, label, value, color, sub }: { icon: React.ReactNode; label:
       </div>
       <p className={`text-xl font-bold relative z-10 ${color ?? 'text-lavender'}`}>{value}</p>
       {sub && <p className="text-xs text-soft-gray/60 mt-1 relative z-10">{sub}</p>}
+    </div>
+  );
+}
+
+// ─── Interactive Projections Table ──────────────────────────────────
+
+interface ProjectionsTableProps {
+  projections: MonthProjection[];
+  setProjections: React.Dispatch<React.SetStateAction<MonthProjection[]>>;
+  onEdit: () => void; // trigger auto-save
+}
+
+function generateMonthRange(): string[] {
+  const now = new Date();
+  const months: string[] = [];
+  for (let m = now.getMonth(); m < 12; m++) {
+    months.push(`${now.getFullYear()}-${String(m + 1).padStart(2, '0')}`);
+  }
+  return months;
+}
+
+function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTableProps) {
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  const months = useMemo(generateMonthRange, []);
+
+  const getProjection = (month: string): MonthProjection => {
+    return projections.find(p => p.month === month) ?? { month, revenueItems: [], expenseItems: [] };
+  };
+
+  const updateProjection = (month: string, updated: MonthProjection) => {
+    setProjections(prev => {
+      const filtered = prev.filter(p => p.month !== month);
+      return [...filtered, updated];
+    });
+    onEdit();
+  };
+
+  const addLineItem = (month: string, type: 'revenue' | 'expense') => {
+    const proj = getProjection(month);
+    if (type === 'revenue') {
+      proj.revenueItems = [...proj.revenueItems, { label: '', amount: 0 }];
+    } else {
+      proj.expenseItems = [...proj.expenseItems, { label: '', amount: 0 }];
+    }
+    updateProjection(month, { ...proj });
+  };
+
+  const removeLineItem = (month: string, type: 'revenue' | 'expense', index: number) => {
+    const proj = getProjection(month);
+    if (type === 'revenue') {
+      proj.revenueItems = proj.revenueItems.filter((_, i) => i !== index);
+    } else {
+      proj.expenseItems = proj.expenseItems.filter((_, i) => i !== index);
+    }
+    updateProjection(month, { ...proj });
+  };
+
+  const updateLineItem = (month: string, type: 'revenue' | 'expense', index: number, field: 'label' | 'amount', value: string) => {
+    const proj = getProjection(month);
+    const items = type === 'revenue' ? [...proj.revenueItems] : [...proj.expenseItems];
+    items[index] = { ...items[index], [field]: field === 'amount' ? (parseFloat(value) || 0) : value };
+    if (type === 'revenue') proj.revenueItems = items;
+    else proj.expenseItems = items;
+    updateProjection(month, { ...proj });
+  };
+
+  // Calculate totals for the summary row
+  const monthTotals = months.map(m => {
+    const proj = getProjection(m);
+    const rev = proj.revenueItems.reduce((s, i) => s + i.amount, 0);
+    const exp = proj.expenseItems.reduce((s, i) => s + i.amount, 0);
+    return { month: m, label: monthLabel(m), revenue: rev, expenses: exp, net: rev - exp };
+  });
+
+  const grandTotal = {
+    revenue: monthTotals.reduce((s, m) => s + m.revenue, 0),
+    expenses: monthTotals.reduce((s, m) => s + m.expenses, 0),
+    net: monthTotals.reduce((s, m) => s + m.net, 0),
+  };
+
+  return (
+    <div className="flagship-card rounded-2xl">
+      <div className="p-6 border-b border-white/5 relative z-10">
+        <h3 className="text-lg font-semibold text-lavender">Monthly Projections</h3>
+        <p className="text-sm text-soft-gray mt-1">
+          Click a month to expand and edit revenue/expense targets. Compare against actuals at month-end.
+        </p>
+      </div>
+
+      <div className="relative z-10">
+        {/* Summary table */}
+        <table className="w-full text-sm">
+          <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
+            <tr className="border-b border-white/5">
+              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-6 w-36">Month</th>
+              <th className="text-right text-xs font-medium text-green1/80 uppercase tracking-wider py-3 px-4">Projected Revenue</th>
+              <th className="text-right text-xs font-medium text-red-400/80 uppercase tracking-wider py-3 px-4">Projected Expenses</th>
+              <th className="text-right text-xs font-medium text-lavender uppercase tracking-wider py-3 px-6">Net P&L</th>
+            </tr>
+          </thead>
+          <tbody>
+            {monthTotals.map(m => {
+              const isExpanded = expandedMonth === m.month;
+              const proj = getProjection(m.month);
+              const hasData = proj.revenueItems.length > 0 || proj.expenseItems.length > 0;
+
+              return (
+                <Fragment key={m.month}>
+                  {/* Summary row — clickable */}
+                  <tr
+                    className={`border-b border-white/5 cursor-pointer transition-colors ${isExpanded ? 'bg-purple/5' : 'hover:bg-white/[0.02]'}`}
+                    onClick={() => setExpandedMonth(isExpanded ? null : m.month)}
+                  >
+                    <td className="py-3 px-6">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
+                        <span className="text-lavender font-medium">{m.label}</span>
+                        {hasData && <span className="w-1.5 h-1.5 rounded-full bg-purple" />}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-right text-green1 font-medium">{m.revenue > 0 ? formatCurrency(m.revenue) : <span className="text-soft-gray/30">—</span>}</td>
+                    <td className="py-3 px-4 text-right text-red-400">{m.expenses > 0 ? formatCurrency(m.expenses) : <span className="text-soft-gray/30">—</span>}</td>
+                    <td className={`py-3 px-6 text-right font-semibold ${m.net > 0 ? 'text-green1' : m.net < 0 ? 'text-red-400' : 'text-soft-gray/30'}`}>
+                      {m.revenue > 0 || m.expenses > 0 ? formatCurrency(m.net) : '—'}
+                    </td>
+                  </tr>
+
+                  {/* Expanded detail — editable line items */}
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={4} className="bg-white/[0.02] border-b border-white/5 px-6 py-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {/* Revenue items */}
+                          <div>
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-sm font-medium text-green1">Revenue</h4>
+                              <button onClick={(e) => { e.stopPropagation(); addLineItem(m.month, 'revenue'); }}
+                                className="flex items-center gap-1 text-xs text-green1/70 hover:text-green1 transition-colors">
+                                <Plus className="w-3 h-3" />Add
+                              </button>
+                            </div>
+                            {proj.revenueItems.length === 0 && (
+                              <p className="text-xs text-soft-gray/40 py-2">No revenue items — click Add</p>
+                            )}
+                            {proj.revenueItems.map((item, idx) => (
+                              <div key={idx} className="flex items-center gap-2 mb-2">
+                                <input
+                                  type="text" value={item.label}
+                                  onChange={e => updateLineItem(m.month, 'revenue', idx, 'label', e.target.value)}
+                                  placeholder="e.g. Trading Fees"
+                                  className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-xs text-lavender focus:outline-none focus:border-green1/50"
+                                  onClick={e => e.stopPropagation()}
+                                />
+                                <div className="relative">
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-soft-gray">$</span>
+                                  <input
+                                    type="number" value={item.amount || ''}
+                                    onChange={e => updateLineItem(m.month, 'revenue', idx, 'amount', e.target.value)}
+                                    placeholder="0"
+                                    className="w-28 bg-white/[0.04] border border-white/[0.08] rounded-lg pl-5 pr-2 py-1.5 text-xs text-lavender text-right focus:outline-none focus:border-green1/50"
+                                    onClick={e => e.stopPropagation()}
+                                  />
+                                </div>
+                                <button onClick={(e) => { e.stopPropagation(); removeLineItem(m.month, 'revenue', idx); }}
+                                  className="text-soft-gray/30 hover:text-red-400 transition-colors">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                            {proj.revenueItems.length > 0 && (
+                              <div className="flex justify-end mt-2 pt-2 border-t border-white/5">
+                                <span className="text-xs text-green1 font-medium">Total: {formatCurrency(proj.revenueItems.reduce((s, i) => s + i.amount, 0))}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Expense items */}
+                          <div>
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-sm font-medium text-red-400">Expenses</h4>
+                              <button onClick={(e) => { e.stopPropagation(); addLineItem(m.month, 'expense'); }}
+                                className="flex items-center gap-1 text-xs text-red-400/70 hover:text-red-400 transition-colors">
+                                <Plus className="w-3 h-3" />Add
+                              </button>
+                            </div>
+                            {proj.expenseItems.length === 0 && (
+                              <p className="text-xs text-soft-gray/40 py-2">No expense items — click Add</p>
+                            )}
+                            {proj.expenseItems.map((item, idx) => (
+                              <div key={idx} className="flex items-center gap-2 mb-2">
+                                <input
+                                  type="text" value={item.label}
+                                  onChange={e => updateLineItem(m.month, 'expense', idx, 'label', e.target.value)}
+                                  placeholder="e.g. Team Salary"
+                                  className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-xs text-lavender focus:outline-none focus:border-red-400/50"
+                                  onClick={e => e.stopPropagation()}
+                                />
+                                <div className="relative">
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-soft-gray">$</span>
+                                  <input
+                                    type="number" value={item.amount || ''}
+                                    onChange={e => updateLineItem(m.month, 'expense', idx, 'amount', e.target.value)}
+                                    placeholder="0"
+                                    className="w-28 bg-white/[0.04] border border-white/[0.08] rounded-lg pl-5 pr-2 py-1.5 text-xs text-lavender text-right focus:outline-none focus:border-red-400/50"
+                                    onClick={e => e.stopPropagation()}
+                                  />
+                                </div>
+                                <button onClick={(e) => { e.stopPropagation(); removeLineItem(m.month, 'expense', idx); }}
+                                  className="text-soft-gray/30 hover:text-red-400 transition-colors">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                            {proj.expenseItems.length > 0 && (
+                              <div className="flex justify-end mt-2 pt-2 border-t border-white/5">
+                                <span className="text-xs text-red-400 font-medium">Total: {formatCurrency(proj.expenseItems.reduce((s, i) => s + i.amount, 0))}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+
+            {/* Grand total */}
+            <tr className="border-t-2 border-white/10 bg-white/[0.02]">
+              <td className="py-3 px-6 text-lavender font-bold">Total</td>
+              <td className="py-3 px-4 text-right text-green1 font-bold">{grandTotal.revenue > 0 ? formatCurrency(grandTotal.revenue) : '—'}</td>
+              <td className="py-3 px-4 text-right text-red-400 font-bold">{grandTotal.expenses > 0 ? formatCurrency(grandTotal.expenses) : '—'}</td>
+              <td className={`py-3 px-6 text-right font-bold ${grandTotal.net >= 0 ? 'text-green1' : 'text-red-400'}`}>
+                {grandTotal.revenue > 0 || grandTotal.expenses > 0 ? formatCurrency(grandTotal.net) : '—'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

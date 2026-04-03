@@ -40,10 +40,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { expenses, budgets, team, settings } = req.body as {
+    const { expenses, budgets, team, projections, settings } = req.body as {
       expenses: ExpenseEntry[];
       budgets?: { month: string; category: string; budget: number }[];
       team?: { name: string; role: string; monthlySalary: number; startMonth: string; endMonth?: string }[];
+      projections?: unknown[];
       settings?: { treasuryBalance?: number; annualRevenueTarget?: number; annualExpenseTarget?: number };
     };
 
@@ -67,6 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       expenses,
       budgets: budgets ?? [],
       team: team ?? [],
+      projections: projections ?? [],
       settings: settings ?? {},
       updatedAt: new Date().toISOString(),
     };
