@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import {
   Lock, DollarSign, TrendingUp, TrendingDown, Minus,
-  Plus, Save, Trash2, RefreshCw, LogOut, Users, Wallet, Calendar,
+  Plus, Trash2, LogOut, Users, Wallet, Calendar,
 } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
 import {
@@ -27,8 +27,6 @@ const EXPENSE_CATEGORIES = [
   'Legal & Compliance',
   'Other OpEx',
 ] as const;
-
-type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
 
 interface ExpenseEntry {
   month: string;
@@ -62,24 +60,6 @@ interface MonthProjection {
   expenseItems: ProjectionLineItem[];
 }
 
-interface ScenarioAssumptions {
-  monthlyBuyPressure: number;   // $ buy volume per month
-  feeCaptureRate: number;       // % of buy pressure captured as fees (e.g. 1.5)
-  monthlySellAmount: number;    // LINGO tokens sold per month
-  lingoPrice: number;           // assumed $ per LINGO
-  lpFeesMonthly: number;        // estimated LP fees per month
-  growthRatePct: number;        // month-over-month growth % on buy pressure
-}
-
-const DEFAULT_ASSUMPTIONS: ScenarioAssumptions = {
-  monthlyBuyPressure: 150000,
-  feeCaptureRate: 1.5,
-  monthlySellAmount: 30000,
-  lingoPrice: 0.008,
-  lpFeesMonthly: 2000,
-  growthRatePct: 5,
-};
-
 // Per-month revenue model inputs
 interface MonthRevenueModel {
   month: string;
@@ -98,7 +78,6 @@ interface PnLSettings {
   treasuryBalance: number;
   annualRevenueTarget: number;
   annualExpenseTarget: number;
-  assumptions?: ScenarioAssumptions;
 }
 
 interface MonthlyRecord {
@@ -145,11 +124,6 @@ function fmtUsd(n: number): string {
   if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;
-}
-
-function currentYM(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function currentYear(): number {
@@ -218,21 +192,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   const [revenueModels, setRevenueModels] = useState<MonthRevenueModel[]>([]);
   const [settings, setSettings] = useState<PnLSettings>({ treasuryBalance: 0, annualRevenueTarget: 0, annualExpenseTarget: 0 });
   const [expensesLoaded, setExpensesLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState('');
-
-  // Expense form
-  const [formMonth, setFormMonth] = useState(currentYM);
-  const [formCategory, setFormCategory] = useState<ExpenseCategory>(EXPENSE_CATEGORIES[0]);
-  const [formAmount, setFormAmount] = useState('');
-  const [formNote, setFormNote] = useState('');
-  const [formType, setFormType] = useState<'expense' | 'budget'>('expense');
-
-  // Team form
-  const [teamName, setTeamName] = useState('');
-  const [teamRole, setTeamRole] = useState('');
-  const [teamSalary, setTeamSalary] = useState('');
-  const [teamStart, setTeamStart] = useState(currentYM);
 
   // Fetch
   const fetchExpenses = useCallback(async () => {
@@ -255,24 +214,18 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
 
   // Save all
   const handleSave = useCallback(async () => {
-    if (!expensesLoaded) return; // Don't overwrite blob before data is loaded
-    setSaving(true);
-    setSaveMsg('');
+    if (!expensesLoaded) return;
     try {
       const pw = sessionStorage.getItem(SESSION_KEY) || '';
-      const res = await fetch(`${API_BASE}/api/save-pnl-expenses`, {
+      await fetch(`${API_BASE}/api/save-pnl-expenses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
         body: JSON.stringify({ expenses, budgets, team, projections, revenueModels, settings }),
       });
-      const data = await res.json();
-      setSaveMsg(res.ok ? 'Saved!' : data.error || 'Failed');
-      setTimeout(() => setSaveMsg(''), 3000);
-    } catch { setSaveMsg('Network error'); }
-    setSaving(false);
+    } catch { /* ignore */ }
   }, [expenses, budgets, team, projections, revenueModels, settings, expensesLoaded]);
 
-  // Auto-save: persist to blob whenever data changes (after initial load)
+  // Auto-save
   const [hasEdited, setHasEdited] = useState(false);
   useEffect(() => {
     if (expensesLoaded && hasEdited) {
@@ -280,89 +233,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       return () => clearTimeout(timer);
     }
   }, [expenses, budgets, team, projections, revenueModels, settings, expensesLoaded, hasEdited, handleSave]);
-
-  // Add entry
-  const handleAddEntry = () => {
-    const amount = parseFloat(formAmount);
-    if (isNaN(amount) || amount <= 0) return;
-
-    if (formType === 'expense') {
-      setExpenses(prev => {
-        const filtered = prev.filter(e => !(e.month === formMonth && e.category === formCategory));
-        return [...filtered, { month: formMonth, category: formCategory, amount, note: formNote || undefined }];
-      });
-    } else {
-      setBudgets(prev => {
-        const filtered = prev.filter(b => !(b.month === formMonth && b.category === formCategory));
-        return [...filtered, { month: formMonth, category: formCategory, budget: amount }];
-      });
-    }
-    setFormAmount('');
-    setFormNote('');
-    setHasEdited(true);
-  };
-
-  const handleDeleteExpense = (month: string, category: string) => {
-    setExpenses(prev => prev.filter(e => !(e.month === month && e.category === category)));
-    setHasEdited(true);
-  };
-
-  const handleDeleteBudget = (month: string, category: string) => {
-    setBudgets(prev => prev.filter(b => !(b.month === month && b.category === category)));
-    setHasEdited(true);
-  };
-
-  // Team member management
-  const handleAddTeamMember = () => {
-    const salary = parseFloat(teamSalary);
-    if (!teamName.trim() || isNaN(salary) || salary <= 0) return;
-    setTeam(prev => [...prev, { name: teamName.trim(), role: teamRole.trim(), monthlySalary: salary, startMonth: teamStart }]);
-    setTeamName('');
-    setTeamRole('');
-    setTeamSalary('');
-    setHasEdited(true);
-  };
-
-  const handleDeleteTeamMember = (index: number) => {
-    setTeam(prev => prev.filter((_, i) => i !== index));
-    setHasEdited(true);
-  };
-
-  // Compute team expenses: each member generates a "Team Compensation" expense for each active month
-  const teamExpenses = useMemo<ExpenseEntry[]>(() => {
-    const entries: ExpenseEntry[] = [];
-    const now = currentYM();
-    for (const member of team) {
-      let m = member.startMonth;
-      while (m <= now && (!member.endMonth || m <= member.endMonth)) {
-        entries.push({ month: m, category: 'Team Compensation', amount: member.monthlySalary, note: member.name });
-        // Increment month
-        const [y, mo] = m.split('-').map(Number);
-        const next = mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`;
-        m = next;
-      }
-    }
-    return entries;
-  }, [team]);
-
-  // Merge manual expenses + team-generated expenses
-  const allExpenses = useMemo(() => {
-    // Team expenses aggregate into Team Compensation per month
-    const merged = [...expenses.filter(e => e.category !== 'Team Compensation')];
-    // Group team expenses by month
-    const teamByMonth = new Map<string, number>();
-    for (const te of teamExpenses) {
-      teamByMonth.set(te.month, (teamByMonth.get(te.month) ?? 0) + te.amount);
-    }
-    // Also add any manual "Team Compensation" entries that aren't from team members
-    for (const e of expenses.filter(e => e.category === 'Team Compensation')) {
-      teamByMonth.set(e.month, (teamByMonth.get(e.month) ?? 0) + e.amount);
-    }
-    for (const [month, amount] of teamByMonth) {
-      merged.push({ month, category: 'Team Compensation', amount });
-    }
-    return merged;
-  }, [expenses, teamExpenses]);
 
   // ─── Build monthly P&L records ────────────────────────────────────
 
@@ -378,11 +248,11 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     tradingFees?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.tradingFees += r.usd_value ?? 0; } });
     lpFees?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.lpFees += r.fees_usd ?? 0; } });
 
-    allExpenses.forEach(e => months.add(e.month));
+    expenses.forEach(e => months.add(e.month));
     budgets.forEach(b => months.add(b.month));
 
     const expenseMap = new Map<string, Record<string, number>>();
-    allExpenses.forEach(e => {
+    expenses.forEach(e => {
       if (!expenseMap.has(e.month)) expenseMap.set(e.month, {});
       expenseMap.get(e.month)![e.category] = (expenseMap.get(e.month)![e.category] ?? 0) + e.amount;
     });
@@ -402,7 +272,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       const totalBudget = Object.values(bud).reduce((s, v) => s + v, 0);
       return { month: m, label: monthLabel(m), ...rev, totalRevenue, expenses: exp, budgets: bud, totalExpenses, totalBudget, netPnL: totalRevenue - totalExpenses };
     });
-  }, [tradingFees, lpFees, allExpenses, budgets]);
+  }, [tradingFees, lpFees, expenses, budgets]);
 
   // ─── KPIs ─────────────────────────────────────────────────────────
 
@@ -487,47 +357,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
         variance: Math.round(m.totalBudget - m.totalExpenses),
       }));
   }, [monthlyData]);
-
-  // ─── Scenario Assumptions ─────────────────────────────────────────
-
-  const assumptions = settings.assumptions ?? DEFAULT_ASSUMPTIONS;
-
-  const setAssumption = <K extends keyof ScenarioAssumptions>(key: K, value: ScenarioAssumptions[K]) => {
-    setSettings(prev => ({
-      ...prev,
-      assumptions: { ...(prev.assumptions ?? DEFAULT_ASSUMPTIONS), [key]: value },
-    }));
-    setHasEdited(true);
-  };
-
-  const scenarioData = useMemo(() => {
-    const months = generateMonthRange();
-    return months.map((m, i) => {
-      const growthMultiplier = Math.pow(1 + assumptions.growthRatePct / 100, i);
-      const buyPressure = assumptions.monthlyBuyPressure * growthMultiplier;
-      const tradingFeeRevenue = buyPressure * (assumptions.feeCaptureRate / 100);
-      const sellRevenue = assumptions.monthlySellAmount * assumptions.lingoPrice;
-      const lpFees = assumptions.lpFeesMonthly * growthMultiplier;
-      const totalRevenue = tradingFeeRevenue + sellRevenue + lpFees;
-
-      return {
-        month: m,
-        label: monthLabel(m),
-        buyPressure: Math.round(buyPressure),
-        tradingFees: Math.round(tradingFeeRevenue),
-        sellRevenue: Math.round(sellRevenue),
-        lpFees: Math.round(lpFees),
-        totalRevenue: Math.round(totalRevenue),
-      };
-    });
-  }, [assumptions]);
-
-  const scenarioTotals = useMemo(() => ({
-    totalRevenue: scenarioData.reduce((s, m) => s + m.totalRevenue, 0),
-    totalTradingFees: scenarioData.reduce((s, m) => s + m.tradingFees, 0),
-    totalSellRevenue: scenarioData.reduce((s, m) => s + m.sellRevenue, 0),
-    totalLpFees: scenarioData.reduce((s, m) => s + m.lpFees, 0),
-  }), [scenarioData]);
 
   // ─── Revenue Models (MM Capture + Product + Trading Fees) ─────────
 
@@ -666,135 +495,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
             color={kpis.runway === Infinity ? 'text-green1' : kpis.runway > 6 ? 'text-lavender' : 'text-red-400'}
             sub={settings.treasuryBalance > 0 ? `Treasury: ${formatCurrency(settings.treasuryBalance)}` : undefined}
           />
-        </div>
-
-        {/* Scenario Assumptions */}
-        <div className="flagship-card rounded-2xl p-6">
-          <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Scenario Assumptions</h3>
-          <p className="text-sm text-soft-gray mb-5 relative z-10">
-            Adjust the assumptions below — the projected revenue chart and table update in real time.
-            Growth compounds month-over-month on buy pressure and LP fees.
-          </p>
-
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6 relative z-10">
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Monthly Buy Pressure ($)</label>
-              <input type="number" value={assumptions.monthlyBuyPressure || ''} onChange={e => setAssumption('monthlyBuyPressure', parseFloat(e.target.value) || 0)}
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Fee Capture Rate (%)</label>
-              <input type="number" value={assumptions.feeCaptureRate || ''} step="0.1" onChange={e => setAssumption('feeCaptureRate', parseFloat(e.target.value) || 0)}
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Monthly LINGO Sold</label>
-              <input type="number" value={assumptions.monthlySellAmount || ''} onChange={e => setAssumption('monthlySellAmount', parseFloat(e.target.value) || 0)}
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">LINGO Price ($)</label>
-              <input type="number" value={assumptions.lingoPrice || ''} step="0.001" onChange={e => setAssumption('lingoPrice', parseFloat(e.target.value) || 0)}
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">LP Fees / Month ($)</label>
-              <input type="number" value={assumptions.lpFeesMonthly || ''} onChange={e => setAssumption('lpFeesMonthly', parseFloat(e.target.value) || 0)}
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">MoM Growth (%)</label>
-              <input type="number" value={assumptions.growthRatePct || ''} step="0.5" onChange={e => setAssumption('growthRatePct', parseFloat(e.target.value) || 0)}
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-            </div>
-          </div>
-
-          {/* Scenario KPIs */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6 relative z-10">
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
-              <span className="text-xs text-soft-gray">Projected Total Revenue</span>
-              <div className="text-lg font-bold text-green1 mt-0.5">{formatCurrency(scenarioTotals.totalRevenue)}</div>
-              <span className="text-[10px] text-soft-gray/50">remaining months</span>
-            </div>
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
-              <span className="text-xs text-soft-gray">From Trading Fees</span>
-              <div className="text-lg font-bold text-lavender mt-0.5">{formatCurrency(scenarioTotals.totalTradingFees)}</div>
-            </div>
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
-              <span className="text-xs text-soft-gray">From Token Sales</span>
-              <div className="text-lg font-bold text-lavender mt-0.5">{formatCurrency(scenarioTotals.totalSellRevenue)}</div>
-            </div>
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
-              <span className="text-xs text-soft-gray">From LP Fees</span>
-              <div className="text-lg font-bold text-lavender mt-0.5">{formatCurrency(scenarioTotals.totalLpFees)}</div>
-            </div>
-          </div>
-
-          {/* Scenario Chart */}
-          <div className="relative z-10" style={{ height: 300 }}>
-            <ResponsiveContainer minWidth={0} width="100%" height={300}>
-              <BarChart data={scenarioData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
-                <YAxis tickFormatter={fmtUsd} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={65} />
-                <Tooltip content={({ active, payload, label }) => {
-                  if (!active || !payload?.length) return null;
-                  return (
-                    <div className="custom-tooltip">
-                      <p className="text-soft-gray text-xs mb-2">{label}</p>
-                      {payload.map((e, i) => (
-                        <div key={i} className="flex items-center gap-2 mb-1">
-                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: e.color }} />
-                          <span className="text-soft-gray text-sm">{e.name}:</span>
-                          <span className="text-lavender font-medium">{formatCurrency(e.value as number)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                }} />
-                <Legend wrapperStyle={{ paddingTop: 10 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
-                <Bar dataKey="tradingFees" name="Trading Fees" stackId="rev" fill="#5EB851" />
-                <Bar dataKey="sellRevenue" name="Token Sales" stackId="rev" fill="#E8B100" />
-                <Bar dataKey="lpFees" name="LP Fees" stackId="rev" fill="#7B68AE" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Scenario Table */}
-          <div className="overflow-x-auto mt-4 relative z-10">
-            <table className="w-full text-sm">
-              <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
-                <tr className="border-b border-white/5">
-                  <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">Month</th>
-                  <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">Buy Pressure</th>
-                  <th className="text-right text-xs font-medium text-green1/80 uppercase tracking-wider py-3 px-4">Trading Fees</th>
-                  <th className="text-right text-xs font-medium text-[#E8B100]/80 uppercase tracking-wider py-3 px-4">Token Sales</th>
-                  <th className="text-right text-xs font-medium text-purple/80 uppercase tracking-wider py-3 px-4">LP Fees</th>
-                  <th className="text-right text-xs font-medium text-lavender uppercase tracking-wider py-3 px-4 border-l border-white/5">Total Revenue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scenarioData.map(m => (
-                  <tr key={m.month} className="border-b border-white/5 hover:bg-white/[0.02]">
-                    <td className="py-2.5 px-4 text-lavender font-medium">{m.label}</td>
-                    <td className="py-2.5 px-4 text-right text-soft-gray">{formatCurrency(m.buyPressure)}</td>
-                    <td className="py-2.5 px-4 text-right text-green1">{formatCurrency(m.tradingFees)}</td>
-                    <td className="py-2.5 px-4 text-right text-[#E8B100]">{formatCurrency(m.sellRevenue)}</td>
-                    <td className="py-2.5 px-4 text-right text-purple">{formatCurrency(m.lpFees)}</td>
-                    <td className="py-2.5 px-4 text-right text-lavender font-medium border-l border-white/5">{formatCurrency(m.totalRevenue)}</td>
-                  </tr>
-                ))}
-                <tr className="border-t-2 border-white/10 bg-white/[0.02]">
-                  <td className="py-2.5 px-4 text-lavender font-bold">Total</td>
-                  <td className="py-2.5 px-4 text-right text-soft-gray font-bold">{formatCurrency(scenarioData.reduce((s, m) => s + m.buyPressure, 0))}</td>
-                  <td className="py-2.5 px-4 text-right text-green1 font-bold">{formatCurrency(scenarioTotals.totalTradingFees)}</td>
-                  <td className="py-2.5 px-4 text-right text-[#E8B100] font-bold">{formatCurrency(scenarioTotals.totalSellRevenue)}</td>
-                  <td className="py-2.5 px-4 text-right text-purple font-bold">{formatCurrency(scenarioTotals.totalLpFees)}</td>
-                  <td className="py-2.5 px-4 text-right text-lavender font-bold border-l border-white/5">{formatCurrency(scenarioTotals.totalRevenue)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
         </div>
 
         {/* Market Maker Capture + Product + Trading Fees */}
@@ -1122,240 +822,6 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
           </div>
         </div>
 
-        {/* Settings: Treasury & Annual Targets */}
-        <div className="flagship-card rounded-2xl p-6">
-          <h3 className="text-lg font-semibold text-lavender mb-4 relative z-10">Settings & Targets</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 relative z-10">
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Treasury Balance (USD)</label>
-              <input type="number" value={settings.treasuryBalance || ''} onChange={e => { setSettings(p => ({ ...p, treasuryBalance: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
-                placeholder="e.g. 500000" min="0"
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-              <p className="text-xs text-soft-gray/50 mt-1">Used for runway calculation</p>
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Annual Revenue Target (USD)</label>
-              <input type="number" value={settings.annualRevenueTarget || ''} onChange={e => { setSettings(p => ({ ...p, annualRevenueTarget: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
-                placeholder="e.g. 2000000" min="0"
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-              <p className="text-xs text-soft-gray/50 mt-1">Shows as target line on projection chart</p>
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Annual Expense Target (USD)</label>
-              <input type="number" value={settings.annualExpenseTarget || ''} onChange={e => { setSettings(p => ({ ...p, annualExpenseTarget: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
-                placeholder="e.g. 1000000" min="0"
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-              <p className="text-xs text-soft-gray/50 mt-1">Annual expense budget cap</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Manage Expenses & Budgets */}
-        <div className="flagship-card rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-6 relative z-10">
-            <div>
-              <h3 className="text-lg font-semibold text-lavender">Manage Expenses & Budgets</h3>
-              <p className="text-sm text-soft-gray mt-1">Add expense actuals or budget targets per month</p>
-            </div>
-            <div className="flex items-center gap-2">
-              {saveMsg && <span className={`text-xs ${saveMsg === 'Saved!' ? 'text-green1' : 'text-red-400'}`}>{saveMsg}</span>}
-              <button onClick={handleSave} disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-purple/20 hover:bg-purple/30 text-lavender text-sm font-medium rounded-xl border border-purple/30 transition-colors disabled:opacity-50">
-                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}{saving ? 'Saving...' : 'Save Now'}
-              </button>
-            </div>
-          </div>
-
-          {/* Form */}
-          <div className="flex flex-wrap items-end gap-3 mb-6 relative z-10">
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Type</label>
-              <select value={formType} onChange={e => setFormType(e.target.value as 'expense' | 'budget')}
-                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50">
-                <option value="expense">Expense</option>
-                <option value="budget">Budget</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Month</label>
-              <input type="month" value={formMonth} onChange={e => setFormMonth(e.target.value)}
-                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Category</label>
-              <select value={formCategory} onChange={e => setFormCategory(e.target.value as ExpenseCategory)}
-                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50">
-                {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Amount (USD)</label>
-              <input type="number" value={formAmount} onChange={e => setFormAmount(e.target.value)} placeholder="0.00" min="0" step="0.01"
-                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-32 focus:outline-none focus:border-purple/50" />
-            </div>
-            {formType === 'expense' && (
-              <div className="flex-1 min-w-[150px]">
-                <label className="text-xs text-soft-gray block mb-1">Note (optional)</label>
-                <input type="text" value={formNote} onChange={e => setFormNote(e.target.value)} placeholder="e.g. Q1 bonus"
-                  className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-full focus:outline-none focus:border-purple/50" />
-              </div>
-            )}
-            <button onClick={handleAddEntry}
-              className="flex items-center gap-1.5 px-4 py-2 bg-green1/20 hover:bg-green1/30 text-green1 text-sm font-medium rounded-lg border border-green1/30 transition-colors">
-              <Plus className="w-4 h-4" />Add
-            </button>
-          </div>
-
-          {/* Expense entries */}
-          {expenses.length > 0 && (
-            <div className="mb-4 relative z-10">
-              <h4 className="text-sm font-medium text-lavender mb-2">Expenses</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="border-b border-white/5">
-                    <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Month</th>
-                    <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Category</th>
-                    <th className="text-right text-xs font-medium text-soft-gray uppercase py-2 px-3">Amount</th>
-                    <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Note</th>
-                    <th className="py-2 px-3 w-10"></th>
-                  </tr></thead>
-                  <tbody>
-                    {[...expenses].sort((a, b) => b.month.localeCompare(a.month) || a.category.localeCompare(b.category)).map((e, i) => (
-                      <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02]">
-                        <td className="py-2 px-3 text-lavender">{monthLabel(e.month)}</td>
-                        <td className="py-2 px-3"><span className="text-xs px-2 py-0.5 rounded-md" style={{ backgroundColor: `${EXPENSE_COLORS[e.category] ?? '#666'}20`, color: EXPENSE_COLORS[e.category] ?? '#999' }}>{e.category}</span></td>
-                        <td className="py-2 px-3 text-right text-soft-gray">{formatCurrency(e.amount)}</td>
-                        <td className="py-2 px-3 text-soft-gray/60 text-xs">{e.note || '—'}</td>
-                        <td className="py-2 px-3"><button onClick={() => handleDeleteExpense(e.month, e.category)} className="text-soft-gray/30 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Budget entries */}
-          {budgets.length > 0 && (
-            <div className="relative z-10">
-              <h4 className="text-sm font-medium text-blue-400 mb-2">Budgets</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="border-b border-white/5">
-                    <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Month</th>
-                    <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Category</th>
-                    <th className="text-right text-xs font-medium text-soft-gray uppercase py-2 px-3">Budget</th>
-                    <th className="py-2 px-3 w-10"></th>
-                  </tr></thead>
-                  <tbody>
-                    {[...budgets].sort((a, b) => b.month.localeCompare(a.month) || a.category.localeCompare(b.category)).map((b, i) => (
-                      <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02]">
-                        <td className="py-2 px-3 text-lavender">{monthLabel(b.month)}</td>
-                        <td className="py-2 px-3"><span className="text-xs px-2 py-0.5 rounded-md bg-blue-400/10 text-blue-400">{b.category}</span></td>
-                        <td className="py-2 px-3 text-right text-blue-400">{formatCurrency(b.budget)}</td>
-                        <td className="py-2 px-3"><button onClick={() => handleDeleteBudget(b.month, b.category)} className="text-soft-gray/30 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {expenses.length === 0 && budgets.length === 0 && expensesLoaded && (
-            <p className="text-sm text-soft-gray/50 text-center py-6 relative z-10">No entries yet. Use the form above to add expenses or budgets.</p>
-          )}
-        </div>
-
-        {/* Team Expenses */}
-        <div className="flagship-card rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-6 relative z-10">
-            <div>
-              <h3 className="text-lg font-semibold text-lavender">Team Expenses</h3>
-              <p className="text-sm text-soft-gray mt-1">
-                Individual team members — auto-generates monthly "Team Compensation" expenses
-              </p>
-            </div>
-            <div className="text-right relative z-10">
-              <p className="text-xs text-soft-gray">Monthly team cost</p>
-              <p className="text-lg font-bold text-red-400">
-                {formatCurrency(team.reduce((s, m) => {
-                  const now = currentYM();
-                  if (m.startMonth > now) return s;
-                  if (m.endMonth && m.endMonth < now) return s;
-                  return s + m.monthlySalary;
-                }, 0))}
-              </p>
-            </div>
-          </div>
-
-          {/* Add team member form */}
-          <div className="flex flex-wrap items-end gap-3 mb-6 relative z-10">
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Name</label>
-              <input type="text" value={teamName} onChange={e => setTeamName(e.target.value)} placeholder="e.g. John"
-                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-36 focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Role</label>
-              <input type="text" value={teamRole} onChange={e => setTeamRole(e.target.value)} placeholder="e.g. Dev"
-                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-32 focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Monthly Salary (USD)</label>
-              <input type="number" value={teamSalary} onChange={e => setTeamSalary(e.target.value)} placeholder="0" min="0"
-                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-32 focus:outline-none focus:border-purple/50" />
-            </div>
-            <div>
-              <label className="text-xs text-soft-gray block mb-1">Start Month</label>
-              <input type="month" value={teamStart} onChange={e => setTeamStart(e.target.value)}
-                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
-            </div>
-            <button onClick={handleAddTeamMember}
-              className="flex items-center gap-1.5 px-4 py-2 bg-green1/20 hover:bg-green1/30 text-green1 text-sm font-medium rounded-lg border border-green1/30 transition-colors">
-              <Plus className="w-4 h-4" />Add Member
-            </button>
-          </div>
-
-          {/* Team members table */}
-          {team.length > 0 && (
-            <div className="overflow-x-auto relative z-10">
-              <table className="w-full text-sm">
-                <thead><tr className="border-b border-white/5">
-                  <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Name</th>
-                  <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Role</th>
-                  <th className="text-right text-xs font-medium text-soft-gray uppercase py-2 px-3">Monthly Salary</th>
-                  <th className="text-left text-xs font-medium text-soft-gray uppercase py-2 px-3">Since</th>
-                  <th className="text-right text-xs font-medium text-soft-gray uppercase py-2 px-3">Total Cost</th>
-                  <th className="py-2 px-3 w-10"></th>
-                </tr></thead>
-                <tbody>
-                  {team.map((m, i) => {
-                    // Count active months
-                    const end = m.endMonth || currentYM();
-                    const [sy, sm] = m.startMonth.split('-').map(Number);
-                    const [ey, em] = end.split('-').map(Number);
-                    const activeMonths = Math.max(0, (ey - sy) * 12 + (em - sm) + 1);
-                    return (
-                      <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02]">
-                        <td className="py-2 px-3 text-lavender font-medium">{m.name}</td>
-                        <td className="py-2 px-3 text-soft-gray">{m.role || '—'}</td>
-                        <td className="py-2 px-3 text-right text-red-400">{formatCurrency(m.monthlySalary)}</td>
-                        <td className="py-2 px-3 text-soft-gray text-xs">{monthLabel(m.startMonth)}{m.endMonth ? ` → ${monthLabel(m.endMonth)}` : ' → Present'}</td>
-                        <td className="py-2 px-3 text-right text-lavender font-medium">{formatCurrency(m.monthlySalary * activeMonths)}</td>
-                        <td className="py-2 px-3"><button onClick={() => handleDeleteTeamMember(i)} className="text-soft-gray/30 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {team.length === 0 && (
-            <p className="text-sm text-soft-gray/50 text-center py-6 relative z-10">No team members added. Add members above — their salaries will auto-populate monthly Team Compensation expenses.</p>
-          )}
-        </div>
       </main>
     </div>
   );
