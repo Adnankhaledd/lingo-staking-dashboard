@@ -514,38 +514,46 @@ function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: 
     return projections.some(p => p.month === month);
   };
 
-  // Get effective projection: own data if exists, otherwise inherit from previous month
+  // Get effective projection: per-type inheritance
+  // Revenue and expenses inherit independently from the previous month if empty
   const getEffective = useMemo(() => {
     const cache = new Map<string, MonthProjection>();
 
-    return (month: string): MonthProjection => {
+    // Get inherited items from the previous month for a given type
+    const getInheritedItems = (month: string, type: 'revenue' | 'expense'): ProjectionLineItem[] => {
+      const idx = months.indexOf(month);
+      if (idx <= 0) return [];
+      const prev = getEffective(months[idx - 1]);
+      const items = type === 'revenue' ? prev.revenueItems : prev.expenseItems;
+      return items.map(i => ({ ...i }));
+    };
+
+    const getEffective = (month: string): MonthProjection => {
       if (cache.has(month)) return cache.get(month)!;
 
-      // If this month has explicit data, use it
       const own = projections.find(p => p.month === month);
-      if (own) {
-        cache.set(month, own);
-        return own;
+
+      let revenueItems: ProjectionLineItem[];
+      let expenseItems: ProjectionLineItem[];
+
+      if (own && own.revenueItems.length > 0) {
+        revenueItems = own.revenueItems;
+      } else {
+        revenueItems = getInheritedItems(month, 'revenue');
       }
 
-      // Otherwise, inherit from the previous month in the range
-      const idx = months.indexOf(month);
-      if (idx <= 0) {
-        const empty = { month, revenueItems: [], expenseItems: [] };
-        cache.set(month, empty);
-        return empty;
+      if (own && own.expenseItems.length > 0) {
+        expenseItems = own.expenseItems;
+      } else {
+        expenseItems = getInheritedItems(month, 'expense');
       }
 
-      // Deep-clone previous month's data with this month's key
-      const prev = getEffective(months[idx - 1]);
-      const inherited: MonthProjection = {
-        month,
-        revenueItems: prev.revenueItems.map(i => ({ ...i })),
-        expenseItems: prev.expenseItems.map(i => ({ ...i })),
-      };
-      cache.set(month, inherited);
-      return inherited;
+      const result = { month, revenueItems, expenseItems };
+      cache.set(month, result);
+      return result;
     };
+
+    return getEffective;
   }, [projections, months]);
 
   // Merge auto-revenue items on top of effective projection (for display only, not stored)
