@@ -1,13 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Cell, ReferenceLine,
+} from 'recharts';
+import {
   Lock, DollarSign, TrendingUp, TrendingDown, Minus,
-  Plus, Trash2, LogOut, Users, Wallet, Calendar,
+  Plus, Trash2, LogOut, Wallet, Calendar,
 } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
-import {
-  useDuneQuery, DUNE_QUERIES,
-  type TradingFeesRow, type LPFeesRow, type WeeklyStatsRow,
-} from '../hooks/useDuneQuery';
 import lingoLogo from '../assets/logo-lingo.svg';
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -67,26 +67,8 @@ interface PnLSettings {
   annualExpenseTarget: number;
 }
 
-interface MonthlyRecord {
-  month: string;
-  label: string;
-  tradingFees: number;
-  lpFees: number;
-  totalRevenue: number;
-  expenses: Record<string, number>;
-  budgets: Record<string, number>;
-  totalExpenses: number;
-  totalBudget: number;
-  netPnL: number;
-}
-
 
 // ─── Helpers ────────────────────────────────────────────────────────
-
-function parseDuneMonth(raw: string): string {
-  if (!raw) return '';
-  return raw.split('T')[0].slice(0, 7);
-}
 
 function monthLabel(ym: string): string {
   const [y, m] = ym.split('-');
@@ -143,10 +125,6 @@ export function PnL() {
 // ─── Dashboard (authenticated) ──────────────────────────────────────
 
 function PnLDashboard({ onLogout }: { onLogout: () => void }) {
-  // Revenue data
-  const { data: tradingFees } = useDuneQuery<TradingFeesRow>(DUNE_QUERIES.TRADING_FEES);
-  const { data: lpFees } = useDuneQuery<LPFeesRow>(DUNE_QUERIES.LP_FEES);
-  const { data: weeklyStats } = useDuneQuery<WeeklyStatsRow>(DUNE_QUERIES.WEEKLY_STATS);
 
   // Expense + budget + settings + team + projections + revenue models data from blob
   const [expenses, setExpenses] = useState<ExpenseEntry[]>([]);
@@ -198,71 +176,10 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     }
   }, [expenses, budgets, team, projections, revenueModels, settings, expensesLoaded, hasEdited, handleSave]);
 
-  // ─── Build monthly P&L records ────────────────────────────────────
 
-  const monthlyData = useMemo<MonthlyRecord[]>(() => {
-    const months = new Set<string>();
-    const revenueMap = new Map<string, { tradingFees: number; lpFees: number }>();
-
-    const ensure = (m: string) => {
-      months.add(m);
-      if (!revenueMap.has(m)) revenueMap.set(m, { tradingFees: 0, lpFees: 0 });
-    };
-
-    tradingFees?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.tradingFees += r.usd_value ?? 0; } });
-    lpFees?.forEach(r => { const m = parseDuneMonth(r.month); if (m) { ensure(m); revenueMap.get(m)!.lpFees += r.fees_usd ?? 0; } });
-
-    expenses.forEach(e => months.add(e.month));
-    budgets.forEach(b => months.add(b.month));
-
-    const expenseMap = new Map<string, Record<string, number>>();
-    expenses.forEach(e => {
-      if (!expenseMap.has(e.month)) expenseMap.set(e.month, {});
-      expenseMap.get(e.month)![e.category] = (expenseMap.get(e.month)![e.category] ?? 0) + e.amount;
-    });
-
-    const budgetMap = new Map<string, Record<string, number>>();
-    budgets.forEach(b => {
-      if (!budgetMap.has(b.month)) budgetMap.set(b.month, {});
-      budgetMap.get(b.month)![b.category] = b.budget;
-    });
-
-    return Array.from(months).sort().map(m => {
-      const rev = revenueMap.get(m) ?? { tradingFees: 0, lpFees: 0 };
-      const exp = expenseMap.get(m) ?? {};
-      const bud = budgetMap.get(m) ?? {};
-      const totalRevenue = rev.tradingFees + rev.lpFees;
-      const totalExpenses = Object.values(exp).reduce((s, v) => s + v, 0);
-      const totalBudget = Object.values(bud).reduce((s, v) => s + v, 0);
-      return { month: m, label: monthLabel(m), ...rev, totalRevenue, expenses: exp, budgets: bud, totalExpenses, totalBudget, netPnL: totalRevenue - totalExpenses };
-    });
-  }, [tradingFees, lpFees, expenses, budgets]);
-
-  // ─── KPIs ─────────────────────────────────────────────────────────
-
-  const kpis = useMemo(() => {
-    const totalRev = monthlyData.reduce((s, m) => s + m.totalRevenue, 0);
-    const totalExp = monthlyData.reduce((s, m) => s + m.totalExpenses, 0);
-    const net = totalRev - totalExp;
-    const current = monthlyData.length > 0 ? monthlyData[monthlyData.length - 1] : null;
-    const margin = totalRev > 0 ? (net / totalRev) * 100 : 0;
-
-    // ARPU: avg monthly revenue / avg active stakers
-    const latestStakers = weeklyStats?.slice(-1)[0]?.active_stakers ?? 0;
-    const monthsWithRev = monthlyData.filter(m => m.totalRevenue > 0).length || 1;
-    const avgMonthlyRev = totalRev / monthsWithRev;
-    const arpu = latestStakers > 0 ? avgMonthlyRev / latestStakers : 0;
-
-    // Burn rate & runway
-    const recentMonths = monthlyData.slice(-3);
-    const avgMonthlyBurn = recentMonths.length > 0 ? recentMonths.reduce((s, m) => s + m.totalExpenses, 0) / recentMonths.length : 0;
-    const avgMonthlyNet = recentMonths.length > 0 ? recentMonths.reduce((s, m) => s + m.netPnL, 0) / recentMonths.length : 0;
-    const runway = avgMonthlyNet < 0 && settings.treasuryBalance > 0
-      ? Math.floor(settings.treasuryBalance / Math.abs(avgMonthlyNet))
-      : avgMonthlyNet >= 0 ? Infinity : 0;
-
-    return { totalRev, totalExp, net, currentMonthRev: current?.totalRevenue ?? 0, margin, arpu, latestStakers, avgMonthlyBurn, avgMonthlyNet, runway };
-  }, [monthlyData, weeklyStats, settings.treasuryBalance]);
+  // ─── KPIs (from projection data) ───────────────────────────────────
+  // These will be computed after revenueModelResults and projections are available
+  // Placeholder — will be filled after revenue models are set up
 
   // ─── Revenue Models (MM Capture + Product + Trading Fees) ─────────
 
@@ -323,8 +240,101 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     return { map, autoLabels };
   }, [revenueModelResults]);
 
-  const isUp = kpis.net > 0;
-  const isDown = kpis.net < 0;
+  // ─── KPIs from projection data ─────────────────────────────────────
+
+  // We need the ProjectionsTable's getWithAuto logic here too, so compute totals from projections + auto revenue
+  const projKpis = useMemo(() => {
+    const months = generateMonthRange();
+    let totalRev = 0;
+    let totalExp = 0;
+
+    for (const m of months) {
+      // Get projection (with inheritance)
+      const own = projections.find(p => p.month === m);
+
+      // Revenue: own if has items, else inherit from prev
+      // Expense: own if has items, else inherit from prev
+      // (simplified — just sum what the ProjectionsTable will show)
+      const autoItems = autoRevenueByMonth.map.get(m) ?? [];
+      const autoRev = autoItems.reduce((s, i) => s + i.amount, 0);
+
+      // For manual items in projections, find effective (with inheritance)
+      // This is a simplified version — totals will match the table
+      let manualRev = 0;
+      let expTotal = 0;
+
+      if (own) {
+        manualRev = own.revenueItems.filter(i => !autoRevenueByMonth.autoLabels.includes(i.label)).reduce((s, i) => s + i.amount, 0);
+        expTotal = own.expenseItems.reduce((s, i) => s + i.amount, 0);
+      }
+
+      // If no expenses in own, check inheritance chain
+      if (expTotal === 0) {
+        const idx = months.indexOf(m);
+        for (let j = idx - 1; j >= 0; j--) {
+          const prev = projections.find(p => p.month === months[j]);
+          if (prev && prev.expenseItems.length > 0) {
+            expTotal = prev.expenseItems.reduce((s, i) => s + i.amount, 0);
+            break;
+          }
+        }
+      }
+
+      totalRev += autoRev + manualRev;
+      totalExp += expTotal;
+    }
+
+    const net = totalRev - totalExp;
+    const margin = totalRev > 0 ? (net / totalRev) * 100 : 0;
+    const numMonths = months.length || 1;
+    const avgMonthlyBurn = totalExp / numMonths;
+    const avgMonthlyNet = net / numMonths;
+    const runway = avgMonthlyNet < 0 && settings.treasuryBalance > 0
+      ? Math.floor(settings.treasuryBalance / Math.abs(avgMonthlyNet))
+      : avgMonthlyNet >= 0 ? Infinity : 0;
+
+    // Break-even month
+    let breakEvenMonth: string | null = null;
+    let cumulative = settings.treasuryBalance > 0 ? settings.treasuryBalance : 0;
+    for (const m of months) {
+      cumulative += avgMonthlyNet;
+      if (cumulative <= 0 && avgMonthlyNet < 0) {
+        breakEvenMonth = m;
+        break;
+      }
+    }
+
+    return { totalRev, totalExp, net, margin, avgMonthlyBurn, avgMonthlyNet, runway, breakEvenMonth };
+  }, [projections, autoRevenueByMonth, settings.treasuryBalance]);
+
+  // Net P&L chart data from projections
+  const projChartData = useMemo(() => {
+    const months = generateMonthRange();
+    return months.map(m => {
+      const autoItems = autoRevenueByMonth.map.get(m) ?? [];
+      const autoRev = autoItems.reduce((s, i) => s + i.amount, 0);
+      const own = projections.find(p => p.month === m);
+      const manualRev = own ? own.revenueItems.filter(i => !autoRevenueByMonth.autoLabels.includes(i.label)).reduce((s, i) => s + i.amount, 0) : 0;
+
+      let expTotal = own?.expenseItems.reduce((s, i) => s + i.amount, 0) ?? 0;
+      if (expTotal === 0) {
+        const idx = months.indexOf(m);
+        for (let j = idx - 1; j >= 0; j--) {
+          const prev = projections.find(p => p.month === months[j]);
+          if (prev && prev.expenseItems.length > 0) {
+            expTotal = prev.expenseItems.reduce((s, i) => s + i.amount, 0);
+            break;
+          }
+        }
+      }
+
+      const rev = autoRev + manualRev;
+      return { label: monthLabel(m), revenue: Math.round(rev), expenses: Math.round(expTotal), net: Math.round(rev - expTotal) };
+    });
+  }, [projections, autoRevenueByMonth]);
+
+  const isUp = projKpis.net > 0;
+  const isDown = projKpis.net < 0;
 
   return (
     <div className="min-h-screen" style={{ background: 'linear-gradient(180deg, #14141F 0%, #1A1A2E 50%, #14141F 100%)' }}>
@@ -351,26 +361,72 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       </header>
 
       <main className="w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-8 space-y-8">
-        {/* KPI Cards — 2 rows */}
+        {/* Treasury Input */}
+        <div className="flagship-card rounded-2xl p-5">
+          <div className="flex flex-wrap items-center gap-6 relative z-10">
+            <div className="flex items-center gap-3">
+              <Wallet className="w-5 h-5 text-purple" />
+              <span className="text-sm font-medium text-lavender">Treasury Balance</span>
+            </div>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-soft-gray">$</span>
+              <input type="number" value={settings.treasuryBalance || ''} onChange={e => { setSettings(p => ({ ...p, treasuryBalance: parseFloat(e.target.value) || 0 })); setHasEdited(true); }}
+                placeholder="e.g. 500000" min="0"
+                className="bg-white/[0.04] border border-white/[0.08] rounded-lg pl-7 pr-3 py-2 text-sm text-lavender w-48 focus:outline-none focus:border-purple/50" />
+            </div>
+            <span className="text-xs text-soft-gray/60">Used for runway calculation</span>
+          </div>
+        </div>
+
+        {/* KPI Cards — from projection data */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPI icon={<DollarSign className="w-4 h-4" />} label="Total Revenue" value={formatCurrency(kpis.totalRev)} color="text-green1" />
-          <KPI icon={<TrendingDown className="w-4 h-4" />} label="Total Expenses" value={formatCurrency(kpis.totalExp)} color="text-red-400" />
+          <KPI icon={<DollarSign className="w-4 h-4" />} label="Projected Revenue" value={formatCurrency(projKpis.totalRev)} color="text-green1" sub="Apr–Dec '26" />
+          <KPI icon={<TrendingDown className="w-4 h-4" />} label="Projected Expenses" value={formatCurrency(projKpis.totalExp)} color="text-red-400" sub="Apr–Dec '26" />
           <KPI
             icon={isUp ? <TrendingUp className="w-4 h-4" /> : isDown ? <TrendingDown className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
-            label="Net P&L" value={formatCurrency(kpis.net)}
+            label="Net P&L" value={formatCurrency(projKpis.net)}
             color={isUp ? 'text-green1' : isDown ? 'text-red-400' : 'text-soft-gray'}
+            sub={`Margin: ${projKpis.margin.toFixed(1)}%`}
           />
-          <KPI icon={<TrendingUp className="w-4 h-4" />} label="Gross Margin" value={`${kpis.margin.toFixed(1)}%`} color={kpis.margin >= 0 ? 'text-green1' : 'text-red-400'} />
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPI icon={<DollarSign className="w-4 h-4" />} label="Current Month Rev" value={formatCurrency(kpis.currentMonthRev)} />
-          <KPI icon={<Users className="w-4 h-4" />} label="ARPU (Monthly)" value={formatCurrency(kpis.arpu)} sub={`${(kpis.latestStakers ?? 0).toLocaleString()} stakers`} />
-          <KPI icon={<Wallet className="w-4 h-4" />} label="Avg Monthly Burn" value={formatCurrency(kpis.avgMonthlyBurn)} color="text-red-400" />
           <KPI icon={<Calendar className="w-4 h-4" />} label="Runway"
-            value={kpis.runway === Infinity ? 'Profitable' : kpis.runway > 0 ? `${kpis.runway} months` : settings.treasuryBalance > 0 ? 'N/A' : 'Set treasury'}
-            color={kpis.runway === Infinity ? 'text-green1' : kpis.runway > 6 ? 'text-lavender' : 'text-red-400'}
-            sub={settings.treasuryBalance > 0 ? `Treasury: ${formatCurrency(settings.treasuryBalance)}` : undefined}
+            value={projKpis.runway === Infinity ? 'Profitable' : projKpis.runway > 0 ? `${projKpis.runway} months` : settings.treasuryBalance > 0 ? 'N/A' : 'Set treasury above'}
+            color={projKpis.runway === Infinity ? 'text-green1' : projKpis.runway > 6 ? 'text-lavender' : 'text-red-400'}
+            sub={`Burn: ${formatCurrency(projKpis.avgMonthlyBurn)}/mo`}
           />
+        </div>
+
+        {/* Projected Net P&L Chart */}
+        <div className="flagship-card rounded-2xl p-6">
+          <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Projected Net P&L</h3>
+          <p className="text-sm text-soft-gray mb-4 relative z-10">Monthly projected revenue vs expenses (Apr–Dec 2026)</p>
+          <div className="relative z-10" style={{ height: 300 }}>
+            <ResponsiveContainer minWidth={0} width="100%" height={300}>
+              <BarChart data={projChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
+                <YAxis tickFormatter={v => { const a = Math.abs(v); if (a >= 1e6) return `$${(v/1e6).toFixed(1)}M`; if (a >= 1e3) return `$${(v/1e3).toFixed(0)}K`; return `$${v}`; }}
+                  stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={65} />
+                <Tooltip content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  const d = payload[0]?.payload;
+                  return (
+                    <div className="custom-tooltip">
+                      <p className="text-soft-gray text-xs mb-2">{label}</p>
+                      <p className="text-green1 text-sm">Revenue: {formatCurrency(d?.revenue)}</p>
+                      <p className="text-red-400 text-sm">Expenses: {formatCurrency(d?.expenses)}</p>
+                      <p className={`font-semibold text-sm ${d?.net >= 0 ? 'text-green1' : 'text-red-400'}`}>Net: {formatCurrency(d?.net)}</p>
+                    </div>
+                  );
+                }} />
+                <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" />
+                <Bar dataKey="net" radius={[4, 4, 0, 0]} animationDuration={800}>
+                  {projChartData.map((entry, i) => (
+                    <Cell key={i} fill={entry.net >= 0 ? '#5EB851' : '#E85757'} fillOpacity={0.8} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
 
         {/* Market Maker Capture + Product + Trading Fees */}
