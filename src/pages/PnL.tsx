@@ -759,34 +759,69 @@ function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: 
                                 <Plus className="w-3 h-3" />Add
                               </button>
                             </div>
-                            {proj.revenueItems.length === 0 && (
-                              <p className="text-xs text-soft-gray/40 py-2">No revenue items — click Add</p>
-                            )}
-                            {proj.revenueItems.map((item, idx) => (
-                              <div key={idx} className="flex items-center gap-2 mb-2">
-                                <input
-                                  type="text" value={item.label}
-                                  onChange={e => updateLineItem(m.month, 'revenue', idx, 'label', e.target.value)}
-                                  placeholder="e.g. Trading Fees"
-                                  className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-xs text-lavender focus:outline-none focus:border-green1/50"
-                                  onClick={e => e.stopPropagation()}
-                                />
-                                <div className="relative">
-                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-soft-gray">$</span>
-                                  <input
-                                    type="number" value={item.amount || ''}
-                                    onChange={e => updateLineItem(m.month, 'revenue', idx, 'amount', e.target.value)}
-                                    placeholder="0"
-                                    className="w-28 bg-white/[0.04] border border-white/[0.08] rounded-lg pl-5 pr-2 py-1.5 text-xs text-lavender text-right focus:outline-none focus:border-green1/50"
-                                    onClick={e => e.stopPropagation()}
-                                  />
-                                </div>
-                                <button onClick={(e) => { e.stopPropagation(); removeLineItem(m.month, 'revenue', idx); }}
-                                  className="text-soft-gray/30 hover:text-red-400 transition-colors">
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
+                            {/* Auto items from Market Maker Capture — static, not editable */}
+                            {(() => {
+                              const autoItems = autoRevenue.map.get(m.month) ?? [];
+                              const manualItems = proj.revenueItems.filter(i => !autoRevenue.autoLabels.includes(i.label));
+                              return (
+                                <>
+                                  {autoItems.map((item, idx) => (
+                                    <div key={`auto-${idx}`} className="flex items-center gap-2 mb-2 opacity-70">
+                                      <div className="flex-1 bg-white/[0.02] border border-white/[0.05] rounded-lg px-3 py-1.5 text-xs text-soft-gray">
+                                        {item.label} <span className="text-[10px] italic text-soft-gray/40 ml-1">from MM Capture</span>
+                                      </div>
+                                      <div className="w-28 bg-white/[0.02] border border-white/[0.05] rounded-lg px-2 py-1.5 text-xs text-green1 text-right">
+                                        {formatCurrency(item.amount)}
+                                      </div>
+                                      <div className="w-3" /> {/* spacer for alignment */}
+                                    </div>
+                                  ))}
+                                  {/* Manual items — editable */}
+                                  {manualItems.map((item, idx) => (
+                                    <div key={`manual-${idx}`} className="flex items-center gap-2 mb-2">
+                                      <input
+                                        type="text" value={item.label}
+                                        onChange={e => {
+                                          const base = getEffective(m.month);
+                                          const manuals = base.revenueItems.filter(i => !autoRevenue.autoLabels.includes(i.label));
+                                          manuals[idx] = { ...manuals[idx], label: e.target.value };
+                                          updateProjection(m.month, { ...base, month: m.month, revenueItems: [...base.revenueItems.filter(i => autoRevenue.autoLabels.includes(i.label)), ...manuals] });
+                                        }}
+                                        placeholder="e.g. Other Revenue"
+                                        className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-xs text-lavender focus:outline-none focus:border-green1/50"
+                                        onClick={e => e.stopPropagation()}
+                                      />
+                                      <div className="relative">
+                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-soft-gray">$</span>
+                                        <input
+                                          type="number" value={item.amount || ''}
+                                          onChange={e => {
+                                            const base = getEffective(m.month);
+                                            const manuals = base.revenueItems.filter(i => !autoRevenue.autoLabels.includes(i.label));
+                                            manuals[idx] = { ...manuals[idx], amount: parseFloat(e.target.value) || 0 };
+                                            updateProjection(m.month, { ...base, month: m.month, revenueItems: [...base.revenueItems.filter(i => autoRevenue.autoLabels.includes(i.label)), ...manuals] });
+                                          }}
+                                          placeholder="0"
+                                          className="w-28 bg-white/[0.04] border border-white/[0.08] rounded-lg pl-5 pr-2 py-1.5 text-xs text-lavender text-right focus:outline-none focus:border-green1/50"
+                                          onClick={e => e.stopPropagation()}
+                                        />
+                                      </div>
+                                      <button onClick={(ev) => {
+                                        ev.stopPropagation();
+                                        const base = getEffective(m.month);
+                                        const manuals = base.revenueItems.filter(i => !autoRevenue.autoLabels.includes(i.label)).filter((_, i) => i !== idx);
+                                        updateProjection(m.month, { ...base, month: m.month, revenueItems: [...base.revenueItems.filter(i => autoRevenue.autoLabels.includes(i.label)), ...manuals] });
+                                      }} className="text-soft-gray/30 hover:text-red-400 transition-colors">
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                  {autoItems.length === 0 && manualItems.length === 0 && (
+                                    <p className="text-xs text-soft-gray/40 py-2">No revenue items — click Add</p>
+                                  )}
+                                </>
+                              );
+                            })()}
                             {proj.revenueItems.length > 0 && (
                               <div className="flex justify-end mt-2 pt-2 border-t border-white/5">
                                 <span className="text-xs text-green1 font-medium">Total: {formatCurrency(proj.revenueItems.reduce((s, i) => s + i.amount, 0))}</span>
