@@ -80,14 +80,49 @@ function monthLabel(ym: string): string {
 
 export function PnL() {
   const [password, setPassword] = useState(() => sessionStorage.getItem(SESSION_KEY) || '');
-  const [isAuthenticated, setIsAuthenticated] = useState(() => !!sessionStorage.getItem(SESSION_KEY));
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password.trim()) {
-      sessionStorage.setItem(SESSION_KEY, password.trim());
-      setIsAuthenticated(true);
+  // Auto-login if session has a stored password — verify it
+  useEffect(() => {
+    const stored = sessionStorage.getItem(SESSION_KEY);
+    if (stored) {
+      fetch(`${API_BASE}/api/save-pnl-expenses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Password': stored },
+        body: JSON.stringify({ expenses: [] }),
+      }).then(res => {
+        if (res.ok) setIsAuthenticated(true);
+        else sessionStorage.removeItem(SESSION_KEY);
+      }).catch(() => {
+        // Offline or error — allow access with stored password
+        setIsAuthenticated(true);
+      });
     }
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!password.trim()) return;
+    setLoggingIn(true);
+    setLoginError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/save-pnl-expenses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password.trim() },
+        body: JSON.stringify({ expenses: [] }),
+      });
+      if (res.ok) {
+        sessionStorage.setItem(SESSION_KEY, password.trim());
+        setIsAuthenticated(true);
+      } else {
+        setLoginError('Wrong password');
+      }
+    } catch {
+      setLoginError('Network error');
+    }
+    setLoggingIn(false);
   };
 
   const handleLogout = () => {
@@ -108,10 +143,11 @@ export function PnL() {
             </div>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
-              className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-lavender placeholder-soft-gray/50 focus:outline-none focus:border-purple/50" autoFocus />
-            <button type="submit" className="w-full bg-purple/20 hover:bg-purple/30 text-lavender font-medium py-3 rounded-xl transition-colors border border-purple/30">
-              <div className="flex items-center justify-center gap-2"><Lock className="w-4 h-4" />Sign In</div>
+            <input type="password" value={password} onChange={e => { setPassword(e.target.value); setLoginError(''); }} placeholder="Password"
+              className={`w-full bg-white/[0.04] border rounded-xl px-4 py-3 text-sm text-lavender placeholder-soft-gray/50 focus:outline-none ${loginError ? 'border-red-400/50' : 'border-white/[0.08] focus:border-purple/50'}`} autoFocus />
+            {loginError && <p className="text-xs text-red-400">{loginError}</p>}
+            <button type="submit" disabled={loggingIn} className="w-full bg-purple/20 hover:bg-purple/30 text-lavender font-medium py-3 rounded-xl transition-colors border border-purple/30 disabled:opacity-50">
+              <div className="flex items-center justify-center gap-2"><Lock className="w-4 h-4" />{loggingIn ? 'Verifying...' : 'Sign In'}</div>
             </button>
           </form>
         </div>
