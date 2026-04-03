@@ -299,9 +299,10 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     const numMonths = months.length || 1;
     const avgMonthlyBurn = totalExp / numMonths;
     const avgMonthlyNet = net / numMonths;
-    const runway = avgMonthlyNet < 0 && settings.treasuryBalance > 0
-      ? Math.floor(settings.treasuryBalance / Math.abs(avgMonthlyNet))
-      : avgMonthlyNet >= 0 ? Infinity : 0;
+    // Runway = treasury / monthly burn (how long treasury lasts covering expenses alone)
+    const runway = avgMonthlyBurn > 0 && settings.treasuryBalance > 0
+      ? Math.round((settings.treasuryBalance / avgMonthlyBurn) * 10) / 10
+      : 0;
 
     // Break-even month
     let breakEvenMonth: string | null = null;
@@ -403,8 +404,8 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
             sub={`Margin: ${projKpis.margin.toFixed(1)}%`}
           />
           <KPI icon={<Calendar className="w-4 h-4" />} label="Runway"
-            value={projKpis.runway === Infinity ? 'Profitable' : projKpis.runway > 0 ? `${projKpis.runway} months` : settings.treasuryBalance > 0 ? 'N/A' : 'Set treasury above'}
-            color={projKpis.runway === Infinity ? 'text-green1' : projKpis.runway > 6 ? 'text-lavender' : 'text-red-400'}
+            value={projKpis.runway > 0 ? `${projKpis.runway} months` : settings.treasuryBalance > 0 ? 'No expenses' : 'Set treasury above'}
+            color={projKpis.runway > 24 ? 'text-green1' : projKpis.runway > 6 ? 'text-lavender' : projKpis.runway > 0 ? 'text-red-400' : 'text-soft-gray'}
             sub={`Burn: ${formatCurrency(projKpis.avgMonthlyBurn)}/mo`}
           />
         </div>
