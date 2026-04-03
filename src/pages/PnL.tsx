@@ -62,10 +62,29 @@ interface MonthProjection {
   expenseItems: ProjectionLineItem[];
 }
 
+interface ScenarioAssumptions {
+  monthlyBuyPressure: number;   // $ buy volume per month
+  feeCaptureRate: number;       // % of buy pressure captured as fees (e.g. 1.5)
+  monthlySellAmount: number;    // LINGO tokens sold per month
+  lingoPrice: number;           // assumed $ per LINGO
+  lpFeesMonthly: number;        // estimated LP fees per month
+  growthRatePct: number;        // month-over-month growth % on buy pressure
+}
+
+const DEFAULT_ASSUMPTIONS: ScenarioAssumptions = {
+  monthlyBuyPressure: 150000,
+  feeCaptureRate: 1.5,
+  monthlySellAmount: 30000,
+  lingoPrice: 0.008,
+  lpFeesMonthly: 2000,
+  growthRatePct: 5,
+};
+
 interface PnLSettings {
   treasuryBalance: number;
   annualRevenueTarget: number;
   annualExpenseTarget: number;
+  assumptions?: ScenarioAssumptions;
 }
 
 interface MonthlyRecord {
@@ -453,6 +472,47 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       }));
   }, [monthlyData]);
 
+  // ─── Scenario Assumptions ─────────────────────────────────────────
+
+  const assumptions = settings.assumptions ?? DEFAULT_ASSUMPTIONS;
+
+  const setAssumption = <K extends keyof ScenarioAssumptions>(key: K, value: ScenarioAssumptions[K]) => {
+    setSettings(prev => ({
+      ...prev,
+      assumptions: { ...(prev.assumptions ?? DEFAULT_ASSUMPTIONS), [key]: value },
+    }));
+    setHasEdited(true);
+  };
+
+  const scenarioData = useMemo(() => {
+    const months = generateMonthRange();
+    return months.map((m, i) => {
+      const growthMultiplier = Math.pow(1 + assumptions.growthRatePct / 100, i);
+      const buyPressure = assumptions.monthlyBuyPressure * growthMultiplier;
+      const tradingFeeRevenue = buyPressure * (assumptions.feeCaptureRate / 100);
+      const sellRevenue = assumptions.monthlySellAmount * assumptions.lingoPrice;
+      const lpFees = assumptions.lpFeesMonthly * growthMultiplier;
+      const totalRevenue = tradingFeeRevenue + sellRevenue + lpFees;
+
+      return {
+        month: m,
+        label: monthLabel(m),
+        buyPressure: Math.round(buyPressure),
+        tradingFees: Math.round(tradingFeeRevenue),
+        sellRevenue: Math.round(sellRevenue),
+        lpFees: Math.round(lpFees),
+        totalRevenue: Math.round(totalRevenue),
+      };
+    });
+  }, [assumptions]);
+
+  const scenarioTotals = useMemo(() => ({
+    totalRevenue: scenarioData.reduce((s, m) => s + m.totalRevenue, 0),
+    totalTradingFees: scenarioData.reduce((s, m) => s + m.tradingFees, 0),
+    totalSellRevenue: scenarioData.reduce((s, m) => s + m.sellRevenue, 0),
+    totalLpFees: scenarioData.reduce((s, m) => s + m.lpFees, 0),
+  }), [scenarioData]);
+
   // Chart data
   const netTrendData = useMemo(() => monthlyData.map(m => ({ label: m.label, net: Math.round(m.netPnL) })), [monthlyData]);
   const revenueChartData = useMemo(() => monthlyData.map(m => ({ label: m.label, tradingFees: Math.round(m.tradingFees), lpFees: Math.round(m.lpFees) })), [monthlyData]);
@@ -508,6 +568,135 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
             color={kpis.runway === Infinity ? 'text-green1' : kpis.runway > 6 ? 'text-lavender' : 'text-red-400'}
             sub={settings.treasuryBalance > 0 ? `Treasury: ${formatCurrency(settings.treasuryBalance)}` : undefined}
           />
+        </div>
+
+        {/* Scenario Assumptions */}
+        <div className="flagship-card rounded-2xl p-6">
+          <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Scenario Assumptions</h3>
+          <p className="text-sm text-soft-gray mb-5 relative z-10">
+            Adjust the assumptions below — the projected revenue chart and table update in real time.
+            Growth compounds month-over-month on buy pressure and LP fees.
+          </p>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6 relative z-10">
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">Monthly Buy Pressure ($)</label>
+              <input type="number" value={assumptions.monthlyBuyPressure || ''} onChange={e => setAssumption('monthlyBuyPressure', parseFloat(e.target.value) || 0)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
+            </div>
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">Fee Capture Rate (%)</label>
+              <input type="number" value={assumptions.feeCaptureRate || ''} step="0.1" onChange={e => setAssumption('feeCaptureRate', parseFloat(e.target.value) || 0)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
+            </div>
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">Monthly LINGO Sold</label>
+              <input type="number" value={assumptions.monthlySellAmount || ''} onChange={e => setAssumption('monthlySellAmount', parseFloat(e.target.value) || 0)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
+            </div>
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">LINGO Price ($)</label>
+              <input type="number" value={assumptions.lingoPrice || ''} step="0.001" onChange={e => setAssumption('lingoPrice', parseFloat(e.target.value) || 0)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
+            </div>
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">LP Fees / Month ($)</label>
+              <input type="number" value={assumptions.lpFeesMonthly || ''} onChange={e => setAssumption('lpFeesMonthly', parseFloat(e.target.value) || 0)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
+            </div>
+            <div>
+              <label className="text-xs text-soft-gray block mb-1">MoM Growth (%)</label>
+              <input type="number" value={assumptions.growthRatePct || ''} step="0.5" onChange={e => setAssumption('growthRatePct', parseFloat(e.target.value) || 0)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender focus:outline-none focus:border-purple/50" />
+            </div>
+          </div>
+
+          {/* Scenario KPIs */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6 relative z-10">
+            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
+              <span className="text-xs text-soft-gray">Projected Total Revenue</span>
+              <div className="text-lg font-bold text-green1 mt-0.5">{formatCurrency(scenarioTotals.totalRevenue)}</div>
+              <span className="text-[10px] text-soft-gray/50">remaining months</span>
+            </div>
+            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
+              <span className="text-xs text-soft-gray">From Trading Fees</span>
+              <div className="text-lg font-bold text-lavender mt-0.5">{formatCurrency(scenarioTotals.totalTradingFees)}</div>
+            </div>
+            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
+              <span className="text-xs text-soft-gray">From Token Sales</span>
+              <div className="text-lg font-bold text-lavender mt-0.5">{formatCurrency(scenarioTotals.totalSellRevenue)}</div>
+            </div>
+            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center">
+              <span className="text-xs text-soft-gray">From LP Fees</span>
+              <div className="text-lg font-bold text-lavender mt-0.5">{formatCurrency(scenarioTotals.totalLpFees)}</div>
+            </div>
+          </div>
+
+          {/* Scenario Chart */}
+          <div className="relative z-10" style={{ height: 300 }}>
+            <ResponsiveContainer minWidth={0} width="100%" height={300}>
+              <BarChart data={scenarioData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
+                <YAxis tickFormatter={fmtUsd} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={65} />
+                <Tooltip content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  return (
+                    <div className="custom-tooltip">
+                      <p className="text-soft-gray text-xs mb-2">{label}</p>
+                      {payload.map((e, i) => (
+                        <div key={i} className="flex items-center gap-2 mb-1">
+                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: e.color }} />
+                          <span className="text-soft-gray text-sm">{e.name}:</span>
+                          <span className="text-lavender font-medium">{formatCurrency(e.value as number)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }} />
+                <Legend wrapperStyle={{ paddingTop: 10 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
+                <Bar dataKey="tradingFees" name="Trading Fees" stackId="rev" fill="#5EB851" />
+                <Bar dataKey="sellRevenue" name="Token Sales" stackId="rev" fill="#E8B100" />
+                <Bar dataKey="lpFees" name="LP Fees" stackId="rev" fill="#7B68AE" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Scenario Table */}
+          <div className="overflow-x-auto mt-4 relative z-10">
+            <table className="w-full text-sm">
+              <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
+                <tr className="border-b border-white/5">
+                  <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">Month</th>
+                  <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">Buy Pressure</th>
+                  <th className="text-right text-xs font-medium text-green1/80 uppercase tracking-wider py-3 px-4">Trading Fees</th>
+                  <th className="text-right text-xs font-medium text-[#E8B100]/80 uppercase tracking-wider py-3 px-4">Token Sales</th>
+                  <th className="text-right text-xs font-medium text-purple/80 uppercase tracking-wider py-3 px-4">LP Fees</th>
+                  <th className="text-right text-xs font-medium text-lavender uppercase tracking-wider py-3 px-4 border-l border-white/5">Total Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scenarioData.map(m => (
+                  <tr key={m.month} className="border-b border-white/5 hover:bg-white/[0.02]">
+                    <td className="py-2.5 px-4 text-lavender font-medium">{m.label}</td>
+                    <td className="py-2.5 px-4 text-right text-soft-gray">{formatCurrency(m.buyPressure)}</td>
+                    <td className="py-2.5 px-4 text-right text-green1">{formatCurrency(m.tradingFees)}</td>
+                    <td className="py-2.5 px-4 text-right text-[#E8B100]">{formatCurrency(m.sellRevenue)}</td>
+                    <td className="py-2.5 px-4 text-right text-purple">{formatCurrency(m.lpFees)}</td>
+                    <td className="py-2.5 px-4 text-right text-lavender font-medium border-l border-white/5">{formatCurrency(m.totalRevenue)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-white/10 bg-white/[0.02]">
+                  <td className="py-2.5 px-4 text-lavender font-bold">Total</td>
+                  <td className="py-2.5 px-4 text-right text-soft-gray font-bold">{formatCurrency(scenarioData.reduce((s, m) => s + m.buyPressure, 0))}</td>
+                  <td className="py-2.5 px-4 text-right text-green1 font-bold">{formatCurrency(scenarioTotals.totalTradingFees)}</td>
+                  <td className="py-2.5 px-4 text-right text-[#E8B100] font-bold">{formatCurrency(scenarioTotals.totalSellRevenue)}</td>
+                  <td className="py-2.5 px-4 text-right text-purple font-bold">{formatCurrency(scenarioTotals.totalLpFees)}</td>
+                  <td className="py-2.5 px-4 text-right text-lavender font-bold border-l border-white/5">{formatCurrency(scenarioTotals.totalRevenue)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Interactive Monthly Projections */}
