@@ -403,42 +403,19 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     });
   }, [revenueModelMonths, getRevenueModel]);
 
-  // Auto-inject revenue model results into projections as revenue items
-  // This creates/updates items labeled "MM Capture", "Product Revenue", "Trading Fees" in each month
-  useEffect(() => {
-    if (!expensesLoaded) return;
+  // Build auto-generated revenue items from revenue models (NOT stored in projections — keeps inheritance clean)
+  const autoRevenueByMonth = useMemo(() => {
     const autoLabels = ['MM Capture', 'Product Revenue', 'Trading Fees'];
-
-    setProjections(prev => {
-      let changed = false;
-      const updated = [...prev];
-
-      for (const result of revenueModelResults) {
-        if (result.mmCapture === 0 && result.productRev === 0 && result.tradingFeeRev === 0) continue;
-
-        const idx = updated.findIndex(p => p.month === result.month);
-        const proj = idx >= 0 ? { ...updated[idx] } : { month: result.month, revenueItems: [], expenseItems: [] };
-
-        // Remove old auto-generated items, keep manually added ones
-        const manualItems = proj.revenueItems.filter(i => !autoLabels.includes(i.label));
-        const autoItems: ProjectionLineItem[] = [];
-        if (result.mmCapture > 0) autoItems.push({ label: 'MM Capture', amount: Math.round(result.mmCapture) });
-        if (result.productRev > 0) autoItems.push({ label: 'Product Revenue', amount: Math.round(result.productRev) });
-        if (result.tradingFeeRev > 0) autoItems.push({ label: 'Trading Fees', amount: Math.round(result.tradingFeeRev) });
-
-        proj.revenueItems = [...autoItems, ...manualItems];
-
-        if (idx >= 0) {
-          updated[idx] = proj;
-        } else if (autoItems.length > 0) {
-          updated.push(proj);
-        }
-        changed = true;
-      }
-
-      return changed ? updated : prev;
-    });
-  }, [revenueModelResults, expensesLoaded]);
+    const map = new Map<string, ProjectionLineItem[]>();
+    for (const result of revenueModelResults) {
+      const items: ProjectionLineItem[] = [];
+      if (result.mmCapture > 0) items.push({ label: 'MM Capture', amount: Math.round(result.mmCapture) });
+      if (result.productRev > 0) items.push({ label: 'Product Revenue', amount: Math.round(result.productRev) });
+      if (result.tradingFeeRev > 0) items.push({ label: 'Trading Fees', amount: Math.round(result.tradingFeeRev) });
+      if (items.length > 0) map.set(result.month, items);
+    }
+    return { map, autoLabels };
+  }, [revenueModelResults]);
 
   // Chart data
   const netTrendData = useMemo(() => monthlyData.map(m => ({ label: m.label, net: Math.round(m.netPnL) })), [monthlyData]);
@@ -589,7 +566,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
         </div>
 
         {/* Interactive Monthly Projections */}
-        <ProjectionsTable projections={projections} setProjections={setProjections} onEdit={() => setHasEdited(true)} />
+        <ProjectionsTable projections={projections} setProjections={setProjections} onEdit={() => setHasEdited(true)} autoRevenue={autoRevenueByMonth} />
 
         {/* Annual Projection */}
         <div className="flagship-card rounded-2xl p-6">
@@ -847,7 +824,8 @@ function KPI({ icon, label, value, color, sub }: { icon: React.ReactNode; label:
 interface ProjectionsTableProps {
   projections: MonthProjection[];
   setProjections: React.Dispatch<React.SetStateAction<MonthProjection[]>>;
-  onEdit: () => void; // trigger auto-save
+  onEdit: () => void;
+  autoRevenue: { map: Map<string, ProjectionLineItem[]>; autoLabels: string[] };
 }
 
 function generateMonthRange(): string[] {
@@ -859,7 +837,7 @@ function generateMonthRange(): string[] {
   return months;
 }
 
-function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTableProps) {
+function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: ProjectionsTableProps) {
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
   const months = useMemo(generateMonthRange, []);
 
@@ -901,6 +879,16 @@ function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTa
       return inherited;
     };
   }, [projections, months]);
+
+  // Merge auto-revenue items on top of effective projection (for display only, not stored)
+  const getWithAuto = (month: string): MonthProjection => {
+    const base = getEffective(month);
+    const autoItems = autoRevenue.map.get(month) ?? [];
+    if (autoItems.length === 0) return base;
+    // Filter out any manually-added items with auto-labels, then prepend auto items
+    const manualRevenue = base.revenueItems.filter(i => !autoRevenue.autoLabels.includes(i.label));
+    return { ...base, revenueItems: [...autoItems, ...manualRevenue] };
+  };
 
   // When user edits a month, save it as explicit data (breaking inheritance for this month)
   const updateProjection = (month: string, updated: MonthProjection) => {
@@ -946,9 +934,9 @@ function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTa
     updateProjection(month, proj);
   };
 
-  // Calculate totals for the summary row
+  // Calculate totals for the summary row (use getWithAuto for display)
   const monthTotals = months.map(m => {
-    const proj = getEffective(m);
+    const proj = getWithAuto(m);
     const rev = proj.revenueItems.reduce((s, i) => s + i.amount, 0);
     const exp = proj.expenseItems.reduce((s, i) => s + i.amount, 0);
     return { month: m, label: monthLabel(m), revenue: rev, expenses: exp, net: rev - exp, isOwn: hasOwnData(m) };
@@ -983,7 +971,7 @@ function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTa
           <tbody>
             {monthTotals.map(m => {
               const isExpanded = expandedMonth === m.month;
-              const proj = getEffective(m.month);
+              const proj = getWithAuto(m.month);
               const hasData = proj.revenueItems.length > 0 || proj.expenseItems.length > 0;
               const isInherited = !m.isOwn && hasData;
 
