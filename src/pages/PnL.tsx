@@ -1019,10 +1019,46 @@ function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTa
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
   const months = useMemo(generateMonthRange, []);
 
-  const getProjection = (month: string): MonthProjection => {
-    return projections.find(p => p.month === month) ?? { month, revenueItems: [], expenseItems: [] };
+  // Check if a month has its own saved data (was explicitly edited)
+  const hasOwnData = (month: string): boolean => {
+    return projections.some(p => p.month === month);
   };
 
+  // Get effective projection: own data if exists, otherwise inherit from previous month
+  const getEffective = useMemo(() => {
+    const cache = new Map<string, MonthProjection>();
+
+    return (month: string): MonthProjection => {
+      if (cache.has(month)) return cache.get(month)!;
+
+      // If this month has explicit data, use it
+      const own = projections.find(p => p.month === month);
+      if (own) {
+        cache.set(month, own);
+        return own;
+      }
+
+      // Otherwise, inherit from the previous month in the range
+      const idx = months.indexOf(month);
+      if (idx <= 0) {
+        const empty = { month, revenueItems: [], expenseItems: [] };
+        cache.set(month, empty);
+        return empty;
+      }
+
+      // Deep-clone previous month's data with this month's key
+      const prev = getEffective(months[idx - 1]);
+      const inherited: MonthProjection = {
+        month,
+        revenueItems: prev.revenueItems.map(i => ({ ...i })),
+        expenseItems: prev.expenseItems.map(i => ({ ...i })),
+      };
+      cache.set(month, inherited);
+      return inherited;
+    };
+  }, [projections, months]);
+
+  // When user edits a month, save it as explicit data (breaking inheritance for this month)
   const updateProjection = (month: string, updated: MonthProjection) => {
     setProjections(prev => {
       const filtered = prev.filter(p => p.month !== month);
@@ -1031,41 +1067,47 @@ function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTa
     onEdit();
   };
 
+  // Reset a month to inherit from previous (remove its explicit data)
+  const resetToInherited = (month: string) => {
+    setProjections(prev => prev.filter(p => p.month !== month));
+    onEdit();
+  };
+
   const addLineItem = (month: string, type: 'revenue' | 'expense') => {
-    const proj = getProjection(month);
+    const proj = { ...getEffective(month), month };
     if (type === 'revenue') {
       proj.revenueItems = [...proj.revenueItems, { label: '', amount: 0 }];
     } else {
       proj.expenseItems = [...proj.expenseItems, { label: '', amount: 0 }];
     }
-    updateProjection(month, { ...proj });
+    updateProjection(month, proj);
   };
 
   const removeLineItem = (month: string, type: 'revenue' | 'expense', index: number) => {
-    const proj = getProjection(month);
+    const proj = { ...getEffective(month), month };
     if (type === 'revenue') {
       proj.revenueItems = proj.revenueItems.filter((_, i) => i !== index);
     } else {
       proj.expenseItems = proj.expenseItems.filter((_, i) => i !== index);
     }
-    updateProjection(month, { ...proj });
+    updateProjection(month, proj);
   };
 
   const updateLineItem = (month: string, type: 'revenue' | 'expense', index: number, field: 'label' | 'amount', value: string) => {
-    const proj = getProjection(month);
+    const proj = { ...getEffective(month), month };
     const items = type === 'revenue' ? [...proj.revenueItems] : [...proj.expenseItems];
     items[index] = { ...items[index], [field]: field === 'amount' ? (parseFloat(value) || 0) : value };
     if (type === 'revenue') proj.revenueItems = items;
     else proj.expenseItems = items;
-    updateProjection(month, { ...proj });
+    updateProjection(month, proj);
   };
 
   // Calculate totals for the summary row
   const monthTotals = months.map(m => {
-    const proj = getProjection(m);
+    const proj = getEffective(m);
     const rev = proj.revenueItems.reduce((s, i) => s + i.amount, 0);
     const exp = proj.expenseItems.reduce((s, i) => s + i.amount, 0);
-    return { month: m, label: monthLabel(m), revenue: rev, expenses: exp, net: rev - exp };
+    return { month: m, label: monthLabel(m), revenue: rev, expenses: exp, net: rev - exp, isOwn: hasOwnData(m) };
   });
 
   const grandTotal = {
@@ -1097,8 +1139,9 @@ function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTa
           <tbody>
             {monthTotals.map(m => {
               const isExpanded = expandedMonth === m.month;
-              const proj = getProjection(m.month);
+              const proj = getEffective(m.month);
               const hasData = proj.revenueItems.length > 0 || proj.expenseItems.length > 0;
+              const isInherited = !m.isOwn && hasData;
 
               return (
                 <Fragment key={m.month}>
@@ -1111,7 +1154,8 @@ function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTa
                       <div className="flex items-center gap-2">
                         <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
                         <span className="text-lavender font-medium">{m.label}</span>
-                        {hasData && <span className="w-1.5 h-1.5 rounded-full bg-purple" />}
+                        {m.isOwn && <span className="w-1.5 h-1.5 rounded-full bg-purple" title="Customized" />}
+                        {isInherited && <span className="text-[10px] text-soft-gray/40 italic" title="Inherited from previous month">inherited</span>}
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right text-green1 font-medium">{m.revenue > 0 ? formatCurrency(m.revenue) : <span className="text-soft-gray/30">—</span>}</td>
@@ -1125,6 +1169,22 @@ function ProjectionsTable({ projections, setProjections, onEdit }: ProjectionsTa
                   {isExpanded && (
                     <tr>
                       <td colSpan={4} className="bg-white/[0.02] border-b border-white/5 px-6 py-4">
+                        {/* Inherited banner + reset */}
+                        {isInherited && (
+                          <p className="text-xs text-soft-gray/50 mb-3 italic">
+                            This month inherits from the previous month. Edit anything below to customize it.
+                          </p>
+                        )}
+                        {m.isOwn && months.indexOf(m.month) > 0 && (
+                          <div className="flex justify-end mb-3">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); resetToInherited(m.month); }}
+                              className="text-xs text-soft-gray/50 hover:text-purple transition-colors underline"
+                            >
+                              Reset to inherit from previous month
+                            </button>
+                          </div>
+                        )}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           {/* Revenue items */}
                           <div>
