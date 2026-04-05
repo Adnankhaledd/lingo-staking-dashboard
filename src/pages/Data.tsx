@@ -112,6 +112,7 @@ function DataDashboard({ onLogout }: { onLogout: () => void }) {
   const { data: buyPressureData, isLoading } = useDuneQuery<BuyPressureRow>(DUNE_QUERIES.BUY_PRESSURE);
   const { data: cardsPressureData, isLoading: cardsLoading } = useDuneQuery<CardsBuyPressureRow>(DUNE_QUERIES.CARDS_BUY_PRESSURE);
   const { data: funPressureData, isLoading: funLoading } = useDuneQuery<CardsBuyPressureRow>(DUNE_QUERIES.FUN_BUY_PRESSURE);
+  const { data: penguPressureData, isLoading: penguLoading } = useDuneQuery<CardsBuyPressureRow>(DUNE_QUERIES.PENGU_BUY_PRESSURE);
 
   // Aggregate weekly buy volume into monthly
   const monthlyBuyVolume = useMemo(() => {
@@ -226,6 +227,40 @@ function DataDashboard({ onLogout }: { onLogout: () => void }) {
       sell: Math.round(-m.sellVolume), net: Math.round(m.netPressure),
     })),
   [funMonthly]);
+
+  // Pengu project data
+  const penguMonthly = useMemo(() => {
+    if (!penguPressureData) return [];
+    return [...penguPressureData]
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .map(r => {
+        const m = r.month.split('T')[0].slice(0, 7);
+        return {
+          month: m, label: monthLabel(m),
+          buyVolume: r.buy_volume_usd, sellVolume: r.sell_volume_usd,
+          netPressure: r.net_pressure_usd, totalVolume: r.total_volume_usd,
+          buyPct: r.buy_pct, sellPct: r.sell_pct,
+          indicator: r.pressure_indicator, avgPrice: r.avg_price,
+        };
+      });
+  }, [penguPressureData]);
+
+  const penguTotals = useMemo(() => {
+    const totalBuy = penguMonthly.reduce((s, m) => s + m.buyVolume, 0);
+    return {
+      totalBuy,
+      totalSell: penguMonthly.reduce((s, m) => s + m.sellVolume, 0),
+      totalNet: penguMonthly.reduce((s, m) => s + m.netPressure, 0),
+      assumptions: ASSUMPTION_PCTS.map(pct => ({ pct, revenue: totalBuy * (pct / 100) })),
+    };
+  }, [penguMonthly]);
+
+  const penguChartData = useMemo(() =>
+    penguMonthly.map(m => ({
+      label: m.label, buy: Math.round(m.buyVolume),
+      sell: Math.round(-m.sellVolume), net: Math.round(m.netPressure),
+    })),
+  [penguMonthly]);
 
   return (
     <div className="min-h-screen" style={{ background: 'linear-gradient(180deg, #14141F 0%, #1A1A2E 50%, #14141F 100%)' }}>
@@ -609,6 +644,135 @@ function DataDashboard({ onLogout }: { onLogout: () => void }) {
                       <td></td>
                       {ASSUMPTION_PCTS.map(pct => (
                         <td key={pct} className="py-3 px-4 text-right text-lavender font-bold border-l border-white/5">{formatCurrency(funTotals.totalBuy * (pct / 100))}</td>
+                      ))}
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* ═══ Pengu Dashboard ═══ */}
+        <div className="border-t border-white/5 pt-8 mt-4">
+          <h2 className="text-xl font-bold text-lavender mb-6">Pengu Dashboard</h2>
+
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+            <div className="flagship-card rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-2 relative z-10">
+                <DollarSign className="w-4 h-4 text-purple-gray" />
+                <span className="text-xs text-soft-gray uppercase tracking-wider font-medium">Total Buy Volume</span>
+              </div>
+              <p className="text-xl font-bold text-green1 relative z-10">{formatCurrency(penguTotals.totalBuy)}</p>
+            </div>
+            {penguTotals.assumptions.map(({ pct, revenue }) => (
+              <div key={pct} className="flagship-card rounded-2xl p-5">
+                <div className="flex items-center gap-2 mb-2 relative z-10">
+                  <DollarSign className="w-4 h-4 text-purple-gray" />
+                  <span className="text-xs text-soft-gray uppercase tracking-wider font-medium">Capture {pct}%</span>
+                </div>
+                <p className="text-xl font-bold text-lavender relative z-10">{formatCurrency(revenue)}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flagship-card rounded-2xl p-6 mb-6">
+            <h3 className="text-lg font-semibold text-lavender mb-1 relative z-10">Buy & Sell Pressure</h3>
+            <p className="text-sm text-soft-gray mb-4 relative z-10">Monthly trading volume breakdown</p>
+            <div className="relative z-10" style={{ height: 320 }}>
+              {penguChartData.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-soft-gray text-sm">{penguLoading ? 'Loading...' : 'No data'}</div>
+              ) : (
+                <ResponsiveContainer minWidth={0} width="100%" height={320}>
+                  <BarChart data={penguChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }} barCategoryGap="20%">
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                    <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={10} />
+                    <YAxis tickFormatter={fmtUsd} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={70} />
+                    <Tooltip content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null;
+                      return (
+                        <div className="custom-tooltip">
+                          <p className="text-soft-gray text-xs mb-2">{label}</p>
+                          {payload.map((e, i) => (
+                            <div key={i} className="flex items-center gap-2 mb-1">
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: e.color }} />
+                              <span className="text-soft-gray text-sm">{e.name}:</span>
+                              <span className="text-lavender font-medium">{formatCurrency(Math.abs(e.value as number))}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }} />
+                    <Legend wrapperStyle={{ paddingTop: 10 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
+                    <Bar dataKey="buy" name="Buy Volume" fill="#5EB851" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="sell" name="Sell Volume" fill="#E85757" radius={[0, 0, 4, 4]} />
+                    <Bar dataKey="net" name="Net Pressure">
+                      {penguChartData.map((entry, i) => (
+                        <Cell key={i} fill={entry.net >= 0 ? '#7B68AE' : '#FF7847'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          <div className="flagship-card rounded-2xl p-6">
+            <h3 className="text-lg font-semibold text-lavender mb-2 relative z-10">Pengu Revenue Assumptions</h3>
+            <p className="text-sm text-soft-gray mb-6 relative z-10">
+              If the project captured a percentage of the incoming buy volume as revenue, how much would each month generate?
+            </p>
+            <div className="overflow-x-auto relative z-10">
+              <table className="w-full text-sm">
+                <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
+                  <tr className="border-b border-white/5">
+                    <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4 sticky left-0 bg-[#14141f]">Month</th>
+                    <th className="text-right text-xs font-medium text-green1/80 uppercase tracking-wider py-3 px-4">Buy Volume</th>
+                    <th className="text-right text-xs font-medium text-red-400/80 uppercase tracking-wider py-3 px-4">Sell Volume</th>
+                    <th className="text-right text-xs font-medium text-purple/80 uppercase tracking-wider py-3 px-4">Net Pressure</th>
+                    <th className="text-center text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">Indicator</th>
+                    {ASSUMPTION_PCTS.map(pct => (
+                      <th key={pct} className="text-right text-xs font-medium text-lavender uppercase tracking-wider py-3 px-4 border-l border-white/5">{pct}% Capture</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {penguLoading ? (
+                    [...Array(4)].map((_, i) => (
+                      <tr key={i} className="border-b border-white/5">
+                        <td className="py-3 px-4"><div className="skeleton h-5 w-16 rounded" /></td>
+                        <td className="py-3 px-4"><div className="skeleton h-5 w-20 rounded ml-auto" /></td>
+                        <td className="py-3 px-4"><div className="skeleton h-5 w-20 rounded ml-auto" /></td>
+                        <td className="py-3 px-4"><div className="skeleton h-5 w-20 rounded ml-auto" /></td>
+                        <td className="py-3 px-4"><div className="skeleton h-5 w-16 rounded mx-auto" /></td>
+                        {ASSUMPTION_PCTS.map(pct => (<td key={pct} className="py-3 px-4"><div className="skeleton h-5 w-20 rounded ml-auto" /></td>))}
+                      </tr>
+                    ))
+                  ) : (
+                    [...penguMonthly].reverse().map(m => (
+                      <tr key={m.month} className="border-b border-white/5 hover:bg-white/[0.02]">
+                        <td className="py-3 px-4 text-lavender font-medium sticky left-0 bg-[#14141f]">{m.label}</td>
+                        <td className="py-3 px-4 text-right text-green1">{formatCurrency(m.buyVolume)}</td>
+                        <td className="py-3 px-4 text-right text-red-400">{formatCurrency(m.sellVolume)}</td>
+                        <td className={`py-3 px-4 text-right ${m.netPressure >= 0 ? 'text-purple' : 'text-red-400'}`}>{formatCurrency(m.netPressure)}</td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`text-xs px-2 py-0.5 rounded-md ${m.indicator.includes('Buy') ? 'bg-green1/10 text-green1' : 'bg-red-400/10 text-red-400'}`}>{m.indicator}</span>
+                        </td>
+                        {ASSUMPTION_PCTS.map(pct => (
+                          <td key={pct} className="py-3 px-4 text-right text-lavender border-l border-white/5">{formatCurrency(m.buyVolume * (pct / 100))}</td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                  {penguMonthly.length > 0 && (
+                    <tr className="border-t-2 border-white/10 bg-white/[0.02]">
+                      <td className="py-3 px-4 text-lavender font-bold sticky left-0 bg-[#1a1a2e]">Total</td>
+                      <td className="py-3 px-4 text-right text-green1 font-bold">{formatCurrency(penguTotals.totalBuy)}</td>
+                      <td className="py-3 px-4 text-right text-red-400 font-bold">{formatCurrency(penguTotals.totalSell)}</td>
+                      <td className={`py-3 px-4 text-right font-bold ${penguTotals.totalNet >= 0 ? 'text-purple' : 'text-red-400'}`}>{formatCurrency(penguTotals.totalNet)}</td>
+                      <td></td>
+                      {ASSUMPTION_PCTS.map(pct => (
+                        <td key={pct} className="py-3 px-4 text-right text-lavender font-bold border-l border-white/5">{formatCurrency(penguTotals.totalBuy * (pct / 100))}</td>
                       ))}
                     </tr>
                   )}

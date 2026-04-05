@@ -51,6 +51,7 @@ const QUERIES: Record<string, number> = {
   '6828795': 100,  // TOP_CLAIMERS
   '6952270': 1000, // CARDS_BUY_PRESSURE
   '6952283': 1000, // FUN_BUY_PRESSURE
+  '6952297': 1000, // PENGU_BUY_PRESSURE
 };
 
 interface QueryResult {

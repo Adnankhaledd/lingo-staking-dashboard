@@ -238,6 +238,7 @@ export const DUNE_QUERIES = {
   TOP_CLAIMERS: '6828795',
   CARDS_BUY_PRESSURE: '6952270',
   FUN_BUY_PRESSURE: '6952283',
+  PENGU_BUY_PRESSURE: '6952297',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
