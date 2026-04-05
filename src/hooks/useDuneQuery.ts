@@ -236,6 +236,7 @@ export const DUNE_QUERIES = {
   WEEKLY_CLAIM_SUMMARY: '6828788',
   WEEKLY_CLAIMS_BY_SOURCE: '6828804',
   TOP_CLAIMERS: '6828795',
+  CARDS_BUY_PRESSURE: '6952270',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -458,4 +459,20 @@ export interface TopClaimerRow {
   usd_value: number;
   first_claim: string;
   last_claim: string;
+}
+
+export interface CardsBuyPressureRow {
+  month: string;
+  total_trades: number;
+  buy_trades: number;
+  sell_trades: number;
+  buy_volume_usd: number;
+  sell_volume_usd: number;
+  net_pressure_usd: number;
+  total_volume_usd: number;
+  buy_pct: number;
+  sell_pct: number;
+  buy_sell_ratio: number;
+  pressure_indicator: string;
+  avg_price: number;
 }

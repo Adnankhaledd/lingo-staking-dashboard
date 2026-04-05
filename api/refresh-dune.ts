@@ -49,6 +49,7 @@ const QUERIES: Record<string, number> = {
   '6828788': 1000, // WEEKLY_CLAIM_SUMMARY
   '6828804': 1000, // WEEKLY_CLAIMS_BY_SOURCE
   '6828795': 100,  // TOP_CLAIMERS
+  '6952270': 1000, // CARDS_BUY_PRESSURE
 };
 
 interface QueryResult {
