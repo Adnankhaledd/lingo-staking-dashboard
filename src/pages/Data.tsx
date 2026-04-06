@@ -33,10 +33,9 @@ export function Data() {
   useEffect(() => {
     const stored = sessionStorage.getItem(SESSION_KEY);
     if (stored) {
-      fetch(`${API_BASE}/api/save-pnl-expenses`, {
+      fetch(`${API_BASE}/api/verify-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': stored },
-        body: JSON.stringify({ expenses: [] }),
       }).then(res => {
         if (res.ok) setIsAuthenticated(true);
         else sessionStorage.removeItem(SESSION_KEY);
@@ -50,10 +49,9 @@ export function Data() {
     setLoggingIn(true);
     setLoginError('');
     try {
-      const res = await fetch(`${API_BASE}/api/save-pnl-expenses`, {
+      const res = await fetch(`${API_BASE}/api/verify-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password.trim() },
-        body: JSON.stringify({ expenses: [] }),
       });
       if (res.ok) {
         sessionStorage.setItem(SESSION_KEY, password.trim());
