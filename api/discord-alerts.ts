@@ -103,6 +103,40 @@ async function saveLastSeenBlock(block: number): Promise<void> {
   });
 }
 
+// getStakes(address) selector = 0x7ba6f458
+// Returns Position[] where Position = { uint256 amount, uint256 unlockBlock }
+async function getTotalStaked(wallet: string): Promise<number> {
+  try {
+    // Pad wallet address to 32 bytes
+    const paddedAddr = wallet.toLowerCase().replace('0x', '').padStart(64, '0');
+    const res = await fetch(ALCHEMY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'eth_call',
+        params: [{ to: STAKING_CONTRACT, data: '0x7ba6f458' + paddedAddr }, 'latest'],
+      }),
+    });
+    const data = await res.json();
+    if (!data.result || data.result === '0x') return 0;
+
+    const hex = data.result.slice(2); // remove 0x
+    // ABI decode: offset (32 bytes) + length (32 bytes) + Position[] entries (each 64 bytes = amount + unlockBlock)
+    if (hex.length < 128) return 0;
+    const count = parseInt(hex.slice(64, 128), 16);
+    let total = BigInt(0);
+    for (let i = 0; i < count; i++) {
+      const offset = 128 + i * 128; // each Position is 2 x 32 bytes = 128 hex chars
+      if (offset + 64 > hex.length) break;
+      const amount = BigInt('0x' + hex.slice(offset, offset + 64));
+      total += amount;
+    }
+    return Number(total / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
+  } catch {
+    return 0;
+  }
+}
+
 async function getLatestBlock(): Promise<number> {
   const res = await fetch(ALCHEMY_URL, {
     method: 'POST',
@@ -155,18 +189,24 @@ async function getStakingEvents(fromBlock: number, toBlock: number): Promise<Sta
   return events;
 }
 
-async function sendDiscordEmbed(event: StakingEvent): Promise<void> {
+async function sendDiscordEmbed(event: StakingEvent, totalStaked: number): Promise<void> {
   const color = DURATION_COLORS[event.lockDuration] ?? 0x5EB851;
   const emoji = event.lockDuration === 'Flexible' ? '\uD83D\uDD13' : '\uD83D\uDD12';
+
+  const fields = [
+    { name: 'Wallet', value: `[\`${shortenAddress(event.wallet)}\`](https://basescan.org/address/${event.wallet})`, inline: true },
+    { name: 'Lock Duration', value: event.lockDuration, inline: true },
+    { name: 'Amount', value: `${event.amount.toLocaleString()} LINGO`, inline: true },
+  ];
+
+  if (totalStaked > 0) {
+    fields.push({ name: 'Total Staked', value: `${formatAmount(totalStaked)} LINGO`, inline: true });
+  }
 
   const embed = {
     title: `${emoji} ${formatAmount(event.amount)} LINGO Staked`,
     color,
-    fields: [
-      { name: 'Wallet', value: `[\`${shortenAddress(event.wallet)}\`](https://basescan.org/address/${event.wallet})`, inline: true },
-      { name: 'Lock Duration', value: event.lockDuration, inline: true },
-      { name: 'Amount', value: `${event.amount.toLocaleString()} LINGO`, inline: true },
-    ],
+    fields,
     footer: { text: 'Lingo Staking Bot' },
     url: `https://basescan.org/tx/${event.txHash}`,
   };
@@ -209,7 +249,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     for (const event of events) {
-      await sendDiscordEmbed(event);
+      const totalStaked = await getTotalStaked(event.wallet);
+      await sendDiscordEmbed(event, totalStaked);
     }
 
     await saveLastSeenBlock(latestBlock);
