@@ -61,6 +61,18 @@ interface MonthRevenueModel {
   tradingFeeRate: number;  // %
 }
 
+interface MonthActuals {
+  month: string;
+  actualRevenue: number;
+  actualExpenses: number;
+  notes?: string;
+}
+
+interface FrozenSnapshot {
+  frozenAt: string;
+  months: Record<string, { revenue: number; expenses: number }>;
+}
+
 interface PnLSettings {
   treasuryBalance: number;
   annualRevenueTarget: number;
@@ -166,6 +178,8 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [projections, setProjections] = useState<MonthProjection[]>([]);
   const [revenueModels, setRevenueModels] = useState<MonthRevenueModel[]>([]);
+  const [actuals, setActuals] = useState<MonthActuals[]>([]);
+  const [frozen, setFrozen] = useState<FrozenSnapshot | null>(null);
   const [settings, setSettings] = useState<PnLSettings>({ treasuryBalance: 0, annualRevenueTarget: 0, annualExpenseTarget: 0 });
   const [expensesLoaded, setExpensesLoaded] = useState(false);
 
@@ -180,6 +194,8 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
         setTeam(data.team ?? []);
         setProjections(data.projections ?? []);
         setRevenueModels(data.revenueModels ?? []);
+        setActuals(data.actuals ?? []);
+        setFrozen(data.frozen ?? null);
         setSettings(prev => ({ ...prev, ...(data.settings ?? {}) }));
       }
     } catch { /* ignore */ }
@@ -189,8 +205,8 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   useEffect(() => { fetchExpenses(); }, [fetchExpenses]);
 
   // Save all — uses ref to always capture latest state
-  const stateRef = useRef({ expenses, budgets, team, projections, revenueModels, settings });
-  stateRef.current = { expenses, budgets, team, projections, revenueModels, settings };
+  const stateRef = useRef({ expenses, budgets, team, projections, revenueModels, actuals, frozen, settings });
+  stateRef.current = { expenses, budgets, team, projections, revenueModels, actuals, frozen, settings };
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
@@ -218,7 +234,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
       const timer = setTimeout(() => handleSave(), 800);
       return () => clearTimeout(timer);
     }
-  }, [expenses, budgets, team, projections, revenueModels, settings, expensesLoaded, hasEdited, handleSave]);
+  }, [expenses, budgets, team, projections, revenueModels, actuals, frozen, settings, expensesLoaded, hasEdited, handleSave]);
 
 
   // ─── KPIs (from projection data) ───────────────────────────────────
@@ -570,7 +586,12 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
         </div>
 
         {/* Interactive Monthly Projections */}
-        <ProjectionsTable projections={projections} setProjections={setProjections} onEdit={() => setHasEdited(true)} autoRevenue={autoRevenueByMonth} />
+        <ProjectionsTable
+          projections={projections} setProjections={setProjections}
+          actuals={actuals} setActuals={setActuals}
+          frozen={frozen} setFrozen={setFrozen}
+          onEdit={() => setHasEdited(true)} autoRevenue={autoRevenueByMonth}
+        />
 
       </main>
     </div>
@@ -597,6 +618,10 @@ function KPI({ icon, label, value, color, sub }: { icon: React.ReactNode; label:
 interface ProjectionsTableProps {
   projections: MonthProjection[];
   setProjections: React.Dispatch<React.SetStateAction<MonthProjection[]>>;
+  actuals: MonthActuals[];
+  setActuals: React.Dispatch<React.SetStateAction<MonthActuals[]>>;
+  frozen: FrozenSnapshot | null;
+  setFrozen: React.Dispatch<React.SetStateAction<FrozenSnapshot | null>>;
   onEdit: () => void;
   autoRevenue: { map: Map<string, ProjectionLineItem[]>; autoLabels: string[] };
 }
@@ -610,7 +635,7 @@ function generateMonthRange(): string[] {
   return months;
 }
 
-function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: ProjectionsTableProps) {
+function ProjectionsTable({ projections, setProjections, actuals, setActuals, frozen, setFrozen, onEdit, autoRevenue }: ProjectionsTableProps) {
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
   const months = useMemo(generateMonthRange, []);
 
@@ -729,13 +754,47 @@ function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: 
     net: monthTotals.reduce((s, m) => s + m.net, 0),
   };
 
+  // Freeze current projections as a snapshot
+  const handleFreeze = () => {
+    const snapshot: Record<string, { revenue: number; expenses: number }> = {};
+    for (const m of monthTotals) {
+      snapshot[m.month] = { revenue: m.revenue, expenses: m.expenses };
+    }
+    setFrozen({ frozenAt: new Date().toISOString(), months: snapshot });
+    onEdit();
+  };
+
+  // Get actuals for a month
+  const getActual = (month: string): MonthActuals | undefined => actuals.find(a => a.month === month);
+
+  // Update actuals for a month
+  const updateActual = (month: string, field: 'actualRevenue' | 'actualExpenses' | 'notes', value: string) => {
+    setActuals(prev => {
+      const existing = prev.find(a => a.month === month);
+      if (existing) {
+        return prev.map(a => a.month === month ? { ...a, [field]: field === 'notes' ? value : (parseFloat(value) || 0) } : a);
+      }
+      return [...prev, { month, actualRevenue: 0, actualExpenses: 0, [field]: field === 'notes' ? value : (parseFloat(value) || 0) }];
+    });
+    onEdit();
+  };
+
+  // Get frozen values for a month
+  const getFrozen = (month: string) => frozen?.months[month] ?? null;
+
   return (
     <div className="flagship-card rounded-2xl">
-      <div className="p-6 border-b border-white/5 relative z-10">
-        <h3 className="text-lg font-semibold text-lavender">Monthly Projections</h3>
-        <p className="text-sm text-soft-gray mt-1">
-          Click a month to expand and edit revenue/expense targets. Compare against actuals at month-end.
-        </p>
+      <div className="flex items-center justify-between p-6 border-b border-white/5 relative z-10">
+        <div>
+          <h3 className="text-lg font-semibold text-lavender">Monthly Projections vs Actuals</h3>
+          <p className="text-sm text-soft-gray mt-1">
+            Click a month to edit projections and enter actual results. {frozen && <span className="text-purple text-xs">Frozen {new Date(frozen.frozenAt).toLocaleDateString()}</span>}
+          </p>
+        </div>
+        <button onClick={handleFreeze}
+          className="flex items-center gap-1.5 px-4 py-2 bg-purple/20 hover:bg-purple/30 text-lavender text-sm font-medium rounded-xl border border-purple/30 transition-colors">
+          {frozen ? 'Re-freeze' : 'Freeze Projections'}
+        </button>
       </div>
 
       <div className="relative z-10">
@@ -743,10 +802,14 @@ function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: 
         <table className="w-full text-sm">
           <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
             <tr className="border-b border-white/5">
-              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-6 w-36">Month</th>
-              <th className="text-right text-xs font-medium text-green1/80 uppercase tracking-wider py-3 px-4">Projected Revenue</th>
-              <th className="text-right text-xs font-medium text-red-400/80 uppercase tracking-wider py-3 px-4">Projected Expenses</th>
-              <th className="text-right text-xs font-medium text-lavender uppercase tracking-wider py-3 px-6">Net P&L</th>
+              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-6 w-28">Month</th>
+              <th className="text-right text-xs font-medium text-green1/80 uppercase tracking-wider py-3 px-3">Proj. Rev</th>
+              <th className="text-right text-xs font-medium text-red-400/80 uppercase tracking-wider py-3 px-3">Proj. Exp</th>
+              <th className="text-right text-xs font-medium text-lavender/80 uppercase tracking-wider py-3 px-3">Proj. Net</th>
+              <th className="text-right text-xs font-medium text-green1/60 uppercase tracking-wider py-3 px-3 border-l border-white/5">Actual Rev</th>
+              <th className="text-right text-xs font-medium text-red-400/60 uppercase tracking-wider py-3 px-3">Actual Exp</th>
+              <th className="text-right text-xs font-medium text-lavender/60 uppercase tracking-wider py-3 px-3">Actual Net</th>
+              <th className="text-right text-xs font-medium text-purple/80 uppercase tracking-wider py-3 px-3 border-l border-white/5">Variance</th>
             </tr>
           </thead>
           <tbody>
@@ -755,6 +818,12 @@ function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: 
               const proj = getWithAuto(m.month);
               const hasData = proj.revenueItems.length > 0 || proj.expenseItems.length > 0;
               const isInherited = !m.isOwn && hasData;
+              const actual = getActual(m.month);
+              const frozenM = getFrozen(m.month);
+              const hasActual = actual && (actual.actualRevenue > 0 || actual.actualExpenses > 0);
+              const actualNet = hasActual ? (actual!.actualRevenue - actual!.actualExpenses) : 0;
+              const projRef = frozenM ?? { revenue: m.revenue, expenses: m.expenses };
+              const variance = hasActual ? (actual!.actualRevenue - actual!.actualExpenses) - (projRef.revenue - projRef.expenses) : null;
 
               return (
                 <Fragment key={m.month}>
@@ -768,20 +837,60 @@ function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: 
                         <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
                         <span className="text-lavender font-medium">{m.label}</span>
                         {m.isOwn && <span className="w-1.5 h-1.5 rounded-full bg-purple" title="Customized" />}
-                        {isInherited && <span className="text-[10px] text-soft-gray/40 italic" title="Inherited from previous month">inherited</span>}
+                        {isInherited && <span className="text-[10px] text-soft-gray/40 italic">inherited</span>}
+                        {hasActual && <span className="text-[10px] bg-green1/10 text-green1 px-1.5 py-0.5 rounded">actual</span>}
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-right text-green1 font-medium">{m.revenue > 0 ? formatCurrency(m.revenue) : <span className="text-soft-gray/30">—</span>}</td>
-                    <td className="py-3 px-4 text-right text-red-400">{m.expenses > 0 ? formatCurrency(m.expenses) : <span className="text-soft-gray/30">—</span>}</td>
-                    <td className={`py-3 px-6 text-right font-semibold ${m.net > 0 ? 'text-green1' : m.net < 0 ? 'text-red-400' : 'text-soft-gray/30'}`}>
+                    <td className="py-3 px-3 text-right text-green1 font-medium text-sm">{m.revenue > 0 ? formatCurrency(m.revenue) : <span className="text-soft-gray/30">—</span>}</td>
+                    <td className="py-3 px-3 text-right text-red-400 text-sm">{m.expenses > 0 ? formatCurrency(m.expenses) : <span className="text-soft-gray/30">—</span>}</td>
+                    <td className={`py-3 px-3 text-right font-semibold text-sm ${m.net > 0 ? 'text-green1' : m.net < 0 ? 'text-red-400' : 'text-soft-gray/30'}`}>
                       {m.revenue > 0 || m.expenses > 0 ? formatCurrency(m.net) : '—'}
+                    </td>
+                    <td className="py-3 px-3 text-right text-green1/70 text-sm border-l border-white/5">{hasActual ? formatCurrency(actual!.actualRevenue) : <span className="text-soft-gray/20">—</span>}</td>
+                    <td className="py-3 px-3 text-right text-red-400/70 text-sm">{hasActual ? formatCurrency(actual!.actualExpenses) : <span className="text-soft-gray/20">—</span>}</td>
+                    <td className={`py-3 px-3 text-right text-sm ${hasActual ? (actualNet >= 0 ? 'text-green1/70' : 'text-red-400/70') : ''}`}>{hasActual ? formatCurrency(actualNet) : <span className="text-soft-gray/20">—</span>}</td>
+                    <td className={`py-3 px-3 text-right text-sm font-medium border-l border-white/5 ${variance !== null ? (variance >= 0 ? 'text-green1' : 'text-red-400') : ''}`}>
+                      {variance !== null ? `${variance >= 0 ? '+' : ''}${formatCurrency(variance)}` : <span className="text-soft-gray/20">—</span>}
                     </td>
                   </tr>
 
                   {/* Expanded detail — editable line items */}
                   {isExpanded && (
                     <tr>
-                      <td colSpan={4} className="bg-white/[0.02] border-b border-white/5 px-6 py-4">
+                      <td colSpan={8} className="bg-white/[0.02] border-b border-white/5 px-6 py-4">
+                        {/* Actuals input */}
+                        <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4 mb-4">
+                          <h4 className="text-sm font-medium text-lavender mb-3">Enter Actuals for {m.label}</h4>
+                          <div className="flex flex-wrap items-end gap-4">
+                            <div>
+                              <label className="text-xs text-soft-gray block mb-1">Actual Revenue ($)</label>
+                              <input type="number" value={actual?.actualRevenue || ''} onClick={e => e.stopPropagation()}
+                                onChange={e => updateActual(m.month, 'actualRevenue', e.target.value)}
+                                placeholder="0" className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-green1 w-36 focus:outline-none focus:border-green1/50" />
+                            </div>
+                            <div>
+                              <label className="text-xs text-soft-gray block mb-1">Actual Expenses ($)</label>
+                              <input type="number" value={actual?.actualExpenses || ''} onClick={e => e.stopPropagation()}
+                                onChange={e => updateActual(m.month, 'actualExpenses', e.target.value)}
+                                placeholder="0" className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-red-400 w-36 focus:outline-none focus:border-red-400/50" />
+                            </div>
+                            <div className="flex-1 min-w-[150px]">
+                              <label className="text-xs text-soft-gray block mb-1">Notes</label>
+                              <input type="text" value={actual?.notes || ''} onClick={e => e.stopPropagation()}
+                                onChange={e => updateActual(m.month, 'notes', e.target.value)}
+                                placeholder="e.g. Q2 results" className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-lavender w-full focus:outline-none focus:border-purple/50" />
+                            </div>
+                          </div>
+                          {hasActual && frozenM && (
+                            <div className="mt-3 flex gap-4 text-xs">
+                              <span className="text-soft-gray">Frozen projection: Rev {formatCurrency(frozenM.revenue)} / Exp {formatCurrency(frozenM.expenses)}</span>
+                              <span className={variance! >= 0 ? 'text-green1' : 'text-red-400'}>
+                                Variance: {variance! >= 0 ? '+' : ''}{formatCurrency(variance!)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
                         {/* Inherited banner + reset */}
                         {isInherited && (
                           <p className="text-xs text-soft-gray/50 mb-3 italic">
@@ -930,14 +1039,26 @@ function ProjectionsTable({ projections, setProjections, onEdit, autoRevenue }: 
             })}
 
             {/* Grand total */}
-            <tr className="border-t-2 border-white/10 bg-white/[0.02]">
-              <td className="py-3 px-6 text-lavender font-bold">Total</td>
-              <td className="py-3 px-4 text-right text-green1 font-bold">{grandTotal.revenue > 0 ? formatCurrency(grandTotal.revenue) : '—'}</td>
-              <td className="py-3 px-4 text-right text-red-400 font-bold">{grandTotal.expenses > 0 ? formatCurrency(grandTotal.expenses) : '—'}</td>
-              <td className={`py-3 px-6 text-right font-bold ${grandTotal.net >= 0 ? 'text-green1' : 'text-red-400'}`}>
-                {grandTotal.revenue > 0 || grandTotal.expenses > 0 ? formatCurrency(grandTotal.net) : '—'}
-              </td>
-            </tr>
+            {(() => {
+              const totalActRev = actuals.reduce((s, a) => s + a.actualRevenue, 0);
+              const totalActExp = actuals.reduce((s, a) => s + a.actualExpenses, 0);
+              const totalActNet = totalActRev - totalActExp;
+              const totalVariance = actuals.length > 0 ? totalActNet - grandTotal.net : null;
+              return (
+                <tr className="border-t-2 border-white/10 bg-white/[0.02]">
+                  <td className="py-3 px-6 text-lavender font-bold">Total</td>
+                  <td className="py-3 px-3 text-right text-green1 font-bold">{grandTotal.revenue > 0 ? formatCurrency(grandTotal.revenue) : '—'}</td>
+                  <td className="py-3 px-3 text-right text-red-400 font-bold">{grandTotal.expenses > 0 ? formatCurrency(grandTotal.expenses) : '—'}</td>
+                  <td className={`py-3 px-3 text-right font-bold ${grandTotal.net >= 0 ? 'text-green1' : 'text-red-400'}`}>{formatCurrency(grandTotal.net)}</td>
+                  <td className="py-3 px-3 text-right text-green1/70 font-bold border-l border-white/5">{totalActRev > 0 ? formatCurrency(totalActRev) : <span className="text-soft-gray/20">—</span>}</td>
+                  <td className="py-3 px-3 text-right text-red-400/70 font-bold">{totalActExp > 0 ? formatCurrency(totalActExp) : <span className="text-soft-gray/20">—</span>}</td>
+                  <td className={`py-3 px-3 text-right font-bold ${totalActRev > 0 ? (totalActNet >= 0 ? 'text-green1/70' : 'text-red-400/70') : ''}`}>{totalActRev > 0 ? formatCurrency(totalActNet) : <span className="text-soft-gray/20">—</span>}</td>
+                  <td className={`py-3 px-3 text-right font-bold border-l border-white/5 ${totalVariance !== null ? (totalVariance >= 0 ? 'text-green1' : 'text-red-400') : ''}`}>
+                    {totalVariance !== null ? `${totalVariance >= 0 ? '+' : ''}${formatCurrency(totalVariance)}` : <span className="text-soft-gray/20">—</span>}
+                  </td>
+                </tr>
+              );
+            })()}
           </tbody>
         </table>
       </div>
