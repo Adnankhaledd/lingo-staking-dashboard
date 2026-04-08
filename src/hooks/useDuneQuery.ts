@@ -239,6 +239,7 @@ export const DUNE_QUERIES = {
   CARDS_BUY_PRESSURE: '6952270',
   FUN_BUY_PRESSURE: '6952283',
   PENGU_BUY_PRESSURE: '6952297',
+  DECUBATE_WEEKLY_CLAIMS: '6963980',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -477,4 +478,15 @@ export interface CardsBuyPressureRow {
   buy_sell_ratio: number;
   pressure_indicator: string;
   avg_price: number;
+}
+
+export interface DecubateWeeklyClaimsRow {
+  week: string;
+  num_claims: number;
+  unique_claimers: number;
+  total_claimed: number;
+  avg_claim: number;
+  min_claim: number;
+  max_claim: number;
+  cumulative_claimed: number;
 }

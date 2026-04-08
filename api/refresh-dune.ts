@@ -52,6 +52,7 @@ const QUERIES: Record<string, number> = {
   '6952270': 1000, // CARDS_BUY_PRESSURE
   '6952283': 1000, // FUN_BUY_PRESSURE
   '6952297': 1000, // PENGU_BUY_PRESSURE
+  '6963980': 1000, // DECUBATE_WEEKLY_CLAIMS
 };
 
 interface QueryResult {

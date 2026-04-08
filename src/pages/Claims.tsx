@@ -8,15 +8,23 @@ import {
   type WeeklyClaimSummaryRow,
   type WeeklyClaimsBySourceRow,
   type TopClaimerRow,
+  type DecubateWeeklyClaimsRow,
 } from '../hooks/useDuneQuery';
 import { ClaimsBySourceChart } from '../components/charts/ClaimsBySourceChart';
 import { ClaimsSummaryChart } from '../components/charts/ClaimsSummaryChart';
+import { DecubateWeeklyClaimsChart } from '../components/charts/DecubateWeeklyClaimsChart';
 import { TopClaimersTable } from '../components/cards/TopClaimersTable';
 import lingoLogo from '../assets/logo-lingo.svg';
 
 function parseDuneDate(raw: string): string {
   if (!raw) return '';
   return raw.split('T')[0];
+}
+
+// Handles both ISO ("...T...") and space-separated ("YYYY-MM-DD HH:MM:SS UTC") formats
+function parseDuneDateFlexible(raw: string): string {
+  if (!raw) return '';
+  return raw.split(/[T\s]/)[0];
 }
 
 export function Claims() {
@@ -37,6 +45,12 @@ export function Claims() {
     isLoading: loadingTopClaimers,
   } = useDuneQuery<TopClaimerRow>(DUNE_QUERIES.TOP_CLAIMERS);
 
+  const {
+    data: decubateData,
+    isLoading: loadingDecubate,
+    executedAt: decubateExecutedAt,
+  } = useDuneQuery<DecubateWeeklyClaimsRow>(DUNE_QUERIES.DECUBATE_WEEKLY_CLAIMS);
+
   // Transform summary data for chart
   const summaryChartData = useMemo(() => {
     if (!summaryData) return [];
@@ -52,6 +66,16 @@ export function Claims() {
         cumulative_claimed: Math.round(row.cumulative_claimed ?? 0),
       }));
   }, [summaryData]);
+
+  // Transform Decubate weekly claims for chart
+  const decubateChartData = useMemo(() => {
+    if (!decubateData) return [];
+    return decubateData.map(row => ({
+      week: parseDuneDateFlexible(row.week),
+      total_claimed: Math.round(row.total_claimed ?? 0),
+      cumulative_claimed: Math.round(row.cumulative_claimed ?? 0),
+    }));
+  }, [decubateData]);
 
   // Transform source data for chart
   const sourceChartData = useMemo(() => {
@@ -203,6 +227,13 @@ export function Claims() {
         <TopClaimersTable
           data={topClaimers ?? []}
           isLoading={loadingTopClaimers}
+        />
+
+        {/* Decubate Weekly Claims */}
+        <DecubateWeeklyClaimsChart
+          data={decubateChartData}
+          isLoading={loadingDecubate}
+          lastUpdated={decubateExecutedAt}
         />
       </main>
     </div>
