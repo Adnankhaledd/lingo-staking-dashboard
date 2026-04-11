@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, CheckCircle } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, StakingUpdateCard } from '../components/cards';
+import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimersTable';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
@@ -34,6 +35,7 @@ import {
   type StakerTiersWeeklyRow,
   type LockDistributionRow,
   type WeeklyLockBreakdownRow,
+  type DecubateAPYClaimerRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -98,6 +100,11 @@ export function Dashboard() {
     isLoading: loadingAPYClaims,
     executedAt: apyClaimsExecutedAt,
   } = useDuneQuery<APYClaimsRow>(DUNE_QUERIES.APY_CLAIMS);
+
+  const {
+    data: decubateAPYClaimers,
+    isLoading: loadingDecubateAPYClaimers,
+  } = useDuneQuery<DecubateAPYClaimerRow>(DUNE_QUERIES.DECUBATE_APY_CLAIMERS);
 
   const {
     data: monthlyStakingFlow,
@@ -924,6 +931,14 @@ export function Dashboard() {
                 </div>
               )}
             </ChartCard>
+          </div>
+
+          {/* Decubate APY Claimers Table */}
+          <div className="mb-8">
+            <DecubateAPYClaimersTable
+              data={decubateAPYClaimers ?? []}
+              isLoading={loadingDecubateAPYClaimers}
+            />
           </div>
 
           {/* Community Rewards */}

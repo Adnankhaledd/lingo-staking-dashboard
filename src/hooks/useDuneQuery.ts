@@ -240,6 +240,7 @@ export const DUNE_QUERIES = {
   FUN_BUY_PRESSURE: '6952283',
   PENGU_BUY_PRESSURE: '6952297',
   DECUBATE_WEEKLY_CLAIMS: '6963980',
+  DECUBATE_APY_CLAIMERS: '6981059',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -489,4 +490,16 @@ export interface DecubateWeeklyClaimsRow {
   min_claim: number;
   max_claim: number;
   cumulative_claimed: number;
+}
+
+export interface DecubateAPYClaimerRow {
+  rank: number;
+  wallet: string;
+  num_claims: number;
+  total_claimed_lingo: number;
+  total_claimed_usd: number;
+  pct_of_total: number;
+  avg_claim: number;
+  first_claim: string;
+  last_claim: string;
 }
