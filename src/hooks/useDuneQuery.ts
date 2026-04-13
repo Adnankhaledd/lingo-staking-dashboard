@@ -241,6 +241,8 @@ export const DUNE_QUERIES = {
   PENGU_BUY_PRESSURE: '6952297',
   DECUBATE_WEEKLY_CLAIMS: '6963980',
   DECUBATE_APY_CLAIMERS: '6981059',
+  DECUBATE_CLAIM_FEED: '6991693',
+  CLAIMS_BY_TYPE: '6828894',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -490,6 +492,24 @@ export interface DecubateWeeklyClaimsRow {
   min_claim: number;
   max_claim: number;
   cumulative_claimed: number;
+}
+
+export interface ClaimsByTypeRow {
+  beneficiary_type: string;
+  num_claimers: number;
+  total_allocated_known: number;
+  total_claimed: number;
+  remaining_to_claim: number;
+  pct_claimed: number;
+}
+
+export interface DecubateClaimFeedRow {
+  claim_time: string;
+  wallet: string;
+  lingo_claimed: number;
+  usd_value: number;
+  vesting_type: string;
+  tx_hash: string;
 }
 
 export interface DecubateAPYClaimerRow {

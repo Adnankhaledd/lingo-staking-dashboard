@@ -9,10 +9,15 @@ import {
   type WeeklyClaimsBySourceRow,
   type TopClaimerRow,
   type DecubateWeeklyClaimsRow,
+  type DecubateClaimFeedRow,
+  type ClaimsByTypeRow,
 } from '../hooks/useDuneQuery';
 import { ClaimsBySourceChart } from '../components/charts/ClaimsBySourceChart';
 import { ClaimsSummaryChart } from '../components/charts/ClaimsSummaryChart';
 import { DecubateWeeklyClaimsChart } from '../components/charts/DecubateWeeklyClaimsChart';
+import { CombinedClaimsChart } from '../components/charts/CombinedClaimsChart';
+import { DecubateClaimFeedTable } from '../components/cards/DecubateClaimFeedTable';
+import { ClaimsByTypeTable } from '../components/cards/ClaimsByTypeTable';
 import { TopClaimersTable } from '../components/cards/TopClaimersTable';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -51,6 +56,16 @@ export function Claims() {
     executedAt: decubateExecutedAt,
   } = useDuneQuery<DecubateWeeklyClaimsRow>(DUNE_QUERIES.DECUBATE_WEEKLY_CLAIMS);
 
+  const {
+    data: claimFeed,
+    isLoading: loadingClaimFeed,
+  } = useDuneQuery<DecubateClaimFeedRow>(DUNE_QUERIES.DECUBATE_CLAIM_FEED);
+
+  const {
+    data: claimsByType,
+    isLoading: loadingClaimsByType,
+  } = useDuneQuery<ClaimsByTypeRow>(DUNE_QUERIES.CLAIMS_BY_TYPE);
+
   // Transform summary data for chart
   const summaryChartData = useMemo(() => {
     if (!summaryData) return [];
@@ -76,6 +91,29 @@ export function Claims() {
       cumulative_claimed: Math.round(row.cumulative_claimed ?? 0),
     }));
   }, [decubateData]);
+
+  // Merge main contract + Decubate claims by week for combined chart
+  const combinedClaimsData = useMemo(() => {
+    const sanitize = (w: string) => w.split(/[T\s]/)[0]; // ensure clean YYYY-MM-DD
+    const mainMap = new Map<string, { claimed: number; cumulative: number }>();
+    for (const row of summaryChartData) {
+      mainMap.set(sanitize(row.week), { claimed: row.total_lingo_claimed, cumulative: row.cumulative_claimed });
+    }
+    const decMap = new Map<string, { claimed: number; cumulative: number }>();
+    for (const row of decubateChartData) {
+      decMap.set(sanitize(row.week), { claimed: row.total_claimed, cumulative: row.cumulative_claimed });
+    }
+    const allWeeks = new Set([...mainMap.keys(), ...decMap.keys()]);
+    return Array.from(allWeeks)
+      .sort()
+      .map(week => ({
+        week,
+        mainContract: mainMap.get(week)?.claimed ?? 0,
+        decubate: decMap.get(week)?.claimed ?? 0,
+        mainCumulative: mainMap.get(week)?.cumulative ?? 0,
+        decubateCumulative: decMap.get(week)?.cumulative ?? 0,
+      }));
+  }, [summaryChartData, decubateChartData]);
 
   // Transform source data for chart
   const sourceChartData = useMemo(() => {
@@ -221,6 +259,25 @@ export function Claims() {
           data={sourceChartData}
           isLoading={loadingSource}
           lastUpdated={sourceExecutedAt}
+        />
+
+        {/* Combined Claims — Main Contract vs Decubate */}
+        <CombinedClaimsChart
+          data={combinedClaimsData}
+          isLoading={loadingSummary || loadingDecubate}
+          lastUpdated={summaryExecutedAt}
+        />
+
+        {/* Decubate Claim Feed */}
+        <DecubateClaimFeedTable
+          data={claimFeed ?? []}
+          isLoading={loadingClaimFeed}
+        />
+
+        {/* Claims by Type */}
+        <ClaimsByTypeTable
+          data={claimsByType ?? []}
+          isLoading={loadingClaimsByType}
         />
 
         {/* Top Claimers Table */}
