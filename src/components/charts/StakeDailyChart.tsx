@@ -11,7 +11,23 @@ import {
 } from 'recharts';
 import { Clock } from 'lucide-react';
 import { formatNumber } from '../../utils/formatters';
-import type { StakeDailyRow } from '../../hooks/useStakeDaily';
+
+// Row shape consumed by this chart — Dashboard builds it from the Dune query.
+export interface StakeDailyRow {
+  date: string;               // YYYY-MM-DD
+  lock_3mo_amount: number;
+  lock_6mo_amount: number;
+  lock_12mo_amount: number;
+  lock_3mo_count: number;
+  lock_6mo_count: number;
+  lock_12mo_count: number;
+  new_wallet_amount: number;
+  old_wallet_amount: number;
+  new_wallet_count: number;
+  old_wallet_count: number;
+  total_amount: number;
+  total_events: number;
+}
 
 function formatLastUpdated(isoDate: string): string {
   const date = new Date(isoDate);
@@ -96,7 +112,7 @@ export function StakeDailyChart({ days, isLoading, lastUpdated }: StakeDailyChar
         <div>
           <h3 className="text-lg font-semibold text-lavender">Daily Stake Breakdown</h3>
           <p className="text-sm text-soft-gray mt-1">
-            Last 180 days by {viewMode === 'lock' ? 'lock duration' : 'wallet type (new vs returning)'}
+            Last 6 months by {viewMode === 'lock' ? 'lock duration' : 'wallet type (new vs returning)'}
           </p>
         </div>
 

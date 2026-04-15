@@ -15,7 +15,6 @@ import { StakeDailyChart } from '../components/charts/StakeDailyChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { LiveActivityFeed } from '../components/LiveActivityFeed';
 import { useLiveTotalStaked } from '../hooks/useLiveTotalStaked';
-import { useStakeDaily } from '../hooks/useStakeDaily';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
   useDuneQuery,
@@ -113,6 +112,7 @@ export function Dashboard() {
   const {
     data: stakeBreakdown,
     isLoading: loadingStakeBreakdown,
+    executedAt: stakeBreakdownExecutedAt,
   } = useDuneQuery<StakeDailyBreakdownRow>(DUNE_QUERIES.STAKE_DAILY_BREAKDOWN);
 
   const {
@@ -181,7 +181,6 @@ export function Dashboard() {
 
   // Alchemy live total staked (polls every 5 min, 1 API call)
   const { totalStaked: liveTotalStaked } = useLiveTotalStaked();
-  const { days: stakeDailyDays, refreshedAt: stakeDailyRefreshedAt, isLoading: loadingStakeDaily } = useStakeDaily();
 
   // Mixpanel data
   const {
@@ -243,6 +242,33 @@ export function Dashboard() {
     () => getTotalCombinedFees(tradingFees, lpFees),
     [tradingFees, lpFees]
   );
+
+  // Daily stake breakdown — transform Dune rows into the chart's row shape.
+  // "new_wallet_count" uses total_new_wallets (distinct across durations) not
+  // the per-lock sum, to avoid double-counting wallets that staked multiple locks.
+  const stakeDailyChartData = useMemo(() => {
+    if (!stakeBreakdown) return null;
+    return stakeBreakdown
+      .map(r => {
+        const date = (r.day ?? '').split(/[T\s]/)[0];
+        return {
+          date,
+          lock_3mo_amount: Math.round(r.three_mo_total ?? 0),
+          lock_6mo_amount: Math.round(r.six_mo_total ?? 0),
+          lock_12mo_amount: Math.round(r.twelve_mo_total ?? 0),
+          lock_3mo_count: (r.three_mo_new_wallets ?? 0) + (r.three_mo_old_wallets ?? 0),
+          lock_6mo_count: (r.six_mo_new_wallets ?? 0) + (r.six_mo_old_wallets ?? 0),
+          lock_12mo_count: (r.twelve_mo_new_wallets ?? 0) + (r.twelve_mo_old_wallets ?? 0),
+          new_wallet_amount: Math.round((r.three_mo_new ?? 0) + (r.six_mo_new ?? 0) + (r.twelve_mo_new ?? 0)),
+          old_wallet_amount: Math.round((r.three_mo_old ?? 0) + (r.six_mo_old ?? 0) + (r.twelve_mo_old ?? 0)),
+          new_wallet_count: r.total_new_wallets ?? 0,
+          old_wallet_count: r.total_old_wallets ?? 0,
+          total_amount: Math.round(r.daily_total ?? 0),
+          total_events: (r.total_new_wallets ?? 0) + (r.total_old_wallets ?? 0),
+        };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date)); // oldest → newest for chart
+  }, [stakeBreakdown]);
 
   // APY Claims data
   const apyClaimsData = useMemo(
@@ -701,12 +727,12 @@ export function Dashboard() {
             <WeeklyLockChart data={weeklyLockBreakdown} isLoading={loadingWeeklyLock} lastUpdated={weeklyLockExecutedAt} />
           </div>
 
-          {/* Row 3.5: Daily stake breakdown (Alchemy, 180 days) */}
+          {/* Row 3.5: Daily stake breakdown chart (Dune 7320190, 6 months) */}
           <div className="mb-5">
             <StakeDailyChart
-              days={stakeDailyDays}
-              isLoading={loadingStakeDaily}
-              lastUpdated={stakeDailyRefreshedAt}
+              days={stakeDailyChartData}
+              isLoading={loadingStakeBreakdown}
+              lastUpdated={stakeBreakdownExecutedAt}
             />
           </div>
 
