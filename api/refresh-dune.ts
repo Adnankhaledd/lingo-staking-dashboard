@@ -56,6 +56,7 @@ const QUERIES: Record<string, number> = {
   '6981059': 1000, // DECUBATE_APY_CLAIMERS
   '6991693': 1000, // DECUBATE_CLAIM_FEED
   '6828894': 50,   // CLAIMS_BY_TYPE
+  '7320190': 1000, // STAKE_DAILY_BREAKDOWN
 };
 
 interface QueryResult {

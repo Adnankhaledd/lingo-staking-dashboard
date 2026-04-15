@@ -3,6 +3,7 @@ import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, CheckCirc
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, StakingUpdateCard } from '../components/cards';
 import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimersTable';
+import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
@@ -10,9 +11,11 @@ import { StakingFlowChart } from '../components/charts/StakingFlowChart';
 import { StakerTiersChart } from '../components/charts/StakerTiersChart';
 import { LockDistributionChart } from '../components/charts/LockDistributionChart';
 import { WeeklyLockChart } from '../components/charts/WeeklyLockChart';
+import { StakeDailyChart } from '../components/charts/StakeDailyChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { LiveActivityFeed } from '../components/LiveActivityFeed';
 import { useLiveTotalStaked } from '../hooks/useLiveTotalStaked';
+import { useStakeDaily } from '../hooks/useStakeDaily';
 import { formatNumber, formatWeekDate, formatCurrency, exportToCSV } from '../utils/formatters';
 import {
   useDuneQuery,
@@ -36,6 +39,7 @@ import {
   type LockDistributionRow,
   type WeeklyLockBreakdownRow,
   type DecubateAPYClaimerRow,
+  type StakeDailyBreakdownRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -107,6 +111,11 @@ export function Dashboard() {
   } = useDuneQuery<DecubateAPYClaimerRow>(DUNE_QUERIES.DECUBATE_APY_CLAIMERS);
 
   const {
+    data: stakeBreakdown,
+    isLoading: loadingStakeBreakdown,
+  } = useDuneQuery<StakeDailyBreakdownRow>(DUNE_QUERIES.STAKE_DAILY_BREAKDOWN);
+
+  const {
     data: monthlyStakingFlow,
     isLoading: loadingStakingFlow,
     executedAt: stakingFlowExecutedAt,
@@ -172,6 +181,7 @@ export function Dashboard() {
 
   // Alchemy live total staked (polls every 5 min, 1 API call)
   const { totalStaked: liveTotalStaked } = useLiveTotalStaked();
+  const { days: stakeDailyDays, refreshedAt: stakeDailyRefreshedAt, isLoading: loadingStakeDaily } = useStakeDaily();
 
   // Mixpanel data
   const {
@@ -689,6 +699,23 @@ export function Dashboard() {
           {/* Row 3: Weekly Lock Duration Trend */}
           <div className="mb-5">
             <WeeklyLockChart data={weeklyLockBreakdown} isLoading={loadingWeeklyLock} lastUpdated={weeklyLockExecutedAt} />
+          </div>
+
+          {/* Row 3.5: Daily stake breakdown (Alchemy, 180 days) */}
+          <div className="mb-5">
+            <StakeDailyChart
+              days={stakeDailyDays}
+              isLoading={loadingStakeDaily}
+              lastUpdated={stakeDailyRefreshedAt}
+            />
+          </div>
+
+          {/* Row 3.6: Stake Breakdown Table (Dune, full history with D/W/M toggle) */}
+          <div className="mb-5">
+            <StakeBreakdownTable
+              data={stakeBreakdown ?? []}
+              isLoading={loadingStakeBreakdown}
+            />
           </div>
 
           {/* Row 4: Lock Duration Breakdown (Monthly bar + Current donut) */}

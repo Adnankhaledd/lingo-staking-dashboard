@@ -243,6 +243,7 @@ export const DUNE_QUERIES = {
   DECUBATE_APY_CLAIMERS: '6981059',
   DECUBATE_CLAIM_FEED: '6991693',
   CLAIMS_BY_TYPE: '6828894',
+  STAKE_DAILY_BREAKDOWN: '7320190',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -492,6 +493,28 @@ export interface DecubateWeeklyClaimsRow {
   min_claim: number;
   max_claim: number;
   cumulative_claimed: number;
+}
+
+export interface StakeDailyBreakdownRow {
+  day: string;
+  daily_total: number;
+  three_mo_total: number;
+  three_mo_new: number;
+  three_mo_old: number;
+  three_mo_new_wallets: number;
+  three_mo_old_wallets: number;
+  six_mo_total: number;
+  six_mo_new: number;
+  six_mo_old: number;
+  six_mo_new_wallets: number;
+  six_mo_old_wallets: number;
+  twelve_mo_total: number;
+  twelve_mo_new: number;
+  twelve_mo_old: number;
+  twelve_mo_new_wallets: number;
+  twelve_mo_old_wallets: number;
+  total_new_wallets: number;
+  total_old_wallets: number;
 }
 
 export interface ClaimsByTypeRow {

@@ -27,6 +27,7 @@ const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const MIN_AMOUNT = 10_000;
 const BLOB_KEY = 'discord-last-block.json';
 const LINGO_DECIMALS = 18;
+const SEEN_TX_LIMIT = 500; // rolling window of tx hashes for dedupe
 
 // keccak256("Staked(address,uint256,uint256)")
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
@@ -80,22 +81,42 @@ function parseAmount(hex: string): number {
   return Number(raw / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
 }
 
-async function getLastSeenBlock(): Promise<number | null> {
+interface DiscordState {
+  lastBlock: number | null;
+  seenTxHashes: string[];
+}
+
+async function getDiscordState(): Promise<DiscordState> {
   try {
     // Direct URL fetch — zero Blob SDK operations
-    const data = await fetchBlobJson<{ lastBlock: unknown }>(BLOB_KEY);
-    if (!data) return null;
+    const data = await fetchBlobJson<{ lastBlock: unknown; seenTxHashes?: unknown }>(BLOB_KEY);
+    if (!data) return { lastBlock: null, seenTxHashes: [] };
+
+    let lastBlock: number | null = null;
     const val = data.lastBlock;
-    if (val == null) return null;
-    if (typeof val === 'string') return parseInt(val, 16) || null;
-    return typeof val === 'number' ? val : null;
+    if (val != null) {
+      if (typeof val === 'string') lastBlock = parseInt(val, 16) || null;
+      else if (typeof val === 'number') lastBlock = val;
+    }
+
+    const seenTxHashes = Array.isArray(data.seenTxHashes)
+      ? data.seenTxHashes.filter((h): h is string => typeof h === 'string')
+      : [];
+
+    return { lastBlock, seenTxHashes };
   } catch {
-    return null;
+    return { lastBlock: null, seenTxHashes: [] };
   }
 }
 
-async function saveLastSeenBlock(block: number): Promise<void> {
-  await put(BLOB_KEY, JSON.stringify({ lastBlock: block, updatedAt: new Date().toISOString() }), {
+async function saveDiscordState(state: DiscordState): Promise<void> {
+  // Trim seenTxHashes to rolling window to keep blob small
+  const trimmed = state.seenTxHashes.slice(-SEEN_TX_LIMIT);
+  await put(BLOB_KEY, JSON.stringify({
+    lastBlock: state.lastBlock,
+    seenTxHashes: trimmed,
+    updatedAt: new Date().toISOString(),
+  }), {
     access: 'public',
     addRandomSuffix: false,
     allowOverwrite: true,
@@ -211,11 +232,15 @@ async function sendDiscordEmbed(event: StakingEvent, totalStaked: number): Promi
     url: `https://basescan.org/tx/${event.txHash}`,
   };
 
-  await fetch(DISCORD_WEBHOOK_URL, {
+  const response = await fetch(DISCORD_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: 'Lingo Staking', embeds: [embed] }),
   });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Discord webhook failed: ${response.status} ${body.slice(0, 200)}`);
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -231,16 +256,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const [lastBlock, latestBlock] = await Promise.all([
-      getLastSeenBlock(),
+    const [state, latestBlock] = await Promise.all([
+      getDiscordState(),
       getLatestBlock(),
     ]);
 
-    const fromBlock = lastBlock ? lastBlock + 1 : latestBlock - DEFAULT_LOOKBACK;
+    const fromBlock = state.lastBlock ? state.lastBlock + 1 : latestBlock - DEFAULT_LOOKBACK;
     const events = await getStakingEvents(fromBlock, latestBlock);
 
+    // Build Set from previously-seen tx hashes for O(1) dedup checks
+    const seenSet = new Set(state.seenTxHashes);
+
     if (events.length === 0) {
-      await saveLastSeenBlock(latestBlock);
+      await saveDiscordState({ lastBlock: latestBlock, seenTxHashes: state.seenTxHashes });
       return res.status(200).json({
         message: 'No new activity above 10K',
         fromBlock,
@@ -248,18 +276,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    let posted = 0;
+    let skipped = 0;
+
     for (const event of events) {
+      // Dedupe: if we've already posted this tx hash, skip it
+      if (seenSet.has(event.txHash)) {
+        skipped++;
+        continue;
+      }
+
       const totalStaked = await getTotalStaked(event.wallet);
       await sendDiscordEmbed(event, totalStaked);
+
+      // Mark as seen and persist immediately — if the next step fails,
+      // subsequent runs will still see this tx hash and skip it.
+      seenSet.add(event.txHash);
+      posted++;
+
+      try {
+        await saveDiscordState({
+          lastBlock: state.lastBlock, // don't advance block pointer until all events processed
+          seenTxHashes: Array.from(seenSet),
+        });
+      } catch (saveErr) {
+        console.warn('Failed to persist seenTxHashes mid-loop:', saveErr);
+        // continue — worst case, duplicate happens once; better than crashing the loop
+      }
     }
 
-    await saveLastSeenBlock(latestBlock);
+    // Final save: advance the lastBlock pointer now that all events are handled
+    await saveDiscordState({
+      lastBlock: latestBlock,
+      seenTxHashes: Array.from(seenSet),
+    });
 
     return res.status(200).json({
-      message: `Posted ${events.length} stakes to Discord`,
+      message: `Posted ${posted} stakes (skipped ${skipped} duplicates)`,
       fromBlock,
       toBlock: latestBlock,
-      count: events.length,
+      posted,
+      skipped,
     });
   } catch (error) {
     return res.status(500).json({
