@@ -28,6 +28,7 @@ const MIN_AMOUNT = 10_000;
 const BLOB_KEY = 'discord-last-block.json';
 const LINGO_DECIMALS = 18;
 const SEEN_TX_LIMIT = 500; // rolling window of tx hashes for dedupe
+const KNOWN_STAKERS_LIMIT = 50_000; // cached wallet classifications — bounds blob size
 
 // keccak256("Staked(address,uint256,uint256)")
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
@@ -84,13 +85,18 @@ function parseAmount(hex: string): number {
 interface DiscordState {
   lastBlock: number | null;
   seenTxHashes: string[];
+  knownStakers: string[]; // wallets we've already classified (cache for "new vs returning")
 }
 
 async function getDiscordState(): Promise<DiscordState> {
   try {
     // Direct URL fetch — zero Blob SDK operations
-    const data = await fetchBlobJson<{ lastBlock: unknown; seenTxHashes?: unknown }>(BLOB_KEY);
-    if (!data) return { lastBlock: null, seenTxHashes: [] };
+    const data = await fetchBlobJson<{
+      lastBlock: unknown;
+      seenTxHashes?: unknown;
+      knownStakers?: unknown;
+    }>(BLOB_KEY);
+    if (!data) return { lastBlock: null, seenTxHashes: [], knownStakers: [] };
 
     let lastBlock: number | null = null;
     const val = data.lastBlock;
@@ -103,18 +109,24 @@ async function getDiscordState(): Promise<DiscordState> {
       ? data.seenTxHashes.filter((h): h is string => typeof h === 'string')
       : [];
 
-    return { lastBlock, seenTxHashes };
+    const knownStakers = Array.isArray(data.knownStakers)
+      ? data.knownStakers.filter((w): w is string => typeof w === 'string')
+      : [];
+
+    return { lastBlock, seenTxHashes, knownStakers };
   } catch {
-    return { lastBlock: null, seenTxHashes: [] };
+    return { lastBlock: null, seenTxHashes: [], knownStakers: [] };
   }
 }
 
 async function saveDiscordState(state: DiscordState): Promise<void> {
-  // Trim seenTxHashes to rolling window to keep blob small
-  const trimmed = state.seenTxHashes.slice(-SEEN_TX_LIMIT);
+  // Trim rolling windows to keep blob size bounded
+  const trimmedTx = state.seenTxHashes.slice(-SEEN_TX_LIMIT);
+  const trimmedStakers = state.knownStakers.slice(-KNOWN_STAKERS_LIMIT);
   await put(BLOB_KEY, JSON.stringify({
     lastBlock: state.lastBlock,
-    seenTxHashes: trimmed,
+    seenTxHashes: trimmedTx,
+    knownStakers: trimmedStakers,
     updatedAt: new Date().toISOString(),
   }), {
     access: 'public',
@@ -155,6 +167,51 @@ async function getTotalStaked(wallet: string): Promise<number> {
     return Number(total / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
   } catch {
     return 0;
+  }
+}
+
+// Check whether a wallet has any Staked event from a block strictly earlier
+// than `beforeBlock`. Uses Alchemy eth_getLogs with the indexed wallet topic so
+// the response is just this wallet's events (small, fast).
+async function hasStakedBefore(wallet: string, beforeBlock: number): Promise<boolean> {
+  const paddedAddr = '0x' + wallet.toLowerCase().replace('0x', '').padStart(64, '0');
+  const toBlock = Math.max(0, beforeBlock - 1);
+  const res = await fetch(ALCHEMY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'eth_getLogs',
+      params: [{
+        address: STAKING_CONTRACT,
+        topics: [STAKED_EVENT_TOPIC, paddedAddr],
+        fromBlock: '0x0',
+        toBlock: '0x' + toBlock.toString(16),
+      }],
+    }),
+  });
+  if (!res.ok) throw new Error(`hasStakedBefore eth_getLogs ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(`hasStakedBefore: ${JSON.stringify(data.error)}`);
+  const logs = data.result ?? [];
+  return logs.length > 0;
+}
+
+// Classify a wallet as 'new' or 'returning'. Uses the cached knownSet to skip
+// RPC calls for wallets we've already seen. On RPC failure, falls back to
+// 'returning' (conservative — avoids mislabeling an existing staker as new).
+async function classifyStaker(
+  wallet: string,
+  blockNumber: number,
+  knownSet: Set<string>,
+): Promise<'new' | 'returning'> {
+  const w = wallet.toLowerCase();
+  if (knownSet.has(w)) return 'returning';
+  try {
+    const hasPrior = await hasStakedBefore(w, blockNumber);
+    return hasPrior ? 'returning' : 'new';
+  } catch (err) {
+    console.warn(`classifyStaker failed for ${w}:`, err instanceof Error ? err.message : err);
+    return 'returning';
   }
 }
 
@@ -210,9 +267,18 @@ async function getStakingEvents(fromBlock: number, toBlock: number): Promise<Sta
   return events;
 }
 
-async function sendDiscordEmbed(event: StakingEvent, totalStaked: number): Promise<void> {
+async function sendDiscordEmbed(
+  event: StakingEvent,
+  totalStaked: number,
+  stakerType: 'new' | 'returning',
+): Promise<void> {
   const color = DURATION_COLORS[event.lockDuration] ?? 0x5EB851;
   const emoji = event.lockDuration === 'Flexible' ? '\uD83D\uDD13' : '\uD83D\uDD12';
+
+  // "🆕 New Staker" or "🔁 Returning"
+  const stakerLabel = stakerType === 'new'
+    ? '\uD83C\uDD95 New Staker'
+    : '\uD83D\uDD01 Returning';
 
   const fields = [
     { name: 'Wallet', value: `[\`${shortenAddress(event.wallet)}\`](https://basescan.org/address/${event.wallet})`, inline: true },
@@ -223,6 +289,8 @@ async function sendDiscordEmbed(event: StakingEvent, totalStaked: number): Promi
   if (totalStaked > 0) {
     fields.push({ name: 'Total Staked', value: `${formatAmount(totalStaked)} LINGO`, inline: true });
   }
+
+  fields.push({ name: 'Type', value: stakerLabel, inline: true });
 
   const embed = {
     title: `${emoji} ${formatAmount(event.amount)} LINGO Staked`,
@@ -264,11 +332,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const fromBlock = state.lastBlock ? state.lastBlock + 1 : latestBlock - DEFAULT_LOOKBACK;
     const events = await getStakingEvents(fromBlock, latestBlock);
 
-    // Build Set from previously-seen tx hashes for O(1) dedup checks
+    // Build Sets from previous state for O(1) lookups
     const seenSet = new Set(state.seenTxHashes);
+    const knownSet = new Set(state.knownStakers.map(w => w.toLowerCase()));
 
     if (events.length === 0) {
-      await saveDiscordState({ lastBlock: latestBlock, seenTxHashes: state.seenTxHashes });
+      await saveDiscordState({
+        lastBlock: latestBlock,
+        seenTxHashes: state.seenTxHashes,
+        knownStakers: state.knownStakers,
+      });
       return res.status(200).json({
         message: 'No new activity above 10K',
         fromBlock,
@@ -278,6 +351,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let posted = 0;
     let skipped = 0;
+    let newStakers = 0;
 
     for (const event of events) {
       // Dedupe: if we've already posted this tx hash, skip it
@@ -286,21 +360,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
-      const totalStaked = await getTotalStaked(event.wallet);
-      await sendDiscordEmbed(event, totalStaked);
+      const wallet = event.wallet.toLowerCase();
 
-      // Mark as seen and persist immediately — if the next step fails,
-      // subsequent runs will still see this tx hash and skip it.
+      // Fetch total staked AND classify the wallet in parallel
+      const [totalStaked, stakerType] = await Promise.all([
+        getTotalStaked(wallet),
+        classifyStaker(wallet, event.blockNumber, knownSet),
+      ]);
+
+      await sendDiscordEmbed(event, totalStaked, stakerType);
+
+      // Mark as seen and remember we've classified this wallet
       seenSet.add(event.txHash);
+      knownSet.add(wallet);
       posted++;
+      if (stakerType === 'new') newStakers++;
 
       try {
         await saveDiscordState({
           lastBlock: state.lastBlock, // don't advance block pointer until all events processed
           seenTxHashes: Array.from(seenSet),
+          knownStakers: Array.from(knownSet),
         });
       } catch (saveErr) {
-        console.warn('Failed to persist seenTxHashes mid-loop:', saveErr);
+        console.warn('Failed to persist state mid-loop:', saveErr);
         // continue — worst case, duplicate happens once; better than crashing the loop
       }
     }
@@ -309,13 +392,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await saveDiscordState({
       lastBlock: latestBlock,
       seenTxHashes: Array.from(seenSet),
+      knownStakers: Array.from(knownSet),
     });
 
     return res.status(200).json({
-      message: `Posted ${posted} stakes (skipped ${skipped} duplicates)`,
+      message: `Posted ${posted} stakes (${newStakers} new, ${posted - newStakers} returning, skipped ${skipped} duplicates)`,
       fromBlock,
       toBlock: latestBlock,
       posted,
+      newStakers,
       skipped,
     });
   } catch (error) {
