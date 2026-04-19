@@ -4,6 +4,7 @@ import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, StakingUpdateCard } from '../components/cards';
 import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimersTable';
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
+import { StakerLTVTable } from '../components/cards/StakerLTVTable';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
@@ -39,6 +40,7 @@ import {
   type WeeklyLockBreakdownRow,
   type DecubateAPYClaimerRow,
   type StakeDailyBreakdownRow,
+  type StakerLTVRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -114,6 +116,11 @@ export function Dashboard() {
     isLoading: loadingStakeBreakdown,
     executedAt: stakeBreakdownExecutedAt,
   } = useDuneQuery<StakeDailyBreakdownRow>(DUNE_QUERIES.STAKE_DAILY_BREAKDOWN);
+
+  const {
+    data: stakerLTV,
+    isLoading: loadingStakerLTV,
+  } = useDuneQuery<StakerLTVRow>(DUNE_QUERIES.STAKER_LTV);
 
   const {
     data: monthlyStakingFlow,
@@ -741,6 +748,14 @@ export function Dashboard() {
             <StakeBreakdownTable
               data={stakeBreakdown ?? []}
               isLoading={loadingStakeBreakdown}
+            />
+          </div>
+
+          {/* Row 3.7: Staker LTV (Dune 7340503, per-wallet lifetime metrics) */}
+          <div className="mb-5">
+            <StakerLTVTable
+              data={stakerLTV ?? []}
+              isLoading={loadingStakerLTV}
             />
           </div>
 

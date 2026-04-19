@@ -244,6 +244,7 @@ export const DUNE_QUERIES = {
   DECUBATE_CLAIM_FEED: '6991693',
   CLAIMS_BY_TYPE: '6828894',
   STAKE_DAILY_BREAKDOWN: '7320190',
+  STAKER_LTV: '7340503',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -493,6 +494,21 @@ export interface DecubateWeeklyClaimsRow {
   min_claim: number;
   max_claim: number;
   cumulative_claimed: number;
+}
+
+export interface StakerLTVRow {
+  wallet: string;
+  first_stake_date: string;
+  last_stake_date: string;
+  first_stake: number;
+  first_stake_usd: number;
+  total_staked: number;
+  total_staked_usd: number;
+  num_stakes: number;
+  days_active: number;
+  growth_multiplier: number;
+  additional_staked: number;
+  additional_staked_usd: number;
 }
 
 export interface StakeDailyBreakdownRow {
