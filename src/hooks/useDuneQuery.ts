@@ -245,6 +245,7 @@ export const DUNE_QUERIES = {
   CLAIMS_BY_TYPE: '6828894',
   STAKE_DAILY_BREAKDOWN: '7320190',
   STAKER_LTV: '7340503',
+  FEE_WALLET_INFLOW: '7340695',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -494,6 +495,14 @@ export interface DecubateWeeklyClaimsRow {
   min_claim: number;
   max_claim: number;
   cumulative_claimed: number;
+}
+
+export interface FeeWalletInflowRow {
+  day: string;
+  num_transfers: number;
+  unique_senders: number;
+  lingo_received: number;
+  cumulative_lingo: number;
 }
 
 export interface StakerLTVRow {

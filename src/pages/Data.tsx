@@ -7,7 +7,9 @@ import { Lock, LogOut, DollarSign } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
 import {
   useDuneQuery, DUNE_QUERIES, type BuyPressureRow, type CardsBuyPressureRow,
+  type FeeWalletInflowRow,
 } from '../hooks/useDuneQuery';
+import { FeeWalletInflowChart } from '../components/charts/FeeWalletInflowChart';
 import lingoLogo from '../assets/logo-lingo.svg';
 
 const SESSION_KEY = 'admin_password';
@@ -111,6 +113,11 @@ function DataDashboard({ onLogout }: { onLogout: () => void }) {
   const { data: cardsPressureData, isLoading: cardsLoading } = useDuneQuery<CardsBuyPressureRow>(DUNE_QUERIES.CARDS_BUY_PRESSURE);
   const { data: funPressureData, isLoading: funLoading } = useDuneQuery<CardsBuyPressureRow>(DUNE_QUERIES.FUN_BUY_PRESSURE);
   const { data: penguPressureData, isLoading: penguLoading } = useDuneQuery<CardsBuyPressureRow>(DUNE_QUERIES.PENGU_BUY_PRESSURE);
+  const {
+    data: feeWalletInflow,
+    isLoading: feeWalletInflowLoading,
+    executedAt: feeWalletInflowExecutedAt,
+  } = useDuneQuery<FeeWalletInflowRow>(DUNE_QUERIES.FEE_WALLET_INFLOW);
 
   // Aggregate weekly buy volume into monthly
   const monthlyBuyVolume = useMemo(() => {
@@ -380,6 +387,13 @@ function DataDashboard({ onLogout }: { onLogout: () => void }) {
             </table>
           </div>
         </div>
+        {/* Fee Wallet Inflow */}
+        <FeeWalletInflowChart
+          data={feeWalletInflow ?? []}
+          isLoading={feeWalletInflowLoading}
+          lastUpdated={feeWalletInflowExecutedAt}
+        />
+
         {/* ═══ Cards Dashboard ═══ */}
         <div className="border-t border-white/5 pt-8 mt-4">
           <h2 className="text-xl font-bold text-lavender mb-6">Cards Dashboard</h2>

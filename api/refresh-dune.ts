@@ -58,6 +58,7 @@ const QUERIES: Record<string, number> = {
   '6828894': 50,   // CLAIMS_BY_TYPE
   '7320190': 1000, // STAKE_DAILY_BREAKDOWN
   '7340503': 1000, // STAKER_LTV
+  '7340695': 1000, // FEE_WALLET_INFLOW
 };
 
 interface QueryResult {
