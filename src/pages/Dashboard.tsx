@@ -5,6 +5,7 @@ import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, St
 import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimersTable';
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { StakerLTVTable } from '../components/cards/StakerLTVTable';
+import { StakerConcentrationCard } from '../components/cards/StakerConcentrationCard';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
@@ -1185,7 +1186,12 @@ export function Dashboard() {
           </ChartCard>
         </section>
 
-        <section className="mb-10">
+        <section className="mb-10 space-y-5">
+          <StakerConcentrationCard
+            topStakers={topStakers}
+            totalStakedAllWallets={liveTotalStaked}
+            isLoading={loadingTopStakers}
+          />
           <TopStakersTable
             data={topStakers ?? []}
             isLoading={loadingTopStakers}

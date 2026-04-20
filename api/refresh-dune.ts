@@ -31,7 +31,7 @@ const QUERIES: Record<string, number> = {
   '6534908': 1000, // WEEKLY_STATS
   '6535206': 1000, // WEEKLY_NEW_STAKERS
   '6528806': 1000, // COHORT_RETENTION
-  '6632385': 50,   // TOP_STAKERS
+  '6919472': 300,  // TOP_STAKERS — match the query ID used in useDuneQuery.ts and fetch all rows
   '6288543': 1000, // TRADING_FEES
   '6606898': 1000, // APY_CLAIMS
   '6535334': 1000, // MONTHLY_STAKING_FLOW
