@@ -246,6 +246,9 @@ export const DUNE_QUERIES = {
   STAKE_DAILY_BREAKDOWN: '7320190',
   STAKER_LTV: '7340503',
   FEE_WALLET_INFLOW: '7340695',
+  LTV_BY_THRESHOLD: '7350883',
+  LTV_BY_FIRST_DEPOSIT_TIER: '7350966',
+  GROWTH_TIER_DISTRIBUTION: '7340511',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -495,6 +498,40 @@ export interface DecubateWeeklyClaimsRow {
   min_claim: number;
   max_claim: number;
   cumulative_claimed: number;
+}
+
+export interface LTVByThresholdRow {
+  min_threshold: string;        // e.g. "Min 2k LINGO"
+  total_users: number;
+  avg_first_deposit: number;
+  avg_additional: number;
+  avg_ltv: number;
+  avg_ltv_multiplier: number;
+  avg_stakes: number;
+  pct_repeat: string;           // Dune returns as string — parseFloat before use
+  total_first_deposits: number;
+  total_additional: number;
+  total_ltv: number;
+}
+
+export interface LTVByFirstDepositTierRow {
+  first_deposit_tier: string;   // e.g. "1. 2k-5k"
+  num_users: number;
+  avg_first_deposit: number;
+  avg_additional: number;
+  avg_ltv: number;
+  avg_ltv_multiplier: number;
+  avg_stakes: number;
+  pct_repeat: string;
+}
+
+export interface GrowthTierDistributionRow {
+  growth_tier: string;          // e.g. "1. 1x (no growth)"
+  num_users: number;
+  pct_of_users: string;
+  avg_first_stake: number;
+  avg_total_staked: number;
+  total_staked_by_tier: number;
 }
 
 export interface FeeWalletInflowRow {

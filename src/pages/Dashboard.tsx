@@ -6,6 +6,7 @@ import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimer
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { StakerLTVTable } from '../components/cards/StakerLTVTable';
 import { StakerConcentrationCard } from '../components/cards/StakerConcentrationCard';
+import { StakerLTVSection } from '../components/sections/StakerLTVSection';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
@@ -42,6 +43,9 @@ import {
   type DecubateAPYClaimerRow,
   type StakeDailyBreakdownRow,
   type StakerLTVRow,
+  type LTVByThresholdRow,
+  type LTVByFirstDepositTierRow,
+  type GrowthTierDistributionRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -122,6 +126,13 @@ export function Dashboard() {
     data: stakerLTV,
     isLoading: loadingStakerLTV,
   } = useDuneQuery<StakerLTVRow>(DUNE_QUERIES.STAKER_LTV);
+
+  const { data: ltvByThreshold, isLoading: loadingLtvByThreshold } =
+    useDuneQuery<LTVByThresholdRow>(DUNE_QUERIES.LTV_BY_THRESHOLD);
+  const { data: ltvByTier, isLoading: loadingLtvByTier } =
+    useDuneQuery<LTVByFirstDepositTierRow>(DUNE_QUERIES.LTV_BY_FIRST_DEPOSIT_TIER);
+  const { data: growthTiers, isLoading: loadingGrowthTiers } =
+    useDuneQuery<GrowthTierDistributionRow>(DUNE_QUERIES.GROWTH_TIER_DISTRIBUTION);
 
   const {
     data: monthlyStakingFlow,
@@ -752,7 +763,17 @@ export function Dashboard() {
             />
           </div>
 
-          {/* Row 3.7: Staker LTV (Dune 7340503, per-wallet lifetime metrics) */}
+          {/* Row 3.7a: Staker LTV aggregate section (hero KPIs + growth + cohort) */}
+          <div className="mb-5">
+            <StakerLTVSection
+              byThreshold={ltvByThreshold}
+              byTier={ltvByTier}
+              byGrowth={growthTiers}
+              isLoading={loadingLtvByThreshold || loadingLtvByTier || loadingGrowthTiers}
+            />
+          </div>
+
+          {/* Row 3.7b: per-wallet LTV table (Dune 7340503) */}
           <div className="mb-5">
             <StakerLTVTable
               data={stakerLTV ?? []}
