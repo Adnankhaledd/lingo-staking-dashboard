@@ -72,10 +72,24 @@ interface MixpanelBlobResponse {
 
 // ─── Data transformation helpers ─────────────────────────────────────
 
+function currentPeriodStartISO(period: 'day' | 'week'): string {
+  const now = new Date();
+  if (period === 'day') {
+    return now.toISOString().split('T')[0];
+  }
+  const d = new Date(now);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  return d.toISOString().split('T')[0];
+}
+
 function transformDAUData(data: DAUReportResponse): DailyMetric[] {
   const dauSeries = data.series?.['A. DAU'] || {};
+  const today = currentPeriodStartISO('day');
 
   return Object.entries(dauSeries)
+    .filter(([dateStr]) => dateStr.split('T')[0] < today)
     .map(([dateStr, value]) => ({
       date: formatDate(dateStr),
       value,
@@ -90,7 +104,10 @@ function formatDate(isoStr: string): string {
 
 function transformWAUData(data: EventsResponse | null): DailyMetric[] {
   const walletData = data?.data?.values?.['Wallet Connected'] || {};
+  const currentWeekStart = currentPeriodStartISO('week');
+
   return Object.entries(walletData)
+    .filter(([dateStr]) => dateStr.split('T')[0] < currentWeekStart)
     .map(([dateStr, value]) => ({
       date: formatWeekLabel(dateStr),
       value,
