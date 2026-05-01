@@ -13,6 +13,7 @@ import type {
   CommunityRewardsRow,
   BuyPressureRow,
   StakerTiersWeeklyRow,
+  NewLargeStakersRow,
 } from '../hooks/useDuneQuery';
 import type { KPIData } from '../types';
 
@@ -541,6 +542,31 @@ export function transformMonthlyNewReturningData(data: MonthlyNewReturningRow[] 
         returningLingo: Math.round(row.returning_lingo_staked),
         totalLingo: Math.round(row.total_lingo_staked),
         totalWallets: row.new_wallets + row.returning_wallets,
+      };
+    });
+}
+
+/**
+ * Transform new large-stakers data from Dune query 7411888.
+ * Filters to Nov 2025 onward and keeps only the new $100+ and new $500+ counts.
+ */
+export function transformNewLargeStakersData(data: NewLargeStakersRow[] | null) {
+  if (!data || data.length === 0) return [];
+
+  const CUTOFF = '2025-11-01'; // inclusive
+
+  return [...data]
+    .map(row => ({ ...row, _iso: parseDuneDate(row.month) }))
+    .filter(row => row._iso >= CUTOFF)
+    .sort((a, b) => a._iso.localeCompare(b._iso))
+    .map(row => {
+      const [year, month] = row._iso.split('-');
+      const date = new Date(parseInt(year), parseInt(month) - 1);
+      const monthName = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      return {
+        month: monthName,
+        new100: row.new_100_plus ?? 0,
+        new500: row.new_500_plus ?? 0,
       };
     });
 }

@@ -46,6 +46,7 @@ import {
   type LTVByThresholdRow,
   type LTVByFirstDepositTierRow,
   type GrowthTierDistributionRow,
+  type NewLargeStakersRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -66,6 +67,7 @@ import {
   getCommunityRewardsTotals,
   transformBuyPressureData,
   transformStakerTiersData,
+  transformNewLargeStakersData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -197,6 +199,12 @@ export function Dashboard() {
     isLoading: loadingWeeklyLock,
     executedAt: weeklyLockExecutedAt,
   } = useDuneQuery<WeeklyLockBreakdownRow>(DUNE_QUERIES.WEEKLY_LOCK_BREAKDOWN);
+
+  const {
+    data: newLargeStakers,
+    isLoading: loadingNewLargeStakers,
+    executedAt: newLargeStakersExecutedAt,
+  } = useDuneQuery<NewLargeStakersRow>(DUNE_QUERIES.NEW_LARGE_STAKERS);
 
   // Alchemy live total staked (polls every 5 min, 1 API call)
   const { totalStaked: liveTotalStaked } = useLiveTotalStaked();
@@ -337,6 +345,11 @@ export function Dashboard() {
   const stakerTiersChartData = useMemo(
     () => transformStakerTiersData(stakerTiersWeekly),
     [stakerTiersWeekly]
+  );
+
+  const newLargeStakersData = useMemo(
+    () => transformNewLargeStakersData(newLargeStakers),
+    [newLargeStakers]
   );
 
   // Export handlers
@@ -901,6 +914,41 @@ export function Dashboard() {
               ) : (
                 <div className="h-[300px] flex items-center justify-center text-soft-gray">
                   {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+
+          {/* Row 1.5: New large-deposit stakers ($100+ vs $500+, since Nov '25) */}
+          <div className="mb-5">
+            <ChartCard
+              title="New Large-Deposit Stakers"
+              subtitle="New wallets staking $100+ vs $500+ per month (since Nov '25)"
+              isLoading={loadingNewLargeStakers}
+              lastUpdated={newLargeStakersExecutedAt}
+            >
+              {newLargeStakersData.length > 0 ? (
+                <BarChartComponent
+                  data={newLargeStakersData}
+                  xAxisKey="month"
+                  formatXAxis={(v) => v}
+                  bars={[
+                    {
+                      dataKey: 'new100',
+                      name: 'New $100+',
+                      color: '#C4B5D4',
+                    },
+                    {
+                      dataKey: 'new500',
+                      name: 'New $500+',
+                      color: '#5EB851',
+                    },
+                  ]}
+                  height={300}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                  {loadingNewLargeStakers ? 'Loading...' : 'No data available'}
                 </div>
               )}
             </ChartCard>

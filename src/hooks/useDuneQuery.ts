@@ -249,6 +249,7 @@ export const DUNE_QUERIES = {
   LTV_BY_THRESHOLD: '7350883',
   LTV_BY_FIRST_DEPOSIT_TIER: '7350966',
   GROWTH_TIER_DISTRIBUTION: '7340511',
+  NEW_LARGE_STAKERS: '7411888',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -607,4 +608,17 @@ export interface DecubateAPYClaimerRow {
   avg_claim: number;
   first_claim: string;
   last_claim: string;
+}
+
+export interface NewLargeStakersRow {
+  month: string;            // "2026-04-01 00:00:00.000 UTC"
+  new_100_plus: number;     // count of new wallets staking >= $100
+  lingo_100_plus: number;
+  usd_100_plus: number;
+  new_500_plus: number;     // count of new wallets staking >= $500 (subset of $100+)
+  lingo_500_plus: number;
+  usd_500_plus: number;
+  pct_100_to_500: string;
+  avg_usd_100_plus: number;
+  avg_usd_500_plus: number | null;
 }
