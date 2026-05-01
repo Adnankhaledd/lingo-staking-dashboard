@@ -626,11 +626,15 @@ interface ProjectionsTableProps {
   autoRevenue: { map: Map<string, ProjectionLineItem[]>; autoLabels: string[] };
 }
 
+// Pinned start of the projection window — does not roll forward as time passes
+const PROJECTION_START_YEAR = 2026;
+const PROJECTION_START_MONTH = 4; // April (1-indexed)
+const PROJECTION_END_MONTH = 12;  // December (1-indexed, inclusive)
+
 function generateMonthRange(): string[] {
-  const now = new Date();
   const months: string[] = [];
-  for (let m = now.getMonth(); m < 12; m++) {
-    months.push(`${now.getFullYear()}-${String(m + 1).padStart(2, '0')}`);
+  for (let m = PROJECTION_START_MONTH; m <= PROJECTION_END_MONTH; m++) {
+    months.push(`${PROJECTION_START_YEAR}-${String(m).padStart(2, '0')}`);
   }
   return months;
 }
