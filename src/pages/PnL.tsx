@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import {
   Lock, DollarSign, TrendingUp, TrendingDown, Minus,
-  Plus, Trash2, LogOut, Wallet, Calendar,
+  Plus, Trash2, LogOut, Wallet, Calendar, Download,
 } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
 import lingoLogo from '../assets/logo-lingo.svg';
@@ -639,6 +639,183 @@ function generateMonthRange(): string[] {
   return months;
 }
 
+// ─── Excel export ─────────────────────────────────────────────────────
+// Lazy-loads xlsx so it isn't shipped in the initial bundle.
+
+interface ExportArgs {
+  months: string[];
+  projections: MonthProjection[];
+  actuals: MonthActuals[];
+  frozen: FrozenSnapshot | null;
+  autoRevenue: { map: Map<string, ProjectionLineItem[]>; autoLabels: string[] };
+  getEffective: (month: string) => MonthProjection;
+  hasOwnData: (month: string) => boolean;
+}
+
+async function downloadProjectionsExcel(args: ExportArgs): Promise<void> {
+  const { months, projections, actuals, frozen, autoRevenue, getEffective, hasOwnData } = args;
+  const XLSX = await import('xlsx');
+
+  const findActual = (m: string) => actuals.find(a => a.month === m);
+  const findOwn = (m: string) => projections.find(p => p.month === m);
+
+  // Walk back to find which prior month an inherited type came from
+  const inheritanceSource = (m: string, type: 'revenue' | 'expense'): string | null => {
+    const idx = months.indexOf(m);
+    for (let j = idx - 1; j >= 0; j--) {
+      const prev = findOwn(months[j]);
+      const items = type === 'revenue' ? prev?.revenueItems : prev?.expenseItems;
+      if (items && items.length > 0) return monthLabel(months[j]);
+    }
+    return null;
+  };
+
+  // ── Sheet 1: Summary ─────────────────────────────────────────────
+  const summary = months.map(m => {
+    const eff = getEffective(m);
+    const autoItems = autoRevenue.map.get(m) ?? [];
+    const autoRev = autoItems.reduce((s, i) => s + i.amount, 0);
+    const manualRev = eff.revenueItems
+      .filter(i => !autoRevenue.autoLabels.includes(i.label))
+      .reduce((s, i) => s + i.amount, 0);
+    const projRev = autoRev + manualRev;
+    const projExp = eff.expenseItems.reduce((s, i) => s + i.amount, 0);
+    const projNet = projRev - projExp;
+
+    const a = findActual(m);
+    const hasActual = !!a && (a.actualRevenue > 0 || a.actualExpenses > 0);
+    const actualRev = a?.actualRevenue ?? 0;
+    const actualExp = a?.actualExpenses ?? 0;
+    const actualNet = actualRev - actualExp;
+
+    const fr = frozen?.months[m] ?? null;
+    const projRefRev = fr?.revenue ?? projRev;
+    const projRefExp = fr?.expenses ?? projExp;
+    const variance = hasActual ? actualNet - (projRefRev - projRefExp) : null;
+
+    return {
+      Month: monthLabel(m),
+      'Projected Revenue': projRev,
+      'Projected Expenses': projExp,
+      'Projected Net': projNet,
+      'Actual Revenue': hasActual ? actualRev : '',
+      'Actual Expenses': hasActual ? actualExp : '',
+      'Actual Net': hasActual ? actualNet : '',
+      'Variance (Actual vs Frozen/Proj)': variance ?? '',
+      'Frozen Revenue': fr?.revenue ?? '',
+      'Frozen Expenses': fr?.expenses ?? '',
+      Customized: hasOwnData(m) ? 'Yes' : 'No',
+      Notes: a?.notes ?? '',
+    };
+  });
+
+  // Totals row at the bottom
+  const totalProjRev = summary.reduce((s, r) => s + (Number(r['Projected Revenue']) || 0), 0);
+  const totalProjExp = summary.reduce((s, r) => s + (Number(r['Projected Expenses']) || 0), 0);
+  const totalActRev = summary.reduce((s, r) => s + (Number(r['Actual Revenue']) || 0), 0);
+  const totalActExp = summary.reduce((s, r) => s + (Number(r['Actual Expenses']) || 0), 0);
+  summary.push({
+    Month: 'TOTAL',
+    'Projected Revenue': totalProjRev,
+    'Projected Expenses': totalProjExp,
+    'Projected Net': totalProjRev - totalProjExp,
+    'Actual Revenue': totalActRev || '',
+    'Actual Expenses': totalActExp || '',
+    'Actual Net': totalActRev || totalActExp ? totalActRev - totalActExp : '',
+    'Variance (Actual vs Frozen/Proj)': '',
+    'Frozen Revenue': '',
+    'Frozen Expenses': '',
+    Customized: '',
+    Notes: '',
+  });
+
+  // ── Sheet 2: Revenue Detail ──────────────────────────────────────
+  const revRows: Array<Record<string, string | number>> = [];
+  for (const m of months) {
+    const eff = getEffective(m);
+    const own = findOwn(m);
+    const ownHasRev = !!own && own.revenueItems.length > 0;
+    const inheritedFrom = ownHasRev ? null : inheritanceSource(m, 'revenue');
+
+    // Auto items (from MM Capture / Product / Trading Fees model)
+    for (const item of autoRevenue.map.get(m) ?? []) {
+      revRows.push({
+        Month: monthLabel(m),
+        Item: item.label,
+        Amount: item.amount,
+        Source: 'Auto (MM Capture model)',
+      });
+    }
+
+    const manualItems = eff.revenueItems.filter(i => !autoRevenue.autoLabels.includes(i.label));
+    for (const item of manualItems) {
+      revRows.push({
+        Month: monthLabel(m),
+        Item: item.label || '(unnamed)',
+        Amount: item.amount,
+        Source: ownHasRev ? 'Manual' : `Inherited${inheritedFrom ? ` from ${inheritedFrom}` : ''}`,
+      });
+    }
+  }
+
+  // ── Sheet 3: Expense Detail ──────────────────────────────────────
+  const expRows: Array<Record<string, string | number>> = [];
+  for (const m of months) {
+    const eff = getEffective(m);
+    const own = findOwn(m);
+    const ownHasExp = !!own && own.expenseItems.length > 0;
+    const inheritedFrom = ownHasExp ? null : inheritanceSource(m, 'expense');
+
+    for (const item of eff.expenseItems) {
+      expRows.push({
+        Month: monthLabel(m),
+        Item: item.label || '(unnamed)',
+        Amount: item.amount,
+        Source: ownHasExp ? 'Manual' : `Inherited${inheritedFrom ? ` from ${inheritedFrom}` : ''}`,
+      });
+    }
+  }
+
+  // ── Sheet 4: Actuals (with notes/timestamps) ─────────────────────
+  const actualRows = actuals
+    .filter(a => a.actualRevenue > 0 || a.actualExpenses > 0 || (a.notes && a.notes.trim()))
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map(a => ({
+      Month: monthLabel(a.month),
+      'Actual Revenue': a.actualRevenue,
+      'Actual Expenses': a.actualExpenses,
+      'Actual Net': a.actualRevenue - a.actualExpenses,
+      Notes: a.notes ?? '',
+    }));
+
+  // ── Sheet 5: Frozen Snapshot (only if frozen) ────────────────────
+  const frozenRows = frozen
+    ? Object.entries(frozen.months)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([m, v]) => ({
+          Month: monthLabel(m),
+          'Frozen Revenue': v.revenue,
+          'Frozen Expenses': v.expenses,
+          'Frozen Net': v.revenue - v.expenses,
+          'Frozen At': frozen.frozenAt,
+        }))
+    : null;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'Summary');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(revRows), 'Revenue Detail');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expRows), 'Expense Detail');
+  if (actualRows.length > 0) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(actualRows), 'Actuals');
+  }
+  if (frozenRows) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(frozenRows), 'Frozen Snapshot');
+  }
+
+  const stamp = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(wb, `pnl-projections-${stamp}.xlsx`);
+}
+
 function ProjectionsTable({ projections, setProjections, actuals, setActuals, frozen, setFrozen, onEdit, autoRevenue }: ProjectionsTableProps) {
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
   const months = useMemo(generateMonthRange, []);
@@ -786,19 +963,48 @@ function ProjectionsTable({ projections, setProjections, actuals, setActuals, fr
   // Get frozen values for a month
   const getFrozen = (month: string) => frozen?.months[month] ?? null;
 
+  // Excel download — lazy-loads xlsx on click
+  const [downloading, setDownloading] = useState(false);
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      await downloadProjectionsExcel({
+        months,
+        projections,
+        actuals,
+        frozen,
+        autoRevenue,
+        getEffective,
+        hasOwnData,
+      });
+    } catch (e) {
+      console.error('Excel export failed:', e);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="flagship-card rounded-2xl">
-      <div className="flex items-center justify-between p-6 border-b border-white/5 relative z-10">
+      <div className="flex items-center justify-between p-6 border-b border-white/5 relative z-10 flex-wrap gap-3">
         <div>
           <h3 className="text-lg font-semibold text-lavender">Monthly Projections vs Actuals</h3>
           <p className="text-sm text-soft-gray mt-1">
             Click a month to edit projections and enter actual results. {frozen && <span className="text-purple text-xs">Frozen {new Date(frozen.frozenAt).toLocaleDateString()}</span>}
           </p>
         </div>
-        <button onClick={handleFreeze}
-          className="flex items-center gap-1.5 px-4 py-2 bg-purple/20 hover:bg-purple/30 text-lavender text-sm font-medium rounded-xl border border-purple/30 transition-colors">
-          {frozen ? 'Re-freeze' : 'Freeze Projections'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleDownload} disabled={downloading}
+            className="flex items-center gap-1.5 px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] text-lavender text-sm font-medium rounded-xl border border-white/[0.08] transition-colors disabled:opacity-50">
+            <Download className="w-4 h-4" />
+            {downloading ? 'Preparing...' : 'Download Excel'}
+          </button>
+          <button onClick={handleFreeze}
+            className="flex items-center gap-1.5 px-4 py-2 bg-purple/20 hover:bg-purple/30 text-lavender text-sm font-medium rounded-xl border border-purple/30 transition-colors">
+            {frozen ? 'Re-freeze' : 'Freeze Projections'}
+          </button>
+        </div>
       </div>
 
       <div className="relative z-10">
