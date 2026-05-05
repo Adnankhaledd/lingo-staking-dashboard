@@ -47,6 +47,7 @@ import {
   type LTVByFirstDepositTierRow,
   type GrowthTierDistributionRow,
   type NewLargeStakersRow,
+  type StakersByUSDThresholdRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -206,6 +207,12 @@ export function Dashboard() {
     executedAt: newLargeStakersExecutedAt,
   } = useDuneQuery<NewLargeStakersRow>(DUNE_QUERIES.NEW_LARGE_STAKERS);
 
+  const {
+    data: stakersByThreshold,
+    isLoading: loadingStakersByThreshold,
+    executedAt: stakersByThresholdExecutedAt,
+  } = useDuneQuery<StakersByUSDThresholdRow>(DUNE_QUERIES.STAKERS_BY_USD_THRESHOLD);
+
   // Alchemy live total staked (polls every 5 min, 1 API call)
   const { totalStaked: liveTotalStaked } = useLiveTotalStaked();
 
@@ -351,6 +358,23 @@ export function Dashboard() {
     () => transformNewLargeStakersData(newLargeStakers),
     [newLargeStakers]
   );
+
+  // Stakers-by-USD-threshold snapshot — flatten the single row into chart buckets.
+  const stakersByThresholdRow = stakersByThreshold?.[0] ?? null;
+  const stakersByThresholdData = useMemo(() => {
+    if (!stakersByThresholdRow) return [];
+    const r = stakersByThresholdRow;
+    return [
+      { threshold: '≥ $10',   count: r.stakers_10_plus },
+      { threshold: '≥ $50',   count: r.stakers_50_plus },
+      { threshold: '≥ $100',  count: r.stakers_100_plus },
+      { threshold: '≥ $250',  count: r.stakers_250_plus },
+      { threshold: '≥ $500',  count: r.stakers_500_plus },
+      { threshold: '≥ $1k',   count: r.stakers_1000_plus },
+      { threshold: '≥ $2.5k', count: r.stakers_2500_plus },
+      { threshold: '≥ $5k',   count: r.stakers_5000_plus },
+    ];
+  }, [stakersByThresholdRow]);
 
   // Export handlers
   const handleExportTrend = () => {
@@ -914,6 +938,34 @@ export function Dashboard() {
               ) : (
                 <div className="h-[300px] flex items-center justify-center text-soft-gray">
                   {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+
+          {/* Row 1.4: Stakers by USD value threshold (snapshot) */}
+          <div className="mb-5">
+            <ChartCard
+              title="Stakers by USD Value"
+              subtitle={
+                stakersByThresholdRow
+                  ? `Wallets with total stake ≥ each threshold • ${stakersByThresholdRow.total_stakers.toLocaleString()} total stakers • LINGO @ $${stakersByThresholdRow.current_price.toFixed(5)}`
+                  : 'Wallets with total stake ≥ each threshold (current LINGO price)'
+              }
+              isLoading={loadingStakersByThreshold}
+              lastUpdated={stakersByThresholdExecutedAt}
+            >
+              {stakersByThresholdData.length > 0 ? (
+                <SimpleBarChart
+                  data={stakersByThresholdData}
+                  dataKey="count"
+                  xAxisKey="threshold"
+                  color="#7B68AE"
+                  height={300}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                  {loadingStakersByThreshold ? 'Loading...' : 'No data available'}
                 </div>
               )}
             </ChartCard>

@@ -250,6 +250,7 @@ export const DUNE_QUERIES = {
   LTV_BY_FIRST_DEPOSIT_TIER: '7350966',
   GROWTH_TIER_DISTRIBUTION: '7340511',
   NEW_LARGE_STAKERS: '7411888',
+  STAKERS_BY_USD_THRESHOLD: '7432116',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -621,4 +622,19 @@ export interface NewLargeStakersRow {
   pct_100_to_500: string;
   avg_usd_100_plus: number;
   avg_usd_500_plus: number | null;
+}
+
+// Single-row snapshot of staker counts at various USD-value thresholds (Dune 7432116).
+// Each count is wallets whose total staked is >= the threshold at the current price.
+export interface StakersByUSDThresholdRow {
+  current_price: number;
+  total_stakers: number;
+  stakers_10_plus: number;
+  stakers_50_plus: number;
+  stakers_100_plus: number;
+  stakers_250_plus: number;
+  stakers_500_plus: number;
+  stakers_1000_plus: number;
+  stakers_2500_plus: number;
+  stakers_5000_plus: number;
 }
