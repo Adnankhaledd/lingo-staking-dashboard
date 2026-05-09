@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, ExternalLink, Trophy, Medal, Award, Search, X } from 'lucide-react';
+import { Download, ExternalLink, Trophy, Medal, Award, Search, X, ArrowUp, ArrowDown, Minus, Sparkles } from 'lucide-react';
 import { formatNumber, formatCurrency, exportToCSV } from '../../utils/formatters';
 import { GlowButton } from '../ui/GlowButton';
 import type { TopStakerRow } from '../../hooks/useDuneQuery';
@@ -28,6 +28,70 @@ function formatDate(iso: string): string {
   if (!iso) return '—';
   const d = new Date(iso);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+/**
+ * Small chip rendered under the rank badge showing how the wallet moved
+ * relative to the previous snapshot (rotated ~once per day in the refresh job).
+ */
+function RankChangeChip({ staker }: { staker: TopStakerRow }) {
+  // No previous snapshot at all: nothing to compare against
+  if (staker.previousSnapshotAt === undefined) return null;
+
+  // Wallet wasn't in the previous snapshot → brand new entrant to the top 300
+  if (staker.previousRank == null) {
+    return (
+      <span
+        className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-purple"
+        title="New to the leaderboard since last snapshot"
+      >
+        <Sparkles className="w-2.5 h-2.5" />
+        NEW
+      </span>
+    );
+  }
+
+  const delta = staker.rankDelta ?? 0;
+  if (delta > 0) {
+    return (
+      <span
+        className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-green1"
+        title={`Up ${delta} from #${staker.previousRank}`}
+      >
+        <ArrowUp className="w-2.5 h-2.5" />
+        {delta}
+      </span>
+    );
+  }
+  if (delta < 0) {
+    return (
+      <span
+        className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-red-400"
+        title={`Down ${-delta} from #${staker.previousRank}`}
+      >
+        <ArrowDown className="w-2.5 h-2.5" />
+        {-delta}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 text-[10px] font-medium text-soft-gray"
+      title="No change since last snapshot"
+    >
+      <Minus className="w-2.5 h-2.5" />
+    </span>
+  );
+}
+
+function formatRelativeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0 || !Number.isFinite(ms)) return iso;
+  const hours = ms / (1000 * 60 * 60);
+  if (hours < 24) return `${Math.round(hours)}h ago`;
+  const days = hours / 24;
+  if (days < 30) return `${Math.round(days)}d ago`;
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function getRankDisplay(rank: number) {
@@ -125,7 +189,12 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
       <div className="flex items-center justify-between p-6 border-b border-white/5 relative z-10">
         <div>
           <h3 className="text-lg font-semibold text-lavender">Top Stakers Leaderboard</h3>
-          <p className="text-sm text-soft-gray mt-1">Top 300 wallets by LINGO staked (USD value, 12-month lock)</p>
+          <p className="text-sm text-soft-gray mt-1">
+            Top 300 wallets by LINGO staked (USD value, 12-month lock)
+            {data && data[0]?.previousSnapshotAt && (
+              <span className="text-purple-gray"> &bull; rank changes vs {formatRelativeAgo(data[0].previousSnapshotAt)}</span>
+            )}
+          </p>
         </div>
         <GlowButton
           onClick={handleExport}
@@ -221,7 +290,10 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
                   }`}
                 >
                   <td className="py-4 px-6">
-                    {getRankDisplay(staker.rank)}
+                    <div className="flex flex-col items-start gap-1">
+                      {getRankDisplay(staker.rank)}
+                      <RankChangeChip staker={staker} />
+                    </div>
                   </td>
                   <td className="py-4 px-4">
                     <div className="flex items-center gap-3">

@@ -25,6 +25,25 @@ const DUNE_API_BASE = 'https://api.dune.com/api/v1';
 
 const BLOB_FILENAME = 'dune-data.json';
 
+// ─── Top stakers rank-change tracking ──────────────────────────────────────
+// We persist the most-recent ranking snapshot in a separate blob and use it
+// to annotate each row with a previousRank / rankDelta on the next refresh.
+// The snapshot is only rotated forward when the previous one is at least this
+// old, so deltas reflect meaningful change rather than refresh-to-refresh
+// noise (cron runs much more often than ranks actually move).
+const TOP_STAKERS_QUERY_ID = '6919472';
+const TOP_STAKERS_SNAPSHOT_FILENAME = 'top-stakers-snapshot.json';
+const SNAPSHOT_MIN_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+
+interface TopStakersSnapshot {
+  snapshotAt: string;
+  ranks: Record<string, number>; // lowercased wallet → rank
+}
+
+function normalizeWallet(w: string): string {
+  return (w || '').replace(/^0x0+/, '0x').toLowerCase();
+}
+
 // All queries with their limits
 const QUERIES: Record<string, number> = {
   '6590984': 1000, // TOTAL_STAKED_TREND
@@ -192,6 +211,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`Query ${queryId} failed, keeping existing data`);
     } else {
       mergedQueries[queryId] = newResult || { rows: [], executedAt: null, error: 'No data' };
+    }
+  }
+
+  // ── Annotate Top Stakers rows with rank-change vs previous snapshot ──────
+  const topStakersResult = mergedQueries[TOP_STAKERS_QUERY_ID];
+  if (topStakersResult && topStakersResult.rows.length > 0) {
+    const previousSnapshot = await fetchBlobJson<TopStakersSnapshot>(
+      TOP_STAKERS_SNAPSHOT_FILENAME
+    );
+    const previousRanks = previousSnapshot?.ranks ?? {};
+    const previousSnapshotAt = previousSnapshot?.snapshotAt ?? null;
+
+    const annotatedRows = (topStakersResult.rows as Array<Record<string, unknown>>).map(row => {
+      const wallet = normalizeWallet(String(row.wallet ?? ''));
+      const newRank = Number(row.rank);
+      const previousRank = previousRanks[wallet];
+      // delta > 0 means moved up (smaller rank number). delta < 0 = moved down.
+      const rankDelta = previousRank ? previousRank - newRank : null;
+      return {
+        ...row,
+        previousRank: previousRank ?? null,
+        rankDelta,
+        previousSnapshotAt,
+      };
+    });
+    mergedQueries[TOP_STAKERS_QUERY_ID] = {
+      ...topStakersResult,
+      rows: annotatedRows,
+    };
+
+    // Rotate the snapshot forward only if the existing one is old enough
+    // (or missing entirely). Avoids resetting deltas on every cron tick.
+    const snapshotAgeMs = previousSnapshot
+      ? Date.now() - new Date(previousSnapshot.snapshotAt).getTime()
+      : Infinity;
+    if (snapshotAgeMs >= SNAPSHOT_MIN_AGE_MS) {
+      const newRanks: Record<string, number> = {};
+      for (const row of topStakersResult.rows as Array<Record<string, unknown>>) {
+        const wallet = normalizeWallet(String(row.wallet ?? ''));
+        if (wallet) newRanks[wallet] = Number(row.rank);
+      }
+      const snapshot: TopStakersSnapshot = {
+        snapshotAt: new Date().toISOString(),
+        ranks: newRanks,
+      };
+      try {
+        await put(TOP_STAKERS_SNAPSHOT_FILENAME, JSON.stringify(snapshot), {
+          access: 'public',
+          addRandomSuffix: false,
+          allowOverwrite: true,
+          contentType: 'application/json',
+        });
+        console.log(`Rotated top-stakers snapshot (was ${previousSnapshot ? `${Math.round(snapshotAgeMs / 3600_000)}h old` : 'missing'})`);
+      } catch (err) {
+        console.warn('Failed to write top-stakers snapshot:', err);
+      }
+    } else {
+      console.log(`Keeping top-stakers snapshot (${Math.round(snapshotAgeMs / 3600_000)}h old, threshold ${SNAPSHOT_MIN_AGE_MS / 3600_000}h)`);
     }
   }
 

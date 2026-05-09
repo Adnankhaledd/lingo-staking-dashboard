@@ -311,6 +311,12 @@ export interface TopStakerRow {
   first_stake: string;
   last_stake: string;
   total_stake_events: number;
+  // Server-annotated rank-change fields (populated in refresh-dune.ts).
+  // previousRank is null for wallets that weren't in the prior snapshot.
+  // rankDelta = previousRank - rank; positive = moved up, negative = moved down.
+  previousRank?: number | null;
+  rankDelta?: number | null;
+  previousSnapshotAt?: string | null;
 }
 
 export interface TradingFeesRow {
