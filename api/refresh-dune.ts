@@ -26,22 +26,40 @@ const DUNE_API_BASE = 'https://api.dune.com/api/v1';
 const BLOB_FILENAME = 'dune-data.json';
 
 // ─── Top stakers rank-change tracking ──────────────────────────────────────
-// We persist the most-recent ranking snapshot in a separate blob and use it
-// to annotate each row with a previousRank / rankDelta on the next refresh.
-// The snapshot is only rotated forward when the previous one is at least this
-// old, so deltas reflect meaningful change rather than refresh-to-refresh
-// noise (cron runs much more often than ranks actually move).
+// We persist a 2-slot snapshot in a separate blob:
+//   current  = ranks from the most recent Dune execution we've observed
+//   previous = ranks from the Dune execution before that (the comparison baseline)
+//
+// The snapshot is rotated ONLY when Dune's executedAt changes — i.e. the
+// underlying query was actually re-run. This means cron can run as often as
+// it likes between Dune updates without erasing the comparison baseline. If
+// the user re-runs the Dune query weekly, deltas will reflect week-over-week
+// movement.
 const TOP_STAKERS_QUERY_ID = '6919472';
 const TOP_STAKERS_SNAPSHOT_FILENAME = 'top-stakers-snapshot.json';
-const SNAPSHOT_MIN_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+
+interface TopStakersSlot {
+  ranks: Record<string, number>; // lowercased wallet → rank
+  dataExecutedAt: string | null; // executedAt of the Dune run this slot represents
+}
 
 interface TopStakersSnapshot {
-  snapshotAt: string;
-  ranks: Record<string, number>; // lowercased wallet → rank
+  current: TopStakersSlot;
+  previous: TopStakersSlot | null;
+  snapshotAt: string; // when this snapshot file was last written
 }
 
 function normalizeWallet(w: string): string {
   return (w || '').replace(/^0x0+/, '0x').toLowerCase();
+}
+
+function ranksFromRows(rows: Array<Record<string, unknown>>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const row of rows) {
+    const wallet = normalizeWallet(String(row.wallet ?? ''));
+    if (wallet) out[wallet] = Number(row.rank);
+  }
+  return out;
 }
 
 // All queries with their limits
@@ -214,26 +232,65 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // ── Annotate Top Stakers rows with rank-change vs previous snapshot ──────
+  // ── Annotate Top Stakers rows with rank-change vs previous Dune execution ─
   const topStakersResult = mergedQueries[TOP_STAKERS_QUERY_ID];
   if (topStakersResult && topStakersResult.rows.length > 0) {
-    const previousSnapshot = await fetchBlobJson<TopStakersSnapshot>(
+    const newRows = topStakersResult.rows as Array<Record<string, unknown>>;
+    const newExecutedAt = topStakersResult.executedAt;
+    const newRanks = ranksFromRows(newRows);
+
+    const existingSnapshot = await fetchBlobJson<TopStakersSnapshot>(
       TOP_STAKERS_SNAPSHOT_FILENAME
     );
-    const previousRanks = previousSnapshot?.ranks ?? {};
-    const previousSnapshotAt = previousSnapshot?.snapshotAt ?? null;
 
-    const annotatedRows = (topStakersResult.rows as Array<Record<string, unknown>>).map(row => {
+    // Decide whether the underlying Dune data has actually changed since the
+    // snapshot was last updated. If yes, rotate: previous = old current, current = new.
+    let snapshotToWrite: TopStakersSnapshot;
+    let comparisonSlot: TopStakersSlot | null;
+    if (!existingSnapshot) {
+      // First ever run — seed current with what we just got. No baseline yet.
+      snapshotToWrite = {
+        current: { ranks: newRanks, dataExecutedAt: newExecutedAt },
+        previous: null,
+        snapshotAt: new Date().toISOString(),
+      };
+      comparisonSlot = null;
+      console.log('Top-stakers snapshot initialized (no comparison baseline yet)');
+    } else if (
+      newExecutedAt &&
+      newExecutedAt !== existingSnapshot.current.dataExecutedAt
+    ) {
+      // Dune query was re-run since our last observation — promote current to
+      // previous and store the new ranks as current.
+      snapshotToWrite = {
+        current: { ranks: newRanks, dataExecutedAt: newExecutedAt },
+        previous: existingSnapshot.current,
+        snapshotAt: new Date().toISOString(),
+      };
+      comparisonSlot = existingSnapshot.current;
+      console.log(
+        `Top-stakers Dune executedAt changed (${existingSnapshot.current.dataExecutedAt} → ${newExecutedAt}); rotated snapshot`
+      );
+    } else {
+      // Same Dune execution as last time — keep snapshot as-is, deltas continue
+      // to reflect the change vs the prior run.
+      snapshotToWrite = existingSnapshot;
+      comparisonSlot = existingSnapshot.previous;
+    }
+
+    const baselineRanks = comparisonSlot?.ranks ?? {};
+    const baselineExecutedAt = comparisonSlot?.dataExecutedAt ?? null;
+    const annotatedRows = newRows.map(row => {
       const wallet = normalizeWallet(String(row.wallet ?? ''));
       const newRank = Number(row.rank);
-      const previousRank = previousRanks[wallet];
+      const previousRank = baselineRanks[wallet];
       // delta > 0 means moved up (smaller rank number). delta < 0 = moved down.
       const rankDelta = previousRank ? previousRank - newRank : null;
       return {
         ...row,
         previousRank: previousRank ?? null,
         rankDelta,
-        previousSnapshotAt,
+        previousSnapshotAt: baselineExecutedAt,
       };
     });
     mergedQueries[TOP_STAKERS_QUERY_ID] = {
@@ -241,34 +298,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       rows: annotatedRows,
     };
 
-    // Rotate the snapshot forward only if the existing one is old enough
-    // (or missing entirely). Avoids resetting deltas on every cron tick.
-    const snapshotAgeMs = previousSnapshot
-      ? Date.now() - new Date(previousSnapshot.snapshotAt).getTime()
-      : Infinity;
-    if (snapshotAgeMs >= SNAPSHOT_MIN_AGE_MS) {
-      const newRanks: Record<string, number> = {};
-      for (const row of topStakersResult.rows as Array<Record<string, unknown>>) {
-        const wallet = normalizeWallet(String(row.wallet ?? ''));
-        if (wallet) newRanks[wallet] = Number(row.rank);
-      }
-      const snapshot: TopStakersSnapshot = {
-        snapshotAt: new Date().toISOString(),
-        ranks: newRanks,
-      };
+    // Persist the (possibly rotated) snapshot
+    if (snapshotToWrite !== existingSnapshot) {
       try {
-        await put(TOP_STAKERS_SNAPSHOT_FILENAME, JSON.stringify(snapshot), {
+        await put(TOP_STAKERS_SNAPSHOT_FILENAME, JSON.stringify(snapshotToWrite), {
           access: 'public',
           addRandomSuffix: false,
           allowOverwrite: true,
           contentType: 'application/json',
         });
-        console.log(`Rotated top-stakers snapshot (was ${previousSnapshot ? `${Math.round(snapshotAgeMs / 3600_000)}h old` : 'missing'})`);
       } catch (err) {
         console.warn('Failed to write top-stakers snapshot:', err);
       }
-    } else {
-      console.log(`Keeping top-stakers snapshot (${Math.round(snapshotAgeMs / 3600_000)}h old, threshold ${SNAPSHOT_MIN_AGE_MS / 3600_000}h)`);
     }
   }
 
