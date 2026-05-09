@@ -239,9 +239,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const newExecutedAt = topStakersResult.executedAt;
     const newRanks = ranksFromRows(newRows);
 
-    const existingSnapshot = await fetchBlobJson<TopStakersSnapshot>(
-      TOP_STAKERS_SNAPSHOT_FILENAME
-    );
+    const rawSnapshot = await fetchBlobJson<unknown>(TOP_STAKERS_SNAPSHOT_FILENAME);
+    // Validate shape: we changed the file format, so an older snapshot from
+    // a previous deploy won't match. Treat it as missing → triggers re-init.
+    const existingSnapshot: TopStakersSnapshot | null =
+      rawSnapshot &&
+      typeof rawSnapshot === 'object' &&
+      'current' in rawSnapshot &&
+      (rawSnapshot as TopStakersSnapshot).current &&
+      typeof (rawSnapshot as TopStakersSnapshot).current === 'object'
+        ? (rawSnapshot as TopStakersSnapshot)
+        : null;
 
     // Decide whether the underlying Dune data has actually changed since the
     // snapshot was last updated. If yes, rotate: previous = old current, current = new.
