@@ -11,7 +11,6 @@ import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
 import { StakingFlowChart } from '../components/charts/StakingFlowChart';
-import { StakerTiersChart } from '../components/charts/StakerTiersChart';
 import { LockDistributionChart } from '../components/charts/LockDistributionChart';
 import { WeeklyLockChart } from '../components/charts/WeeklyLockChart';
 import { StakeDailyChart } from '../components/charts/StakeDailyChart';
@@ -37,7 +36,6 @@ import {
   type MonthlyLingoByLockRow,
   type CommunityRewardsRow,
   type BuyPressureRow,
-  type StakerTiersWeeklyRow,
   type LockDistributionRow,
   type WeeklyLockBreakdownRow,
   type DecubateAPYClaimerRow,
@@ -67,7 +65,6 @@ import {
   transformCommunityRewardsData,
   getCommunityRewardsTotals,
   transformBuyPressureData,
-  transformStakerTiersData,
   transformNewLargeStakersData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
@@ -182,12 +179,6 @@ export function Dashboard() {
     isLoading: loadingBuyPressure,
     executedAt: buyPressureExecutedAt,
   } = useDuneQuery<BuyPressureRow>(DUNE_QUERIES.BUY_PRESSURE);
-
-  const {
-    data: stakerTiersWeekly,
-    isLoading: loadingStakerTiers,
-    executedAt: stakerTiersExecutedAt,
-  } = useDuneQuery<StakerTiersWeeklyRow>(DUNE_QUERIES.STAKER_TIERS_WEEKLY);
 
   const {
     data: lockDistribution,
@@ -347,11 +338,6 @@ export function Dashboard() {
   const buyPressureChartData = useMemo(
     () => transformBuyPressureData(buyPressureData),
     [buyPressureData]
-  );
-
-  const stakerTiersChartData = useMemo(
-    () => transformStakerTiersData(stakerTiersWeekly),
-    [stakerTiersWeekly]
   );
 
   const newLargeStakersData = useMemo(
@@ -771,11 +757,6 @@ export function Dashboard() {
           {/* Row 2: Staking Flow */}
           <div className="mb-5">
             <StakingFlowChart data={stakingFlowData} isLoading={loadingStakingFlow} lastUpdated={stakingFlowExecutedAt} />
-          </div>
-
-          {/* Row 2.5: Staker Tiers Trend */}
-          <div className="mb-5">
-            <StakerTiersChart data={stakerTiersChartData} isLoading={loadingStakerTiers} lastUpdated={stakerTiersExecutedAt} />
           </div>
 
           {/* Row 3: Weekly Lock Duration Trend */}

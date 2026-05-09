@@ -565,8 +565,8 @@ export function transformNewLargeStakersData(data: NewLargeStakersRow[] | null) 
       const monthName = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
       return {
         month: monthName,
-        new100: row.new_100_plus ?? 0,
-        new500: row.new_500_plus ?? 0,
+        new100: row.new_100 ?? 0,
+        new500: row.new_500 ?? 0,
       };
     });
 }

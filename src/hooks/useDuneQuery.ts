@@ -612,16 +612,11 @@ export interface DecubateAPYClaimerRow {
 }
 
 export interface NewLargeStakersRow {
-  month: string;            // "2026-04-01 00:00:00.000 UTC"
-  new_100_plus: number;     // count of new wallets staking >= $100
-  lingo_100_plus: number;
-  usd_100_plus: number;
-  new_500_plus: number;     // count of new wallets staking >= $500 (subset of $100+)
-  lingo_500_plus: number;
-  usd_500_plus: number;
-  pct_100_to_500: string;
-  avg_usd_100_plus: number;
-  avg_usd_500_plus: number | null;
+  month: string;     // "2026-04-01 00:00:00.000 UTC"
+  new_100: number;   // count of new wallets staking >= $100 in this month
+  new_500: number;   // count of new wallets staking >= $500 in this month (subset of new_100)
+  old_100: number;   // count of returning wallets staking >= $100 in this month
+  old_500: number;   // count of returning wallets staking >= $500 in this month
 }
 
 // Single-row snapshot of staker counts at various USD-value thresholds (Dune 7432116).
