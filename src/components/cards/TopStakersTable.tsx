@@ -31,21 +31,24 @@ function formatDate(iso: string): string {
 }
 
 /**
- * Small chip rendered under the rank badge showing how the wallet moved
- * relative to the previous snapshot (rotated ~once per day in the refresh job).
+ * Pill rendered next to the rank badge showing how the wallet moved
+ * relative to the previous Dune snapshot. Sized so the change is legible
+ * at a glance — the whole point of the gamification.
  */
 function RankChangeChip({ staker }: { staker: TopStakerRow }) {
   // No previous snapshot at all: nothing to compare against
-  if (staker.previousSnapshotAt === undefined) return null;
+  if (staker.previousSnapshotAt === undefined || staker.previousSnapshotAt === null) {
+    return null;
+  }
 
   // Wallet wasn't in the previous snapshot → brand new entrant to the top 300
   if (staker.previousRank == null) {
     return (
       <span
-        className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-purple"
+        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple/15 border border-purple/30 text-sm font-bold text-purple"
         title="New to the leaderboard since last snapshot"
       >
-        <Sparkles className="w-2.5 h-2.5" />
+        <Sparkles className="w-3.5 h-3.5" />
         NEW
       </span>
     );
@@ -55,10 +58,10 @@ function RankChangeChip({ staker }: { staker: TopStakerRow }) {
   if (delta > 0) {
     return (
       <span
-        className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-green1"
-        title={`Up ${delta} from #${staker.previousRank}`}
+        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-green1/15 border border-green1/30 text-sm font-bold text-green1"
+        title={`Up ${delta} ${delta === 1 ? 'spot' : 'spots'} from #${staker.previousRank}`}
       >
-        <ArrowUp className="w-2.5 h-2.5" />
+        <ArrowUp className="w-3.5 h-3.5" />
         {delta}
       </span>
     );
@@ -66,20 +69,20 @@ function RankChangeChip({ staker }: { staker: TopStakerRow }) {
   if (delta < 0) {
     return (
       <span
-        className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-red-400"
-        title={`Down ${-delta} from #${staker.previousRank}`}
+        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-400/15 border border-red-400/30 text-sm font-bold text-red-400"
+        title={`Down ${-delta} ${-delta === 1 ? 'spot' : 'spots'} from #${staker.previousRank}`}
       >
-        <ArrowDown className="w-2.5 h-2.5" />
+        <ArrowDown className="w-3.5 h-3.5" />
         {-delta}
       </span>
     );
   }
   return (
     <span
-      className="inline-flex items-center gap-0.5 text-[10px] font-medium text-soft-gray"
+      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-sm font-semibold text-soft-gray"
       title="No change since last snapshot"
     >
-      <Minus className="w-2.5 h-2.5" />
+      <Minus className="w-3.5 h-3.5" />
     </span>
   );
 }
@@ -290,7 +293,7 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
                   }`}
                 >
                   <td className="py-4 px-6">
-                    <div className="flex flex-col items-start gap-1">
+                    <div className="flex items-center gap-2.5">
                       {getRankDisplay(staker.rank)}
                       <RankChangeChip staker={staker} />
                     </div>
