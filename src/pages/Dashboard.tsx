@@ -8,6 +8,7 @@ import { StakerLTVTable } from '../components/cards/StakerLTVTable';
 import { StakerConcentrationCard } from '../components/cards/StakerConcentrationCard';
 import { StakerLTVSection } from '../components/sections/StakerLTVSection';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
+import { RewardValueCard } from '../components/cards/RewardValueCard';
 import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
 import { StakingFlowChart } from '../components/charts/StakingFlowChart';
@@ -582,6 +583,30 @@ export function Dashboard() {
               data={mixpanelData?.wauTrend ?? []}
               color="#5EB851"
               isLoading={loadingMixpanel}
+            />
+          </div>
+
+          {/* Reward Value — dollar value per fixed unit of each in-game currency.
+              Static for now; update the constants below when the rate changes. */}
+          <h3 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mt-8 mb-5">
+            Reward Value
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <RewardValueCard
+              label="Shards"
+              unitsLabel="per 10 shards"
+              usdValue={4.4}
+              iconSrc="/icons/shards.svg"
+              accentColor="#5EB851"
+              helper="≈ $0.44 per shard in reward value"
+            />
+            <RewardValueCard
+              label="pM (game points)"
+              unitsLabel="per 10,000 pM"
+              usdValue={1.5}
+              iconSrc="/icons/pm.svg"
+              accentColor="#C4B5D4"
+              helper="≈ $0.00015 per pM in reward value"
             />
           </div>
 
