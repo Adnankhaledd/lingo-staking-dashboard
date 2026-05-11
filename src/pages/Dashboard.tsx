@@ -601,12 +601,12 @@ export function Dashboard() {
               helper="≈ $0.44 per shard in reward value"
             />
             <RewardValueCard
-              label="pM (game points)"
-              unitsLabel="per 10,000 pM"
+              label="Powermiles"
+              unitsLabel="per 10,000 Powermiles"
               usdValue={1.5}
               iconSrc="/icons/pm.svg"
               accentColor="#C4B5D4"
-              helper="≈ $0.00015 per pM in reward value"
+              helper="≈ $0.00015 per Powermile in reward value"
             />
           </div>
 
