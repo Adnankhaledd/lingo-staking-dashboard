@@ -319,6 +319,38 @@ export function Dashboard() {
     [monthlyNewReturning]
   );
 
+  // ── New Users derived metrics (used by the New Users section) ──
+  // Per-month series: { month, newWallets, newLingo, avgFirstStake }.
+  // avgFirstStake = avg LINGO staked per first-time wallet that month.
+  const newUsersMonthlyData = useMemo(() => {
+    return monthlyNewReturningData.map(row => ({
+      month: row.month,
+      newWallets: row.newWallets,
+      newLingo: row.newLingo,
+      avgFirstStake: row.newWallets > 0 ? Math.round(row.newLingo / row.newWallets) : 0,
+    }));
+  }, [monthlyNewReturningData]);
+
+  // Latest-vs-prior KPI deltas for the section header.
+  const newUsersKPIs = useMemo(() => {
+    if (newUsersMonthlyData.length === 0) {
+      return null;
+    }
+    const latest = newUsersMonthlyData[newUsersMonthlyData.length - 1];
+    const prior = newUsersMonthlyData[newUsersMonthlyData.length - 2] ?? null;
+    const pct = (now: number, prev: number | null | undefined) =>
+      prev && prev !== 0 ? ((now - prev) / prev) * 100 : null;
+    return {
+      label: latest.month,
+      newWallets: latest.newWallets,
+      newWalletsChange: pct(latest.newWallets, prior?.newWallets),
+      newLingo: latest.newLingo,
+      newLingoChange: pct(latest.newLingo, prior?.newLingo),
+      avgFirstStake: latest.avgFirstStake,
+      avgFirstStakeChange: pct(latest.avgFirstStake, prior?.avgFirstStake),
+    };
+  }, [newUsersMonthlyData]);
+
   // Monthly LINGO staked by lock duration
   const monthlyLingoByLockData = useMemo(
     () => transformMonthlyLingoByLockData(monthlyLingoByLock),
@@ -871,6 +903,183 @@ export function Dashboard() {
         </section>
 
         {/* ═══════════════════════════════════════════════════════════════
+            NEW USERS — acquisition-focused metrics about first-time stakers
+        ═══════════════════════════════════════════════════════════════ */}
+        <section className="mb-10">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
+            New Users
+          </h2>
+
+          {/* Row 1: KPI snapshot — latest month vs prior month */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-soft-gray">New Wallets ({newUsersKPIs?.label ?? 'latest'})</span>
+                  {newUsersKPIs?.newWalletsChange != null && (
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
+                      newUsersKPIs.newWalletsChange >= 0
+                        ? 'bg-green1/15 text-green1'
+                        : 'bg-red-400/15 text-red-400'
+                    }`}>
+                      {newUsersKPIs.newWalletsChange >= 0 ? '+' : ''}{newUsersKPIs.newWalletsChange.toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+                <div className="text-2xl font-bold text-lavender mt-2">
+                  {loadingMonthlyNewReturning ? '...' : (newUsersKPIs?.newWallets ?? 0).toLocaleString()}
+                </div>
+                <p className="text-xs text-purple-gray mt-1">First-time stakers this month</p>
+              </div>
+            </div>
+
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-soft-gray">LINGO from New Wallets</span>
+                  {newUsersKPIs?.newLingoChange != null && (
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
+                      newUsersKPIs.newLingoChange >= 0
+                        ? 'bg-green1/15 text-green1'
+                        : 'bg-red-400/15 text-red-400'
+                    }`}>
+                      {newUsersKPIs.newLingoChange >= 0 ? '+' : ''}{newUsersKPIs.newLingoChange.toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+                <div className="text-2xl font-bold text-purple mt-2">
+                  {loadingMonthlyNewReturning ? '...' : formatNumber(newUsersKPIs?.newLingo ?? 0)}
+                </div>
+                <p className="text-xs text-purple-gray mt-1">Volume staked by first-time wallets</p>
+              </div>
+            </div>
+
+            <div className="flagship-card p-6">
+              <div className="relative z-10">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-soft-gray">Avg First Stake</span>
+                  {newUsersKPIs?.avgFirstStakeChange != null && (
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
+                      newUsersKPIs.avgFirstStakeChange >= 0
+                        ? 'bg-green1/15 text-green1'
+                        : 'bg-red-400/15 text-red-400'
+                    }`}>
+                      {newUsersKPIs.avgFirstStakeChange >= 0 ? '+' : ''}{newUsersKPIs.avgFirstStakeChange.toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+                <div className="text-2xl font-bold text-green1 mt-2">
+                  {loadingMonthlyNewReturning ? '...' : formatNumber(newUsersKPIs?.avgFirstStake ?? 0)}
+                </div>
+                <p className="text-xs text-purple-gray mt-1">LINGO per first-time wallet</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: New wallets per month — full width */}
+          <ChartCard
+            title="New Wallets per Month"
+            subtitle="Count of first-time staking wallets each month"
+            isLoading={loadingMonthlyNewReturning}
+            lastUpdated={monthlyNewReturningExecutedAt}
+          >
+            {newUsersMonthlyData.length > 0 ? (
+              <SimpleBarChart
+                data={newUsersMonthlyData}
+                dataKey="newWallets"
+                xAxisKey="month"
+                color="#C4B5D4"
+                height={300}
+              />
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+              </div>
+            )}
+          </ChartCard>
+
+          {/* Row 3: LINGO from new + Avg first stake size — 2-col */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
+            <ChartCard
+              title="LINGO Staked by New Wallets"
+              subtitle="Volume from first-time stakers per month"
+              isLoading={loadingMonthlyNewReturning}
+              lastUpdated={monthlyNewReturningExecutedAt}
+            >
+              {newUsersMonthlyData.length > 0 ? (
+                <SimpleBarChart
+                  data={newUsersMonthlyData}
+                  dataKey="newLingo"
+                  xAxisKey="month"
+                  color="#7B68AE"
+                  height={300}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                  {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Avg First Stake Size"
+              subtitle="LINGO per first-time wallet per month (newLingo / newWallets)"
+              isLoading={loadingMonthlyNewReturning}
+              lastUpdated={monthlyNewReturningExecutedAt}
+            >
+              {newUsersMonthlyData.length > 0 ? (
+                <SimpleBarChart
+                  data={newUsersMonthlyData}
+                  dataKey="avgFirstStake"
+                  xAxisKey="month"
+                  color="#5EB851"
+                  height={300}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                  {loadingMonthlyNewReturning ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+
+          {/* Row 4: New large-deposit stakers ($100+ vs $500+, since Nov '25) */}
+          <div className="mt-5">
+            <ChartCard
+              title="New Large-Deposit Stakers"
+              subtitle="New wallets staking $100+ vs $500+ per month (since Nov '25)"
+              isLoading={loadingNewLargeStakers}
+              lastUpdated={newLargeStakersExecutedAt}
+            >
+              {newLargeStakersData.length > 0 ? (
+                <BarChartComponent
+                  data={newLargeStakersData}
+                  xAxisKey="month"
+                  formatXAxis={(v) => v}
+                  bars={[
+                    {
+                      dataKey: 'new100',
+                      name: 'New $100+',
+                      color: '#C4B5D4',
+                    },
+                    {
+                      dataKey: 'new500',
+                      name: 'New $500+',
+                      color: '#5EB851',
+                    },
+                  ]}
+                  height={300}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
+                  {loadingNewLargeStakers ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+        </section>
+
+        {/* ═══════════════════════════════════════════════════════════════
             WALLET ANALYSIS
         ═══════════════════════════════════════════════════════════════ */}
         <section className="mb-10">
@@ -972,41 +1181,6 @@ export function Dashboard() {
               ) : (
                 <div className="h-[300px] flex items-center justify-center text-soft-gray">
                   {loadingStakersByThreshold ? 'Loading...' : 'No data available'}
-                </div>
-              )}
-            </ChartCard>
-          </div>
-
-          {/* Row 1.5: New large-deposit stakers ($100+ vs $500+, since Nov '25) */}
-          <div className="mb-5">
-            <ChartCard
-              title="New Large-Deposit Stakers"
-              subtitle="New wallets staking $100+ vs $500+ per month (since Nov '25)"
-              isLoading={loadingNewLargeStakers}
-              lastUpdated={newLargeStakersExecutedAt}
-            >
-              {newLargeStakersData.length > 0 ? (
-                <BarChartComponent
-                  data={newLargeStakersData}
-                  xAxisKey="month"
-                  formatXAxis={(v) => v}
-                  bars={[
-                    {
-                      dataKey: 'new100',
-                      name: 'New $100+',
-                      color: '#C4B5D4',
-                    },
-                    {
-                      dataKey: 'new500',
-                      name: 'New $500+',
-                      color: '#5EB851',
-                    },
-                  ]}
-                  height={300}
-                />
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                  {loadingNewLargeStakers ? 'Loading...' : 'No data available'}
                 </div>
               )}
             </ChartCard>
