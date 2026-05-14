@@ -37,6 +37,22 @@ const PERIOD_OPTIONS: { key: TimePeriod; label: string }[] = [
   { key: 'year', label: 'Y' },
 ];
 
+// Suffix shown on each summary card ("+1.0% WoW/MoM/QoQ/YoY") and the
+// adjective used in the chart subtitle, matching the selected period toggle.
+const PERIOD_DELTA_LABEL: Record<TimePeriod, string> = {
+  week: 'WoW',
+  month: 'MoM',
+  quarter: 'QoQ',
+  year: 'YoY',
+};
+
+const PERIOD_BREAKDOWN_LABEL: Record<TimePeriod, string> = {
+  week: 'Weekly',
+  month: 'Monthly',
+  quarter: 'Quarterly',
+  year: 'Annual',
+};
+
 interface ChartRow {
   week: string;
   flexible: number;
@@ -137,11 +153,12 @@ export function WeeklyLockChart({ data, isLoading, lastUpdated }: WeeklyLockChar
 
   const chartData = useMemo(() => aggregateData(transformedData, period), [transformedData, period]);
 
-  // WoW summary from raw sorted data
+  // Period-over-period summary, derived from the aggregated chart data so the
+  // comparison granularity always matches the selected toggle (W/M/Q/Y).
   const summaryData = useMemo(() => {
-    if (transformedData.length < 2) return null;
-    const latest = transformedData[transformedData.length - 1];
-    const prev = transformedData[transformedData.length - 2];
+    if (chartData.length < 2) return null;
+    const latest = chartData[chartData.length - 1];
+    const prev = chartData[chartData.length - 2];
 
     const calc = (curr: number, previous: number) => ({
       value: curr,
@@ -155,7 +172,9 @@ export function WeeklyLockChart({ data, isLoading, lastUpdated }: WeeklyLockChar
       '6mo': calc(latest.sixMonth, prev.sixMonth),
       '12mo': calc(latest.twelveMonth, prev.twelveMonth),
     };
-  }, [transformedData]);
+  }, [chartData]);
+
+  const deltaLabel = PERIOD_DELTA_LABEL[period];
 
   const toggleSeries = (key: ToggleKey) => {
     setActiveToggles(prev => {
@@ -187,7 +206,7 @@ export function WeeklyLockChart({ data, isLoading, lastUpdated }: WeeklyLockChar
             Staked LINGO by Lock Duration
           </h3>
           <p className="text-sm text-soft-gray mt-1">
-            Weekly breakdown of LINGO staked per lock period
+            {PERIOD_BREAKDOWN_LABEL[period]} breakdown of LINGO staked per lock period
           </p>
         </div>
 
@@ -241,7 +260,7 @@ export function WeeklyLockChart({ data, isLoading, lastUpdated }: WeeklyLockChar
                     <span className="text-xs text-purple-gray">
                       {s.absolute >= 0 ? '+' : ''}{formatNumber(s.absolute)}
                     </span>
-                    <span className="text-xs text-purple-gray">WoW</span>
+                    <span className="text-xs text-purple-gray">{deltaLabel}</span>
                   </div>
                 </div>
               );
