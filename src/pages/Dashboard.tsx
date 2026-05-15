@@ -236,6 +236,41 @@ export function Dashboard() {
     [totalStakedData]
   );
 
+  // Year-to-date locked-LINGO progression: take the last daily snapshot of
+  // total_staked in each month of the current year. Shows how much LINGO has
+  // been locked at each month-end, climbing through the year.
+  const ytdLockedData = useMemo(() => {
+    if (!totalStakedData || totalStakedData.length === 0) return [];
+    const currentYear = new Date().getFullYear();
+    // Group by YYYY-MM, taking the entry with the latest day in each month
+    const buckets = new Map<string, { day: string; total_staked: number }>();
+    for (const row of totalStakedData) {
+      const day = row.day.split(/[T\s]/)[0];
+      const [yStr, mStr] = day.split('-');
+      const year = parseInt(yStr, 10);
+      if (year !== currentYear) continue;
+      const key = `${yStr}-${mStr}`;
+      const existing = buckets.get(key);
+      if (!existing || day > existing.day) {
+        buckets.set(key, { day, total_staked: row.total_staked });
+      }
+    }
+    return Array.from(buckets.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, val]) => {
+        const [y, m] = key.split('-').map(Number);
+        const label = new Date(y, m - 1, 1).toLocaleDateString('en-US', {
+          month: 'short',
+          year: '2-digit',
+        });
+        return {
+          month: label,
+          locked: Math.round(val.total_staked),
+          asOf: val.day,
+        };
+      });
+  }, [totalStakedData]);
+
   const newVsReturningData = useMemo(
     () => transformNewStakersData(weeklyNewStakers, weeklyStats),
     [weeklyNewStakers, weeklyStats]
@@ -805,6 +840,33 @@ export function Dashboard() {
                 />
               ) : (
                 <div className="h-[320px] flex items-center justify-center text-soft-gray">
+                  {loadingTotalStaked ? 'Loading...' : 'No data available'}
+                </div>
+              )}
+            </ChartCard>
+          </div>
+
+          {/* Row 1.5: Year-to-date locked LINGO — month-end snapshots of the
+              running total balance for the current calendar year */}
+          <div className="mb-5">
+            <ChartCard
+              title={`Locked LINGO This Year (${new Date().getFullYear()} YTD)`}
+              subtitle="Total LINGO locked at each month-end this calendar year"
+              isLoading={loadingTotalStaked}
+              lastUpdated={totalStakedExecutedAt}
+            >
+              {ytdLockedData.length > 0 ? (
+                <AreaChartComponent
+                  data={ytdLockedData}
+                  dataKey="locked"
+                  xAxisKey="month"
+                  color="#5EB851"
+                  gradientId="ytdLockedGradient"
+                  height={300}
+                  formatValue={(value) => formatNumber(value) + ' LINGO'}
+                />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-soft-gray">
                   {loadingTotalStaked ? 'Loading...' : 'No data available'}
                 </div>
               )}
