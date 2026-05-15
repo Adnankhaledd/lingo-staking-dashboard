@@ -236,23 +236,22 @@ export function Dashboard() {
     [totalStakedData]
   );
 
-  // Year-to-date locked-LINGO progression: take the last daily snapshot of
-  // total_staked in each month of the current year. Shows how much LINGO has
-  // been locked at each month-end, climbing through the year.
-  const ytdLockedData = useMemo(() => {
-    if (!totalStakedData || totalStakedData.length === 0) return [];
-    const currentYear = new Date().getFullYear();
-    // Group by YYYY-MM, taking the entry with the latest day in each month
-    const buckets = new Map<string, { day: string; total_staked: number }>();
-    for (const row of totalStakedData) {
-      const day = row.day.split(/[T\s]/)[0];
-      const [yStr, mStr] = day.split('-');
-      const year = parseInt(yStr, 10);
-      if (year !== currentYear) continue;
+  // Monthly 12-month-lock balance, full history (since staking began).
+  // Sources WEEKLY_LOCK_BREAKDOWN (which has cumulative 12mo_staked per week)
+  // and keeps the latest week-end snapshot in each month so each bar is the
+  // month-end 12-month locked balance.
+  const monthly12moLockData = useMemo(() => {
+    if (!weeklyLockBreakdown || weeklyLockBreakdown.length === 0) return [];
+    const buckets = new Map<string, { week: string; locked: number }>();
+    for (const row of weeklyLockBreakdown) {
+      const week = (row.week ?? '').split(/[T\s]/)[0];
+      const [yStr, mStr] = week.split('-');
+      if (!yStr || !mStr) continue;
       const key = `${yStr}-${mStr}`;
+      const locked = row['12mo_staked'] ?? 0;
       const existing = buckets.get(key);
-      if (!existing || day > existing.day) {
-        buckets.set(key, { day, total_staked: row.total_staked });
+      if (!existing || week > existing.week) {
+        buckets.set(key, { week, locked });
       }
     }
     return Array.from(buckets.entries())
@@ -265,11 +264,10 @@ export function Dashboard() {
         });
         return {
           month: label,
-          locked: Math.round(val.total_staked),
-          asOf: val.day,
+          locked: Math.round(val.locked),
         };
       });
-  }, [totalStakedData]);
+  }, [weeklyLockBreakdown]);
 
   const newVsReturningData = useMemo(
     () => transformNewStakersData(weeklyNewStakers, weeklyStats),
@@ -846,28 +844,26 @@ export function Dashboard() {
             </ChartCard>
           </div>
 
-          {/* Row 1.5: Year-to-date locked LINGO — month-end snapshots of the
-              running total balance for the current calendar year */}
+          {/* Row 1.5: 12-month locked LINGO — month-end snapshots since the
+              start. Shows the running 1Y-lock balance climbing over time. */}
           <div className="mb-5">
             <ChartCard
-              title={`Locked LINGO This Year (${new Date().getFullYear()} YTD)`}
-              subtitle="Total LINGO locked at each month-end this calendar year"
-              isLoading={loadingTotalStaked}
-              lastUpdated={totalStakedExecutedAt}
+              title="12-Month Locked LINGO"
+              subtitle="Total LINGO locked in 1-year locks at each month-end (full history)"
+              isLoading={loadingWeeklyLock}
+              lastUpdated={weeklyLockExecutedAt}
             >
-              {ytdLockedData.length > 0 ? (
-                <AreaChartComponent
-                  data={ytdLockedData}
+              {monthly12moLockData.length > 0 ? (
+                <SimpleBarChart
+                  data={monthly12moLockData}
                   dataKey="locked"
                   xAxisKey="month"
-                  color="#5EB851"
-                  gradientId="ytdLockedGradient"
+                  color="#FF7847"
                   height={300}
-                  formatValue={(value) => formatNumber(value) + ' LINGO'}
                 />
               ) : (
                 <div className="h-[300px] flex items-center justify-center text-soft-gray">
-                  {loadingTotalStaked ? 'Loading...' : 'No data available'}
+                  {loadingWeeklyLock ? 'Loading...' : 'No data available'}
                 </div>
               )}
             </ChartCard>
