@@ -236,22 +236,30 @@ export function Dashboard() {
     [totalStakedData]
   );
 
-  // Monthly 12-month-lock balance, full history (since staking began).
-  // Sources WEEKLY_LOCK_BREAKDOWN (which has cumulative 12mo_staked per week)
-  // and keeps the latest week-end snapshot in each month so each bar is the
-  // month-end 12-month locked balance.
-  const monthly12moLockData = useMemo(() => {
+  // Monthly locked-LINGO balance by lock duration, full history (since staking
+  // began). Sources WEEKLY_LOCK_BREAKDOWN (cumulative *_staked per week) and
+  // keeps the latest week-end snapshot in each month, so each bar group is the
+  // month-end locked balance split by 3mo / 6mo / 12mo. `total` = sum of the
+  // three locked buckets (excludes flexible, which isn't time-locked).
+  const monthlyLockByDurationData = useMemo(() => {
     if (!weeklyLockBreakdown || weeklyLockBreakdown.length === 0) return [];
-    const buckets = new Map<string, { week: string; locked: number }>();
+    const buckets = new Map<
+      string,
+      { week: string; threeMonth: number; sixMonth: number; twelveMonth: number }
+    >();
     for (const row of weeklyLockBreakdown) {
       const week = (row.week ?? '').split(/[T\s]/)[0];
       const [yStr, mStr] = week.split('-');
       if (!yStr || !mStr) continue;
       const key = `${yStr}-${mStr}`;
-      const locked = row['12mo_staked'] ?? 0;
       const existing = buckets.get(key);
       if (!existing || week > existing.week) {
-        buckets.set(key, { week, locked });
+        buckets.set(key, {
+          week,
+          threeMonth: row['3mo_staked'] ?? 0,
+          sixMonth: row['6mo_staked'] ?? 0,
+          twelveMonth: row['12mo_staked'] ?? 0,
+        });
       }
     }
     return Array.from(buckets.entries())
@@ -262,9 +270,15 @@ export function Dashboard() {
           month: 'short',
           year: '2-digit',
         });
+        const threeMonth = Math.round(val.threeMonth);
+        const sixMonth = Math.round(val.sixMonth);
+        const twelveMonth = Math.round(val.twelveMonth);
         return {
           month: label,
-          locked: Math.round(val.locked),
+          threeMonth,
+          sixMonth,
+          twelveMonth,
+          total: threeMonth + sixMonth + twelveMonth,
         };
       });
   }, [weeklyLockBreakdown]);
@@ -844,23 +858,45 @@ export function Dashboard() {
             </ChartCard>
           </div>
 
-          {/* Row 1.5: 12-month locked LINGO — month-end snapshots since the
-              start. Shows the running 1Y-lock balance climbing over time. */}
+          {/* Row 1.5: Locked LINGO by lock duration — month-end snapshots since
+              the start, split into 3mo / 6mo / 12mo, with the latest total. */}
           <div className="mb-5">
             <ChartCard
-              title="12-Month Locked LINGO"
-              subtitle="Total LINGO locked in 1-year locks at each month-end (full history)"
+              title="Locked LINGO by Lock Duration"
+              subtitle="Month-end locked balance split by 3-month / 6-month / 1-year locks (full history)"
               isLoading={loadingWeeklyLock}
               lastUpdated={weeklyLockExecutedAt}
             >
-              {monthly12moLockData.length > 0 ? (
-                <SimpleBarChart
-                  data={monthly12moLockData}
-                  dataKey="locked"
-                  xAxisKey="month"
-                  color="#FF7847"
-                  height={300}
-                />
+              {monthlyLockByDurationData.length > 0 ? (
+                <>
+                  {(() => {
+                    const latest = monthlyLockByDurationData[monthlyLockByDurationData.length - 1];
+                    return (
+                      <div className="flex flex-col items-center gap-1.5 mb-4">
+                        <span className="text-xs text-soft-gray uppercase tracking-wider">
+                          Total Locked &bull; {latest.month}
+                        </span>
+                        <span className="text-4xl font-bold bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent tracking-tight">
+                          {latest.total.toLocaleString()}
+                        </span>
+                        <span className="text-xs text-purple-gray">
+                          3mo {formatNumber(latest.threeMonth)} &middot; 6mo {formatNumber(latest.sixMonth)} &middot; 1y {formatNumber(latest.twelveMonth)}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  <BarChartComponent
+                    data={monthlyLockByDurationData}
+                    xAxisKey="month"
+                    formatXAxis={(v) => v}
+                    bars={[
+                      { dataKey: 'threeMonth', name: '3 Month', color: '#C4B5D4' },
+                      { dataKey: 'sixMonth', name: '6 Month', color: '#5EB851' },
+                      { dataKey: 'twelveMonth', name: '1 Year', color: '#FF7847' },
+                    ]}
+                    height={300}
+                  />
+                </>
               ) : (
                 <div className="h-[300px] flex items-center justify-center text-soft-gray">
                   {loadingWeeklyLock ? 'Loading...' : 'No data available'}
