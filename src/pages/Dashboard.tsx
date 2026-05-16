@@ -889,6 +889,7 @@ export function Dashboard() {
                     data={monthlyLockByDurationData}
                     xAxisKey="month"
                     formatXAxis={(v) => v}
+                    showTotal
                     bars={[
                       { dataKey: 'threeMonth', name: '3 Month', color: '#C4B5D4' },
                       { dataKey: 'sixMonth', name: '6 Month', color: '#5EB851' },

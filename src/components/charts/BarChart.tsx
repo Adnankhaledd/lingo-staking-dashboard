@@ -23,16 +23,21 @@ interface BarChartProps<T extends object> {
   showGrid?: boolean;
   showLegend?: boolean;
   formatXAxis?: (value: string) => string;
+  /** When true, the hover tooltip adds a summed "Total" row across all bars. */
+  showTotal?: boolean;
 }
 
 interface CustomTooltipProps {
   active?: boolean;
   payload?: Array<{ value: number; name: string; color: string }>;
   label?: string;
+  showTotal?: boolean;
 }
 
-function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
+function CustomTooltip({ active, payload, label, showTotal }: CustomTooltipProps) {
   if (!active || !payload || !payload.length) return null;
+
+  const total = payload.reduce((sum, entry) => sum + (entry.value ?? 0), 0);
 
   return (
     <div className="custom-tooltip">
@@ -47,6 +52,13 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
           <span className="text-lavender font-medium">{formatNumber(entry.value)}</span>
         </div>
       ))}
+      {showTotal && payload.length > 1 && (
+        <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
+          <div className="w-2 h-2 rounded-full bg-transparent" />
+          <span className="text-soft-gray text-sm font-semibold">Total:</span>
+          <span className="text-lavender font-bold">{formatNumber(total)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -59,6 +71,7 @@ export function BarChartComponent<T extends object>({
   showGrid = true,
   showLegend = true,
   formatXAxis = formatChartDate,
+  showTotal = false,
 }: BarChartProps<T>) {
   return (
     <ResponsiveContainer minWidth={0} width="100%" height={height}>
@@ -111,7 +124,7 @@ export function BarChartComponent<T extends object>({
           width={60}
         />
 
-        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
+        <Tooltip content={<CustomTooltip showTotal={showTotal} />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
 
         {showLegend && (
           <Legend
