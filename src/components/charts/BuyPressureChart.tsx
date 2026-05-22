@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
   Legend,
   ReferenceLine,
+  Brush,
 } from 'recharts';
 import { Clock } from 'lucide-react';
 import { formatNumber } from '../../utils/formatters';
@@ -219,8 +220,8 @@ export function BuyPressureChart({ data, isLoading, lastUpdated }: BuyPressureCh
         )}
       </div>
 
-      <div className="h-80 relative z-10">
-        <ResponsiveContainer minWidth={0} width="100%" height={320}>
+      <div className="h-[370px] relative z-10">
+        <ResponsiveContainer minWidth={0} width="100%" height={370}>
           <BarChart
             data={chartData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
@@ -338,6 +339,16 @@ export function BuyPressureChart({ data, isLoading, lastUpdated }: BuyPressureCh
                 animationDuration={800}
               />
             )}
+
+            {/* Draggable date-range selector — squeeze either end to zoom in */}
+            <Brush
+              dataKey="week"
+              height={26}
+              travellerWidth={9}
+              gap={1}
+              stroke="#7B68AE"
+              fill="rgba(20,20,31,0.7)"
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>
