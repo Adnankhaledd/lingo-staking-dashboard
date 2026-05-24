@@ -107,7 +107,7 @@ function TierSparkline({
             borderRadius: '8px',
             fontSize: '12px',
           }}
-          formatter={(value: number) => [formatNumber(value), '']}
+          formatter={(value) => [formatNumber(Number(value ?? 0)), '']}
           labelStyle={{ color: 'rgba(255,255,255,0.5)' }}
           itemStyle={{ color }}
           separator=""
