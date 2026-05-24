@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import { ArrowUp, ArrowDown, Minus } from 'lucide-react';
-import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { formatNumber } from '../../utils/formatters';
 import type { MonthlyTierGrowthRow } from '../../hooks/useDuneQuery';
 
@@ -10,27 +9,21 @@ interface TierGrowthTableProps {
 }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const CUTOFF_MONTH_KEY = '2026-01';
+const CUTOFF_MONTH_KEY = '2026-01'; // inclusive
 
-// The four "real" engagement tiers (Total + Below-$100 intentionally hidden).
+// Only the four real engagement tiers — Total / Below-$100 intentionally hidden.
 type TierKey = 'member' | 'holder' | 'elite' | 'legend';
 
-const TIERS: Array<{
-  key: TierKey;
-  label: string;
-  threshold: string;
-  color: string;
-  gradientId: string;
-}> = [
-  { key: 'member', label: 'Member', threshold: '$100+',  color: '#C4B5D4', gradientId: 'tierGradMember' },
-  { key: 'holder', label: 'Holder', threshold: '$250+',  color: '#5EB851', gradientId: 'tierGradHolder' },
-  { key: 'elite',  label: 'Elite',  threshold: '$1k+',   color: '#FF7847', gradientId: 'tierGradElite'  },
-  { key: 'legend', label: 'Legend', threshold: '$2.5k+', color: '#FFD75E', gradientId: 'tierGradLegend' },
+const TIERS: Array<{ key: TierKey; label: string; threshold: string; dot: string }> = [
+  { key: 'member', label: 'Member', threshold: '$100+',  dot: '#C4B5D4' },
+  { key: 'holder', label: 'Holder', threshold: '$250+',  dot: '#5EB851' },
+  { key: 'elite',  label: 'Elite',  threshold: '$1k+',   dot: '#FF7847' },
+  { key: 'legend', label: 'Legend', threshold: '$2.5k+', dot: '#FFD75E' },
 ];
 
 interface MonthlyPoint {
   monthKey: string;
-  label: string;       // "Jan '26"
+  label: string; // "Jan '26"
   member: number;
   holder: number;
   elite: number;
@@ -59,182 +52,139 @@ function normalize(rows: MonthlyTierGrowthRow[]): MonthlyPoint[] {
     });
 }
 
-function ChangeChip({ delta, pct }: { delta: number; pct: number }) {
-  const isUp = delta > 0;
-  const isDown = delta < 0;
+/**
+ * Map a percent change to a heatmap background colour. Greater magnitude →
+ * deeper tint. Returns inline-style background so we can mix arbitrary alpha.
+ */
+function heatmapBg(pct: number | null): { background: string } {
+  if (pct == null || !Number.isFinite(pct)) {
+    return { background: 'transparent' };
+  }
+  // Clamp at ±25% so the scale doesn't get washed out by huge outliers.
+  const clamped = Math.max(-25, Math.min(25, pct));
+  const intensity = Math.abs(clamped) / 25; // 0..1
+  if (clamped > 0) {
+    // green1 #5EB851 → rgba(94,184,81, α)
+    return { background: `rgba(94, 184, 81, ${(intensity * 0.35).toFixed(3)})` };
+  }
+  if (clamped < 0) {
+    // red-400 ish → rgba(248,113,113, α)
+    return { background: `rgba(248, 113, 113, ${(intensity * 0.35).toFixed(3)})` };
+  }
+  return { background: 'rgba(255,255,255,0.02)' };
+}
+
+function HeatmapCell({ value, prev }: { value: number; prev: number | null }) {
+  const delta = prev != null ? value - prev : null;
+  const pct = prev != null && prev > 0 ? ((value - prev) / prev) * 100 : null;
+  const style = heatmapBg(pct);
+  const isUp = (delta ?? 0) > 0;
+  const isDown = (delta ?? 0) < 0;
   const Icon = isUp ? ArrowUp : isDown ? ArrowDown : Minus;
-  const bg = isUp ? 'bg-green1/15 border-green1/30 text-green1'
-    : isDown ? 'bg-red-400/15 border-red-400/30 text-red-400'
-    : 'bg-white/[0.04] border-white/[0.08] text-soft-gray';
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border ${bg}`}>
-      <Icon className="w-3 h-3" />
-      {isUp ? '+' : isDown ? '−' : ''}{Math.abs(delta).toLocaleString()}
-      <span className="text-purple-gray font-medium ml-0.5">({isUp ? '+' : isDown ? '−' : ''}{Math.abs(pct).toFixed(1)}%)</span>
-    </span>
-  );
-}
-
-/** Compact area sparkline showing the full trajectory of a tier since cutoff. */
-function TierSparkline({
-  points,
-  tierKey,
-  color,
-  gradientId,
-}: {
-  points: MonthlyPoint[];
-  tierKey: TierKey;
-  color: string;
-  gradientId: string;
-}) {
-  return (
-    <ResponsiveContainer width="100%" height={80}>
-      <AreaChart data={points} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
-        <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.45} />
-            <stop offset="100%" stopColor={color} stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        {/* Axes are hidden visually but still inform the layout for the tooltip. */}
-        <XAxis dataKey="label" hide />
-        <YAxis hide domain={['dataMin', 'dataMax']} />
-        <Tooltip
-          cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeDasharray: '3 3' }}
-          contentStyle={{
-            background: 'rgba(20,20,31,0.95)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: '8px',
-            fontSize: '12px',
-          }}
-          formatter={(value) => [formatNumber(Number(value ?? 0)), '']}
-          labelStyle={{ color: 'rgba(255,255,255,0.5)' }}
-          itemStyle={{ color }}
-          separator=""
-        />
-        <Area
-          type="monotone"
-          dataKey={tierKey}
-          stroke={color}
-          strokeWidth={2}
-          fill={`url(#${gradientId})`}
-          dot={false}
-          activeDot={{ r: 3, fill: color }}
-        />
-      </AreaChart>
-    </ResponsiveContainer>
-  );
-}
-
-function TierCard({
-  label, threshold, color, gradientId,
-  current, prev, points, tierKey,
-}: {
-  label: string;
-  threshold: string;
-  color: string;
-  gradientId: string;
-  current: number;
-  prev: number | null;
-  points: MonthlyPoint[];
-  tierKey: TierKey;
-}) {
-  const delta = prev != null ? current - prev : 0;
-  const pct = prev && prev > 0 ? (delta / prev) * 100 : 0;
+  const deltaColor = isUp ? 'text-green1' : isDown ? 'text-red-400' : 'text-purple-gray';
 
   return (
-    <div className="flagship-card p-5 group transition-all duration-300 hover:scale-[1.01]">
-      <div
-        className="absolute -top-12 -right-12 w-24 h-24 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-        style={{ backgroundColor: `${color}25` }}
-      />
-      <div className="relative z-10">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-            <span className="text-sm font-semibold text-lavender">{label}</span>
-            <span className="text-xs text-purple-gray">{threshold}</span>
-          </div>
-        </div>
-
-        <div className="flex items-baseline justify-between gap-2 mb-2">
-          <span className="text-3xl font-bold text-lavender tracking-tight">
-            {formatNumber(current)}
-          </span>
-          {prev != null ? <ChangeChip delta={delta} pct={pct} /> : (
-            <span className="text-xs text-purple-gray">—</span>
-          )}
-        </div>
-
-        <div className="h-20 -mx-1">
-          {points.length > 1 ? (
-            <TierSparkline points={points} tierKey={tierKey} color={color} gradientId={gradientId} />
-          ) : (
-            <div className="h-full flex items-center justify-center text-xs text-purple-gray">
-              Need ≥2 months for trend
-            </div>
-          )}
-        </div>
-
-        {points.length > 0 && (
-          <p className="text-[10px] text-purple-gray mt-1 text-center">
-            {points[0].label} → {points[points.length - 1].label}
-          </p>
-        )}
+    <td className="py-3 px-4 text-right transition-colors" style={style}>
+      <div className="font-semibold text-lavender text-base leading-tight">
+        {formatNumber(value)}
       </div>
-    </div>
+      {delta == null || pct == null ? (
+        <div className="text-[10px] text-purple-gray mt-0.5">—</div>
+      ) : (
+        <div className={`text-[11px] mt-0.5 flex items-center justify-end gap-0.5 ${deltaColor}`}>
+          <Icon className="w-2.5 h-2.5" />
+          <span className="font-semibold">{isUp ? '+' : isDown ? '−' : ''}{Math.abs(delta).toLocaleString()}</span>
+          <span className="text-purple-gray font-medium ml-1">({isUp ? '+' : isDown ? '−' : ''}{Math.abs(pct).toFixed(1)}%)</span>
+        </div>
+      )}
+    </td>
   );
 }
 
 export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
-  const points = useMemo(() => (data ? normalize(data) : []), [data]);
-  const latest = points[points.length - 1] ?? null;
-  const prev = points.length > 1 ? points[points.length - 2] : null;
-
-  if (isLoading) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="flagship-card p-5">
-            <div className="skeleton h-4 w-24 rounded mb-3" />
-            <div className="skeleton h-8 w-20 rounded mb-3" />
-            <div className="skeleton h-20 w-full rounded" />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (points.length === 0) {
-    return (
-      <div className="flagship-card p-12 text-center text-soft-gray text-sm">
-        No tier data available yet
-      </div>
-    );
-  }
+  const rows = useMemo(() => (data ? normalize(data) : []), [data]);
 
   return (
-    <div>
-      <div className="flex items-baseline justify-between mb-3 px-1">
-        <h3 className="text-lg font-semibold text-lavender">Tier Growth</h3>
-        <p className="text-xs text-purple-gray">
-          Monthly snapshots since Jan 2026 &bull; hover sparklines for values
-        </p>
+    <div className="flagship-card rounded-2xl">
+      <div className="p-6 border-b border-white/5 relative z-10 flex items-baseline justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-lg font-semibold text-lavender">Tier Growth (Monthly)</h3>
+          <p className="text-sm text-soft-gray mt-1">
+            Cells are tinted by month-over-month change &middot; deeper green = stronger growth, deeper red = bigger drop
+          </p>
+        </div>
+        {/* Legend strip */}
+        <div className="flex items-center gap-2 text-[11px] text-purple-gray">
+          <span>−25%+</span>
+          <span className="inline-flex h-3 rounded-sm overflow-hidden border border-white/[0.06]">
+            <span className="w-4" style={{ background: 'rgba(248,113,113,0.35)' }} />
+            <span className="w-4" style={{ background: 'rgba(248,113,113,0.18)' }} />
+            <span className="w-4" style={{ background: 'rgba(255,255,255,0.02)' }} />
+            <span className="w-4" style={{ background: 'rgba(94,184,81,0.18)' }} />
+            <span className="w-4" style={{ background: 'rgba(94,184,81,0.35)' }} />
+          </span>
+          <span>+25%+</span>
+        </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {TIERS.map(tier => (
-          <TierCard
-            key={tier.key}
-            label={tier.label}
-            threshold={tier.threshold}
-            color={tier.color}
-            gradientId={tier.gradientId}
-            current={latest ? latest[tier.key] : 0}
-            prev={prev ? prev[tier.key] : null}
-            points={points}
-            tierKey={tier.key}
-          />
-        ))}
+
+      <div className="relative z-10 overflow-x-auto">
+        <table className="w-full min-w-[640px]">
+          <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
+            <tr className="border-b border-white/5">
+              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-6">
+                Month
+              </th>
+              {TIERS.map(t => (
+                <th
+                  key={t.key}
+                  className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4"
+                >
+                  <span className="inline-flex items-center gap-1.5 justify-end">
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: t.dot }} />
+                    {t.label}
+                    <span className="text-[10px] text-purple-gray font-normal normal-case">{t.threshold}</span>
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              [...Array(4)].map((_, i) => (
+                <tr key={i} className="border-b border-white/5">
+                  <td className="py-3 px-6"><div className="skeleton h-5 w-16 rounded" /></td>
+                  {[...Array(4)].map((__, j) => (
+                    <td key={j} className="py-3 px-4"><div className="skeleton h-10 w-20 rounded ml-auto" /></td>
+                  ))}
+                </tr>
+              ))
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-12 text-center text-soft-gray text-sm">
+                  No data available
+                </td>
+              </tr>
+            ) : (
+              rows.map((row, i) => {
+                const prev = i > 0 ? rows[i - 1] : null;
+                return (
+                  <tr key={row.monthKey} className="border-b border-white/5">
+                    <td className="py-3 px-6 text-sm text-lavender font-medium whitespace-nowrap">
+                      {row.label}
+                    </td>
+                    {TIERS.map(t => (
+                      <HeatmapCell
+                        key={t.key}
+                        value={row[t.key]}
+                        prev={prev ? prev[t.key] : null}
+                      />
+                    ))}
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
