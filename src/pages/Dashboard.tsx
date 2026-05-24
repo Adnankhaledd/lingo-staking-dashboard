@@ -10,7 +10,7 @@ import { TierGrowthTable } from '../components/cards/TierGrowthTable';
 import { StakerLTVSection } from '../components/sections/StakerLTVSection';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { RewardValueCard } from '../components/cards/RewardValueCard';
-import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable, StakingTiersByLockTable } from '../components/charts';
+import { AreaChartComponent, BarChartComponent, SimpleBarChart, RetentionTable } from '../components/charts';
 import { BuyPressureChart } from '../components/charts/BuyPressureChart';
 import { StakingFlowChart } from '../components/charts/StakingFlowChart';
 import { LockDistributionChart } from '../components/charts/LockDistributionChart';
@@ -34,7 +34,6 @@ import {
   type WeeklyStakesRow,
   type LPFeesRow,
   type MonthlyNewReturningRow,
-  type StakingTiersByLockRow,
   type MonthlyLingoByLockRow,
   type CommunityRewardsRow,
   type BuyPressureRow,
@@ -158,12 +157,6 @@ export function Dashboard() {
     isLoading: loadingMonthlyNewReturning,
     executedAt: monthlyNewReturningExecutedAt,
   } = useDuneQuery<MonthlyNewReturningRow>(DUNE_QUERIES.MONTHLY_NEW_RETURNING);
-
-  const {
-    data: stakingTiersByLock,
-    isLoading: loadingStakingTiers,
-    executedAt: stakingTiersExecutedAt,
-  } = useDuneQuery<StakingTiersByLockRow>(DUNE_QUERIES.STAKING_TIERS_BY_LOCK);
 
   const {
     data: monthlyLingoByLock,
@@ -1581,22 +1574,8 @@ export function Dashboard() {
         </section>
 
         {/* ═══════════════════════════════════════════════════════════════
-            STAKING TIERS & TOP STAKERS
+            TOP STAKERS
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
-          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
-            Staking Tiers
-          </h2>
-          <ChartCard
-            title="Stakers by Tier & Lock Period"
-            subtitle="Active stakers grouped by USD value threshold and lock duration"
-            isLoading={loadingStakingTiers}
-            lastUpdated={stakingTiersExecutedAt}
-          >
-            <StakingTiersByLockTable data={stakingTiersByLock} isLoading={loadingStakingTiers} />
-          </ChartCard>
-        </section>
-
         <section className="mb-10 space-y-5">
           <StakerConcentrationCard
             topStakers={topStakers}
