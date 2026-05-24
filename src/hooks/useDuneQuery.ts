@@ -251,6 +251,7 @@ export const DUNE_QUERIES = {
   GROWTH_TIER_DISTRIBUTION: '7340511',
   NEW_LARGE_STAKERS: '7411888',
   STAKERS_BY_USD_THRESHOLD: '7432116',
+  MONTHLY_TIER_GROWTH: '7568254',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -623,6 +624,20 @@ export interface NewLargeStakersRow {
   new_500: number;   // count of new wallets staking >= $500 in this month (subset of new_100)
   old_100: number;   // count of returning wallets staking >= $100 in this month
   old_500: number;   // count of returning wallets staking >= $500 in this month
+}
+
+// Monthly counts of stakers grouped by named USD tier (Dune 7568254).
+// One row per month; column names use the brand names (Member/Holder/Elite/Legend)
+// plus Below $100 and total. The Dune column names contain spaces and parentheses,
+// so the interface uses bracket-keyed string properties.
+export interface MonthlyTierGrowthRow {
+  month: string;                  // "YYYY-MM-DD"
+  total_stakers: number;
+  'below $100': number;
+  'member ($100+)': number;
+  'holder ($250+)': number;
+  'elite ($1000+)': number;
+  'legend ($2500+)': number;
 }
 
 // Single-row snapshot of staker counts at various USD-value thresholds (Dune 7432116).

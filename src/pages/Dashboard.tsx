@@ -47,7 +47,7 @@ import {
   type GrowthTierDistributionRow,
   type NewLargeStakersRow,
   type StakersByUSDThresholdRow,
-  type StakerTiersWeeklyRow,
+  type MonthlyTierGrowthRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -201,9 +201,9 @@ export function Dashboard() {
   } = useDuneQuery<StakersByUSDThresholdRow>(DUNE_QUERIES.STAKERS_BY_USD_THRESHOLD);
 
   const {
-    data: stakerTiersWeekly,
-    isLoading: loadingStakerTiersWeekly,
-  } = useDuneQuery<StakerTiersWeeklyRow>(DUNE_QUERIES.STAKER_TIERS_WEEKLY);
+    data: monthlyTierGrowth,
+    isLoading: loadingMonthlyTierGrowth,
+  } = useDuneQuery<MonthlyTierGrowthRow>(DUNE_QUERIES.MONTHLY_TIER_GROWTH);
 
   // Alchemy live total staked (polls every 5 min, 1 API call)
   const { totalStaked: liveTotalStaked } = useLiveTotalStaked();
@@ -1284,8 +1284,8 @@ export function Dashboard() {
           {/* Row 1.6: Monthly growth of staker counts at each USD tier (since Jan '26) */}
           <div className="mb-5">
             <TierGrowthTable
-              data={stakerTiersWeekly}
-              isLoading={loadingStakerTiersWeekly}
+              data={monthlyTierGrowth}
+              isLoading={loadingMonthlyTierGrowth}
             />
           </div>
 

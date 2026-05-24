@@ -1,59 +1,53 @@
 import { useMemo } from 'react';
 import { ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { formatNumber } from '../../utils/formatters';
-import { parseDuneDate } from '../../utils/dataTransformers';
-import type { StakerTiersWeeklyRow } from '../../hooks/useDuneQuery';
+import type { MonthlyTierGrowthRow } from '../../hooks/useDuneQuery';
 
 interface TierGrowthTableProps {
-  data: StakerTiersWeeklyRow[] | null;
+  data: MonthlyTierGrowthRow[] | null;
   isLoading?: boolean;
 }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const CUTOFF_MONTH_KEY = '2026-01'; // inclusive
+const CUTOFF_MONTH_KEY = '2026-01'; // inclusive — table starts from Jan 2026
 
 interface MonthlyRow {
   monthKey: string;       // "YYYY-MM"
   label: string;          // "Jan '26"
-  asOfWeek: string;       // "YYYY-MM-DD" — last week-end in the month
   totalStakers: number;
-  stakers100: number;
-  stakers500: number;
-  stakers1000: number;
+  below100: number;
+  member: number;         // $100+
+  holder: number;         // $250+
+  elite: number;          // $1000+
+  legend: number;         // $2500+
 }
 
-/** Take the latest week-end snapshot inside each month and keep months from Jan 2026 on. */
-function aggregateMonthly(rows: StakerTiersWeeklyRow[]): MonthlyRow[] {
-  const buckets = new Map<string, { week: string; row: StakerTiersWeeklyRow }>();
-  for (const row of rows) {
-    const week = parseDuneDate(row.week); // "YYYY-MM-DD"
-    if (!week) continue;
-    const monthKey = week.slice(0, 7);
-    if (monthKey < CUTOFF_MONTH_KEY) continue;
-    const existing = buckets.get(monthKey);
-    if (!existing || week > existing.week) {
-      buckets.set(monthKey, { week, row });
-    }
-  }
-
-  return Array.from(buckets.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([monthKey, { week, row }]) => {
+/** Normalize the Dune rows to a tidy local shape and filter to Jan 2026 onward. */
+function normalize(rows: MonthlyTierGrowthRow[]): MonthlyRow[] {
+  return rows
+    .map(row => {
+      const monthKey = (row.month ?? '').split(/[T\s]/)[0].slice(0, 7);
+      return { row, monthKey };
+    })
+    .filter(({ monthKey }) => monthKey >= CUTOFF_MONTH_KEY)
+    .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+    .map(({ row, monthKey }) => {
       const [, m] = monthKey.split('-').map(Number);
       const yearShort = monthKey.slice(2, 4);
       return {
         monthKey,
         label: `${MONTH_NAMES[m - 1]} '${yearShort}`,
-        asOfWeek: week,
-        totalStakers: row.total_stakers,
-        stakers100: row.stakers_100_plus,
-        stakers500: row.stakers_500_plus,
-        stakers1000: row.stakers_1000_plus,
+        totalStakers: row.total_stakers ?? 0,
+        below100: row['below $100'] ?? 0,
+        member: row['member ($100+)'] ?? 0,
+        holder: row['holder ($250+)'] ?? 0,
+        elite: row['elite ($1000+)'] ?? 0,
+        legend: row['legend ($2500+)'] ?? 0,
       };
     });
 }
 
-/** Inline cell: big number above, small Δ + % below (or em-dash for first row). */
+/** Inline cell: big number on top, small Δ + % below (em-dash for first row). */
 function GrowthCell({ value, prev }: { value: number; prev: number | null }) {
   if (prev == null) {
     return (
@@ -82,19 +76,19 @@ function GrowthCell({ value, prev }: { value: number; prev: number | null }) {
 }
 
 export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
-  const rows = useMemo(() => (data ? aggregateMonthly(data) : []), [data]);
+  const rows = useMemo(() => (data ? normalize(data) : []), [data]);
 
   return (
     <div className="flagship-card rounded-2xl">
       <div className="p-6 border-b border-white/5 relative z-10">
         <h3 className="text-lg font-semibold text-lavender">Tier Growth (Monthly)</h3>
         <p className="text-sm text-soft-gray mt-1">
-          Month-end snapshots of staker counts by USD tier, from Jan 2026 onward
+          Month-over-month staker counts by named tier, from Jan 2026 onward
         </p>
       </div>
 
       <div className="relative z-10 overflow-x-auto">
-        <table className="w-full min-w-[640px]">
+        <table className="w-full min-w-[820px]">
           <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
             <tr className="border-b border-white/5">
               <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-6">
@@ -104,13 +98,19 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
                 Total Stakers
               </th>
               <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">
-                ≥ $100
+                Below $100
               </th>
               <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">
-                ≥ $500
+                Member ($100+)
+              </th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">
+                Holder ($250+)
+              </th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4">
+                Elite ($1k+)
               </th>
               <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-6">
-                ≥ $1k
+                Legend ($2.5k+)
               </th>
             </tr>
           </thead>
@@ -119,15 +119,14 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
               [...Array(4)].map((_, i) => (
                 <tr key={i} className="border-b border-white/5">
                   <td className="py-3 px-6"><div className="skeleton h-5 w-16 rounded" /></td>
-                  <td className="py-3 px-4"><div className="skeleton h-10 w-24 rounded ml-auto" /></td>
-                  <td className="py-3 px-4"><div className="skeleton h-10 w-20 rounded ml-auto" /></td>
-                  <td className="py-3 px-4"><div className="skeleton h-10 w-20 rounded ml-auto" /></td>
-                  <td className="py-3 px-6"><div className="skeleton h-10 w-20 rounded ml-auto" /></td>
+                  {[...Array(6)].map((__, j) => (
+                    <td key={j} className="py-3 px-4"><div className="skeleton h-10 w-20 rounded ml-auto" /></td>
+                  ))}
                 </tr>
               ))
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-12 text-center text-soft-gray text-sm">
+                <td colSpan={7} className="py-12 text-center text-soft-gray text-sm">
                   No data available
                 </td>
               </tr>
@@ -143,13 +142,19 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
                       <GrowthCell value={row.totalStakers} prev={prev?.totalStakers ?? null} />
                     </td>
                     <td className="py-3 px-4">
-                      <GrowthCell value={row.stakers100} prev={prev?.stakers100 ?? null} />
+                      <GrowthCell value={row.below100} prev={prev?.below100 ?? null} />
                     </td>
                     <td className="py-3 px-4">
-                      <GrowthCell value={row.stakers500} prev={prev?.stakers500 ?? null} />
+                      <GrowthCell value={row.member} prev={prev?.member ?? null} />
+                    </td>
+                    <td className="py-3 px-4">
+                      <GrowthCell value={row.holder} prev={prev?.holder ?? null} />
+                    </td>
+                    <td className="py-3 px-4">
+                      <GrowthCell value={row.elite} prev={prev?.elite ?? null} />
                     </td>
                     <td className="py-3 px-6">
-                      <GrowthCell value={row.stakers1000} prev={prev?.stakers1000 ?? null} />
+                      <GrowthCell value={row.legend} prev={prev?.legend ?? null} />
                     </td>
                   </tr>
                 );
