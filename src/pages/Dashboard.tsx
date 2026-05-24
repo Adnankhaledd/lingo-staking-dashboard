@@ -6,6 +6,7 @@ import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimer
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { StakerLTVTable } from '../components/cards/StakerLTVTable';
 import { StakerConcentrationCard } from '../components/cards/StakerConcentrationCard';
+import { TierGrowthTable } from '../components/cards/TierGrowthTable';
 import { StakerLTVSection } from '../components/sections/StakerLTVSection';
 import { MixpanelKPICard } from '../components/cards/MixpanelKPICard';
 import { RewardValueCard } from '../components/cards/RewardValueCard';
@@ -47,6 +48,7 @@ import {
   type GrowthTierDistributionRow,
   type NewLargeStakersRow,
   type StakersByUSDThresholdRow,
+  type StakerTiersWeeklyRow,
 } from '../hooks/useDuneQuery';
 import { useMixpanelData } from '../hooks/useMixpanelData';
 import {
@@ -204,6 +206,11 @@ export function Dashboard() {
     isLoading: loadingStakersByThreshold,
     executedAt: stakersByThresholdExecutedAt,
   } = useDuneQuery<StakersByUSDThresholdRow>(DUNE_QUERIES.STAKERS_BY_USD_THRESHOLD);
+
+  const {
+    data: stakerTiersWeekly,
+    isLoading: loadingStakerTiersWeekly,
+  } = useDuneQuery<StakerTiersWeeklyRow>(DUNE_QUERIES.STAKER_TIERS_WEEKLY);
 
   // Alchemy live total staked (polls every 5 min, 1 API call)
   const { totalStaked: liveTotalStaked } = useLiveTotalStaked();
@@ -1279,6 +1286,14 @@ export function Dashboard() {
                 </div>
               )}
             </ChartCard>
+          </div>
+
+          {/* Row 1.6: Monthly growth of staker counts at each USD tier (since Jan '26) */}
+          <div className="mb-5">
+            <TierGrowthTable
+              data={stakerTiersWeekly}
+              isLoading={loadingStakerTiersWeekly}
+            />
           </div>
 
           {/* Row 2: LINGO by Wallet Type */}
