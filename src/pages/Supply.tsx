@@ -204,40 +204,76 @@ export function Supply() {
           />
         </section>
 
-        {/* Staked vs Total Supply — explicit horizontal comparison bar */}
-        {totalSupply != null && totalSupply > 0 && summary.staked != null && (
+        {/* Staked vs Circulating Supply — side-by-side comparison bar.
+            The full bar represents (Staked + Circulating); each segment
+            shows its share so you can see the locked-vs-free split visually. */}
+        {summary.staked != null && summary.circ != null && summary.staked + summary.circ > 0 && (
           <section className="mb-8">
             <div className="flagship-card p-6 relative z-10">
               <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
                 <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest">
-                  Staked vs Total Supply
+                  Staked vs Circulating Supply
                 </h2>
-                <div className="text-sm">
-                  <span className="text-purple font-bold">{formatNumber(summary.staked)}</span>
-                  <span className="text-soft-gray mx-1">/</span>
-                  <span className="text-lavender font-semibold">{formatNumber(totalSupply)}</span>
-                  <span className="text-soft-gray ml-2">
-                    ({pct(summary.staked, totalSupply)} of total supply staked)
-                  </span>
-                </div>
+                {(() => {
+                  const denom = summary.staked + summary.circ;
+                  return (
+                    <div className="text-sm">
+                      <span className="text-purple font-bold">{formatNumber(summary.staked)}</span>
+                      <span className="text-soft-gray mx-1">staked</span>
+                      <span className="text-soft-gray mx-1">/</span>
+                      <span className="text-green1 font-semibold">{formatNumber(summary.circ)}</span>
+                      <span className="text-soft-gray mx-1">circulating</span>
+                      <span className="text-soft-gray ml-2">
+                        ({pct(summary.staked, denom)} of the staked-or-free supply is locked in staking)
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
-              <div className="h-6 rounded-full overflow-hidden bg-dark3 border border-white/[0.04]">
-                <div
-                  className="h-full bg-gradient-to-r from-purple to-purple/70 flex items-center justify-end px-3"
-                  style={{ width: `${(summary.staked / totalSupply) * 100}%` }}
-                >
-                  <span className="text-[10px] font-semibold text-white whitespace-nowrap">
-                    {pct(summary.staked, totalSupply)}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-soft-gray mt-2">
-                <span>0</span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-sm bg-purple" /> Staked LINGO
-                </span>
-                <span>{formatNumber(totalSupply)} (Total Supply)</span>
-              </div>
+              {(() => {
+                const denom = summary.staked + summary.circ;
+                const stakedShare = summary.staked / denom;
+                const circShare = summary.circ / denom;
+                return (
+                  <>
+                    <div className="h-6 rounded-full overflow-hidden bg-dark3 border border-white/[0.04] flex">
+                      <div
+                        className="h-full bg-gradient-to-r from-purple to-purple/70 flex items-center justify-end px-2"
+                        style={{ width: `${stakedShare * 100}%` }}
+                        title={`Staked: ${formatNumber(summary.staked)} (${pct(summary.staked, denom)})`}
+                      >
+                        {stakedShare > 0.06 && (
+                          <span className="text-[10px] font-semibold text-white whitespace-nowrap">
+                            {pct(summary.staked, denom)}
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        className="h-full bg-gradient-to-r from-green1/70 to-green1 flex items-center justify-start px-2"
+                        style={{ width: `${circShare * 100}%` }}
+                        title={`Circulating: ${formatNumber(summary.circ)} (${pct(summary.circ, denom)})`}
+                      >
+                        {circShare > 0.06 && (
+                          <span className="text-[10px] font-semibold text-white whitespace-nowrap">
+                            {pct(summary.circ, denom)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-soft-gray mt-2">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-sm bg-purple" /> Staked
+                      </span>
+                      <span className="text-purple-gray">
+                        Total compared: {formatNumber(summary.staked + summary.circ)} LINGO
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-sm bg-green1" /> Circulating
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </section>
         )}
