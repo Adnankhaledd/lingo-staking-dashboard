@@ -6,6 +6,7 @@ import { useSupplyData } from '../hooks/useSupplyData';
 
 const MAX_SUPPLY = 1_000_000_000; // 1B LINGO hard cap
 const LINGO_TOKEN = '0xfb42Da273158B0F642F59F2Ba7cc1d5457481677';
+const STAKING_CONTRACT = '0x9aF8C0dac726CcEE2BFd6c0f3E21f320d42398AC';
 
 function truncateAddress(addr: string): string {
   if (!addr) return '—';
@@ -105,7 +106,10 @@ export function Supply() {
     const nonCirc = wallets.reduce((sum, w) => sum + (w.balance ?? 0), 0);
     const circ = totalSupply != null ? Math.max(0, totalSupply - nonCirc) : null;
     const mintHeadroom = totalSupply != null ? Math.max(0, MAX_SUPPLY - totalSupply) : null;
-    return { nonCirc, circ, mintHeadroom };
+    const staked = wallets.find(
+      w => w.address.toLowerCase() === STAKING_CONTRACT.toLowerCase()
+    )?.balance ?? null;
+    return { nonCirc, circ, mintHeadroom, staked };
   }, [wallets, totalSupply]);
 
   return (
@@ -157,8 +161,8 @@ export function Supply() {
           </div>
         )}
 
-        {/* Top stat row */}
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+        {/* Top stat row — Max | Total | Staked | Circulating */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
           <BigStatCard
             label="Max Supply (Hard Cap)"
             value={`${formatNumber(MAX_SUPPLY)}`}
@@ -170,11 +174,22 @@ export function Supply() {
             value={totalSupply != null ? formatNumber(totalSupply) : '—'}
             sub={
               totalSupply != null
-                ? `${pct(totalSupply, MAX_SUPPLY)} of cap • ${formatNumber(summary.mintHeadroom ?? 0)} LINGO can still be minted`
+                ? `${pct(totalSupply, MAX_SUPPLY)} of cap • ${formatNumber(summary.mintHeadroom ?? 0)} LINGO mintable`
                 : 'Live from contract'
             }
             accent="#C4B5D4"
             loading={isLoading && totalSupply == null}
+          />
+          <BigStatCard
+            label="Staked"
+            value={summary.staked != null ? formatNumber(summary.staked) : '—'}
+            sub={
+              summary.staked != null && totalSupply != null
+                ? `${pct(summary.staked, totalSupply)} of total supply • ${pct(summary.staked, MAX_SUPPLY)} of cap`
+                : 'Held by the staking contract'
+            }
+            accent="#7B68AE"
+            loading={isLoading && summary.staked == null}
           />
           <BigStatCard
             label="Circulating Supply"
@@ -188,6 +203,44 @@ export function Supply() {
             loading={isLoading && summary.circ == null}
           />
         </section>
+
+        {/* Staked vs Total Supply — explicit horizontal comparison bar */}
+        {totalSupply != null && totalSupply > 0 && summary.staked != null && (
+          <section className="mb-8">
+            <div className="flagship-card p-6 relative z-10">
+              <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+                <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest">
+                  Staked vs Total Supply
+                </h2>
+                <div className="text-sm">
+                  <span className="text-purple font-bold">{formatNumber(summary.staked)}</span>
+                  <span className="text-soft-gray mx-1">/</span>
+                  <span className="text-lavender font-semibold">{formatNumber(totalSupply)}</span>
+                  <span className="text-soft-gray ml-2">
+                    ({pct(summary.staked, totalSupply)} of total supply staked)
+                  </span>
+                </div>
+              </div>
+              <div className="h-6 rounded-full overflow-hidden bg-dark3 border border-white/[0.04]">
+                <div
+                  className="h-full bg-gradient-to-r from-purple to-purple/70 flex items-center justify-end px-3"
+                  style={{ width: `${(summary.staked / totalSupply) * 100}%` }}
+                >
+                  <span className="text-[10px] font-semibold text-white whitespace-nowrap">
+                    {pct(summary.staked, totalSupply)}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-soft-gray mt-2">
+                <span>0</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-sm bg-purple" /> Staked LINGO
+                </span>
+                <span>{formatNumber(totalSupply)} (Total Supply)</span>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Breakdown bar */}
         {totalSupply != null && totalSupply > 0 && (

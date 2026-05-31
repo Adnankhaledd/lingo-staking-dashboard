@@ -26,14 +26,18 @@ interface KnownWallet {
 }
 
 const KNOWN_WALLETS: KnownWallet[] = [
-  { name: 'Treasury',            address: '0x0e0bc2919540119fC22a502842A74AF4D81502b6' },
-  { name: 'Staking Contract',    address: '0x9aF8C0dac726CcEE2BFd6c0f3E21f320d42398AC' },
-  { name: 'Liquidity',           address: '0x9399dA51C1a85e64CCe4b30B554875D2b89b2445' },
-  { name: 'Team Buybacks #1',    address: '0x7e3e2d6b8b87ce617b7ccdd63d0f5449e4057513' },
-  { name: 'Team Buybacks #2',    address: '0x69892fc8e176d9750e7f0ca06fc9aede0fc97bcb' },
-  { name: 'Unidentified Contract #1', address: '0x61f8D3Fc749ECDa98D378BC2cc8459Ba0F7dFd58', note: 'Pending identification' },
-  { name: 'Unidentified Contract #2', address: '0x7c91bAca69ad289eC5De46B0b36287770a1Ea91e', note: 'Pending identification' },
+  { name: 'Treasury',         address: '0x0e0bc2919540119fC22a502842A74AF4D81502b6' },
+  { name: 'Staking Contract', address: '0x9aF8C0dac726CcEE2BFd6c0f3E21f320d42398AC' },
+  { name: 'Liquidity',        address: '0x9399dA51C1a85e64CCe4b30B554875D2b89b2445' },
+  { name: 'Team Buybacks #1', address: '0x7e3e2d6b8b87ce617b7ccdd63d0f5449e4057513' },
+  { name: 'Team Buybacks #2', address: '0x69892fc8e176d9750e7f0ca06fc9aede0fc97bcb' },
+  { name: 'Team Multisig (2-of-3 Safe)', address: '0x61f8D3Fc749ECDa98D378BC2cc8459Ba0F7dFd58', note: 'Gnosis Safe (Safe v1.4.1) — owners: 0x59dd…efa2, 0xe17a…3eec, 0x921f…d23b' },
+  { name: 'Upgradeable Distribution Contract', address: '0x7c91bAca69ad289eC5De46B0b36287770a1Ea91e', note: 'EIP-1967 proxy → impl 0x7c34…97a9, owner 0xcfe5…8fa5' },
 ];
+
+/** Public address of the staking contract — used by the Supply page to break
+ *  out a "Staked" stat card distinct from other locked holdings. */
+export const STAKING_CONTRACT_ADDRESS = '0x9aF8C0dac726CcEE2BFd6c0f3E21f320d42398AC';
 
 /** Pad a 20-byte address into the 32-byte ABI calldata slot (no 0x prefix). */
 function padAddress(addr: string): string {
