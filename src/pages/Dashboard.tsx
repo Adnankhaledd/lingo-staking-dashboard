@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, CheckCircle } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, StakingUpdateCard } from '../components/cards';
+import { TotalStakedHeroChart } from '../components/cards/TotalStakedHeroChart';
 import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimersTable';
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { StakerLTVTable } from '../components/cards/StakerLTVTable';
@@ -491,9 +492,13 @@ export function Dashboard() {
             HERO + OVERVIEW
         ═══════════════════════════════════════════════════════════════ */}
 
-        {/* Total Fees Hero Card */}
+        {/* Total LINGO Staked Hero Chart — default monthly, toggleable W/M/Q */}
         <section className="mb-10">
-          <TotalFeesCard totalFees={totalFeesData} isLoading={combinedFeesLoading} />
+          <TotalStakedHeroChart
+            data={totalStakedData}
+            liveTotalStaked={liveTotalStaked}
+            isLoading={loadingTotalStaked}
+          />
         </section>
 
         {/* KPI Cards */}
@@ -527,6 +532,12 @@ export function Dashboard() {
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Revenue & Fees
           </h2>
+
+          {/* Total Fees Collected hero — moved here from the old top hero slot */}
+          <div className="mb-5">
+            <TotalFeesCard totalFees={totalFeesData} isLoading={combinedFeesLoading} />
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Monthly Fees Breakdown */}
             <ChartCard
