@@ -2,7 +2,6 @@ import { useMemo } from 'react';
 import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, CheckCircle } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, StakingUpdateCard } from '../components/cards';
-import { TotalStakedHeroChart } from '../components/cards/TotalStakedHeroChart';
 import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimersTable';
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { StakerLTVTable } from '../components/cards/StakerLTVTable';
@@ -492,13 +491,9 @@ export function Dashboard() {
             HERO + OVERVIEW
         ═══════════════════════════════════════════════════════════════ */}
 
-        {/* Total LINGO Staked Hero Chart — default monthly, toggleable W/M/Q */}
+        {/* Staking Update — hero chart with W/M/Q/Y toggle */}
         <section className="mb-10">
-          <TotalStakedHeroChart
-            data={totalStakedData}
-            liveTotalStaked={liveTotalStaked}
-            isLoading={loadingTotalStaked}
-          />
+          <StakingUpdateCard data={totalStakedData} isLoading={loadingTotalStaked} />
         </section>
 
         {/* KPI Cards */}
@@ -513,11 +508,6 @@ export function Dashboard() {
                   <KPICard key={kpi.label} data={kpi} index={index} />
                 ))}
           </div>
-        </section>
-
-        {/* Staking Update — period comparison card */}
-        <section className="mb-10">
-          <StakingUpdateCard data={totalStakedData} isLoading={loadingTotalStaked} />
         </section>
 
         {/* Live Activity Feed (Alchemy) — hidden if not configured */}
