@@ -1,76 +1,22 @@
 import { useMemo } from 'react';
 import { formatNumber } from '../../utils/formatters';
-import type { StakerLTVRow } from '../../hooks/useDuneQuery';
+import type { LTVByThresholdRow } from '../../hooks/useDuneQuery';
 
 interface LTVHighlightCardsProps {
-  data: StakerLTVRow[] | null;
+  data: LTVByThresholdRow[] | null;
   isLoading?: boolean;
 }
 
-/** Stakers whose first stake was at least this many LINGO are considered "serious" and counted. */
-const MIN_FIRST_STAKE_LINGO = 2_000;
+/** Which row of LTV_BY_THRESHOLD to surface (matches "Min 2k LINGO" label). */
+const THRESHOLD_LABEL = 'Min 2k LINGO';
 
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function parseDateUTC(raw: string): Date | null {
-  if (!raw) return null;
-  const isoish = raw.replace(' UTC', '').replace(' ', 'T') + 'Z';
-  const d = new Date(isoish);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-/** Returns the UTC date 3 calendar months back from the start of this month. */
-function threeMonthWindow(now: Date): { start: Date; end: Date; label: string } {
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const start = new Date(Date.UTC(y, m - 3, 1));
-  const end = new Date(Date.UTC(y, m, 1)); // up to but not including this month
-  const fmt = (d: Date) => `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-  const lastMonth = new Date(Date.UTC(y, m - 1, 1));
-  return { start, end, label: `${fmt(start)} – ${fmt(lastMonth)}` };
-}
-
-interface KPI {
-  value: number;
-  userCount: number;
-  rangeLabel: string;
-}
-
-function computeKPIs(data: StakerLTVRow[]) {
-  const now = new Date();
-  const threeMo = threeMonthWindow(now);
-
-  // Filter once: serious first stakers
-  const serious = data.filter(r => (r.first_stake ?? 0) >= MIN_FIRST_STAKE_LINGO);
-
-  // Both KPIs use the same 3-month cohort — average first_stake vs average total_staked.
-  let firstStakeSum = 0;
-  let ltvSum = 0;
-  let count = 0;
-  for (const r of serious) {
-    const d = parseDateUTC(r.first_stake_date);
-    if (!d) continue;
-    if (d >= threeMo.start && d < threeMo.end) {
-      firstStakeSum += r.first_stake ?? 0;
-      ltvSum += r.total_staked ?? 0;
-      count += 1;
-    }
-  }
-  const avgFirstStake = count > 0 ? firstStakeSum / count : 0;
-  const avgLtv = count > 0 ? ltvSum / count : 0;
-
-  return {
-    avgFirstStakeLast3Months: {
-      value: avgFirstStake,
-      userCount: count,
-      rangeLabel: threeMo.label,
-    } as KPI,
-    avgLtvLast3Months: {
-      value: avgLtv,
-      userCount: count,
-      rangeLabel: threeMo.label,
-    } as KPI,
-  };
+function pickThresholdRow(data: LTVByThresholdRow[]): LTVByThresholdRow | null {
+  // Exact match first; otherwise look for any row whose label includes "2k".
+  return (
+    data.find(r => r.min_threshold === THRESHOLD_LABEL) ??
+    data.find(r => /\b2k\b/i.test(r.min_threshold ?? '')) ??
+    null
+  );
 }
 
 function StatCard({
@@ -115,43 +61,40 @@ function StatCard({
 }
 
 export function LTVHighlightCards({ data, isLoading }: LTVHighlightCardsProps) {
-  const kpis = useMemo(() => (data ? computeKPIs(data) : null), [data]);
-
-  const avgFirst = kpis?.avgFirstStakeLast3Months;
-  const avgLtv = kpis?.avgLtvLast3Months;
+  const row = useMemo(() => (data ? pickThresholdRow(data) : null), [data]);
 
   return (
     <div>
       <div className="flex items-baseline justify-between mb-3 px-1 flex-wrap gap-2">
         <h3 className="text-lg font-semibold text-lavender">LTV Highlights</h3>
         <p className="text-xs text-purple-gray">
-          Stakers whose first stake was at least {formatNumber(MIN_FIRST_STAKE_LINGO)} LINGO &middot; sourced from top-500 LTV query
+          Stakers whose first stake was at least 2,000 LINGO &middot; all-time avg from Dune 7350883
         </p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <StatCard
-          label="Avg First Deposit (Last 3 Months)"
-          value={avgFirst ? formatNumber(Math.round(avgFirst.value)) : '—'}
+          label="Avg First Deposit"
+          value={row ? formatNumber(Math.round(row.avg_first_deposit)) : '—'}
           unit="LINGO / staker"
           sub={
-            avgFirst
-              ? `Avg across ${avgFirst.userCount.toLocaleString()} stakers who first staked ${avgFirst.rangeLabel}`
-              : 'Average first-stake size per new staker in the last 3 months'
+            row
+              ? `Across ${row.total_users.toLocaleString()} stakers above the 2k LINGO threshold`
+              : 'Average first-stake size for stakers above the 2k LINGO threshold'
           }
           accent="#C4B5D4"
-          loading={isLoading && !avgFirst}
+          loading={isLoading && !row}
         />
         <StatCard
-          label="Avg LTV (Last 3 Months)"
-          value={avgLtv ? formatNumber(Math.round(avgLtv.value)) : '—'}
+          label="Avg LTV"
+          value={row ? formatNumber(Math.round(row.avg_ltv)) : '—'}
           unit="LINGO / staker"
           sub={
-            avgLtv
-              ? `Avg across ${avgLtv.userCount.toLocaleString()} stakers who first staked ${avgLtv.rangeLabel}`
-              : 'Average total LTV per staker who joined in the last 3 months'
+            row
+              ? `${row.avg_ltv_multiplier.toFixed(1)}× avg first deposit · ${parseFloat(row.pct_repeat).toFixed(0)}% repeat-stakers`
+              : 'Average total LTV per staker above the 2k LINGO threshold'
           }
           accent="#5EB851"
-          loading={isLoading && !avgLtv}
+          loading={isLoading && !row}
         />
       </div>
     </div>

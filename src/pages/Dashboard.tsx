@@ -953,11 +953,11 @@ export function Dashboard() {
             />
           </div>
 
-          {/* Row 3.7c: LTV highlight cards — first deposits last month + avg LTV last 3 months */}
+          {/* Row 3.7c: LTV highlight cards — avg first deposit + avg LTV at 2k+ threshold */}
           <div className="mb-5">
             <LTVHighlightCards
-              data={stakerLTV ?? []}
-              isLoading={loadingStakerLTV}
+              data={ltvByThreshold ?? []}
+              isLoading={loadingLtvByThreshold}
             />
           </div>
 
