@@ -20,11 +20,22 @@ async function fetchBlobJson<T = unknown>(pathname: string): Promise<T | null> {
   } catch { return null; }
 }
 
-const MIXPANEL_API_SECRET = process.env.MIXPANEL_API_SECRET || '010125f09fef119ad08d0eb062be12b6';
-const PROJECT_ID = '3623820';
-const REPORT_ID = '75454495';
+// ─── Project migration (May 2026) ────────────────────────────────────
+// We migrated to a new Mixpanel project on EU. The OLD project produced
+// data up to 2026-05-31; the NEW project starts producing data on
+// 2026-06-01. We freeze the last good blob from the old project as
+// `mixpanel-data-legacy.json` and on every refresh splice it together
+// with new-project data on the date cutoff. The dashboard reads from
+// `mixpanel-data.json` as before — it has no idea a migration happened.
+
+const MIXPANEL_API_SECRET = process.env.MIXPANEL_API_SECRET_NEW
+  || process.env.MIXPANEL_API_SECRET
+  || '010125f09fef119ad08d0eb062be12b6';
+const PROJECT_ID = '4022491'; // NEW project — used for all new queries
+const CUTOFF_DATE = '2026-06-01'; // legacy < CUTOFF, new >= CUTOFF
 
 const BLOB_FILENAME = 'mixpanel-data.json';
+const LEGACY_BLOB_FILENAME = 'mixpanel-data-legacy.json';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -42,11 +53,45 @@ async function mixpanelGet(url: string): Promise<unknown> {
 }
 
 // ─── Individual fetchers (sequential to avoid rate limits) ───────────
+// Every query is clamped to CUTOFF_DATE so we never re-fetch data the
+// new project doesn't have. The legacy blob fills in dates before that.
+
+/** Latest of two YYYY-MM-DD strings (string compare works for ISO dates). */
+function maxDate(a: string, b: string): string {
+  return a > b ? a : b;
+}
 
 async function fetchDAU() {
-  return mixpanelGet(
-    `https://eu.mixpanel.com/api/2.0/insights?project_id=${PROJECT_ID}&bookmark_id=${REPORT_ID}`
-  );
+  // Old project used a Mixpanel insights bookmark. The new project doesn't
+  // have one wired up yet, so derive DAU directly from the events API:
+  // unique users with at least one "Wallet Connected" event per day. We
+  // reshape the response into the { series: { 'A. DAU': { date: n } } }
+  // shape the dashboard already parses (see transformDAUData).
+  const today = new Date();
+  const thirtyDaysAgo = new Date(today);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const params = new URLSearchParams({
+    project_id: PROJECT_ID,
+    event: JSON.stringify(['Wallet Connected']),
+    type: 'unique',
+    unit: 'day',
+    from_date: maxDate(toDateStr(thirtyDaysAgo), CUTOFF_DATE),
+    to_date: toDateStr(today),
+  });
+
+  const raw = (await mixpanelGet(
+    `https://eu.mixpanel.com/api/2.0/events?${params}`
+  )) as { data?: { values?: Record<string, Record<string, number>> } };
+
+  const series = raw.data?.values?.['Wallet Connected'] ?? {};
+  return {
+    series: { 'A. DAU': series },
+    date_range: {
+      from_date: maxDate(toDateStr(thirtyDaysAgo), CUTOFF_DATE),
+      to_date: toDateStr(today),
+    },
+  };
 }
 
 async function fetchWAU() {
@@ -59,7 +104,7 @@ async function fetchWAU() {
     event: JSON.stringify(['Wallet Connected']),
     type: 'unique',
     unit: 'week',
-    from_date: toDateStr(from),
+    from_date: maxDate(toDateStr(from), CUTOFF_DATE),
     to_date: toDateStr(today),
   });
 
@@ -76,7 +121,7 @@ async function fetchMAU() {
     event: JSON.stringify(['Wallet Connected']),
     type: 'unique',
     unit: 'month',
-    from_date: toDateStr(lastMonth),
+    from_date: maxDate(toDateStr(lastMonth), CUTOFF_DATE),
     to_date: toDateStr(today),
   });
 
@@ -98,7 +143,7 @@ async function fetchEngagement(unit: 'week' | 'month', daysBack: number) {
     project_id: PROJECT_ID,
     event: JSON.stringify(events),
     unit,
-    from_date: toDateStr(from),
+    from_date: maxDate(toDateStr(from), CUTOFF_DATE),
     to_date: toDateStr(yesterday),
   };
 
@@ -130,6 +175,113 @@ async function getExistingBlobData(): Promise<MixpanelBlobPayload | null> {
   return fetchBlobJson<MixpanelBlobPayload>(BLOB_FILENAME);
 }
 
+async function getLegacyBlobData(): Promise<MixpanelBlobPayload | null> {
+  return fetchBlobJson<MixpanelBlobPayload>(LEGACY_BLOB_FILENAME);
+}
+
+// ─── Legacy splice helpers ────────────────────────────────────────────
+// All Mixpanel date-bucketed responses look like `{ <date_key>: number }`
+// somewhere inside the payload. We keep entries with dateKey < CUTOFF_DATE
+// from the legacy snapshot and overlay entries with dateKey >= CUTOFF_DATE
+// from the freshly-fetched new-project response.
+
+function isObject(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null && !Array.isArray(x);
+}
+
+/** Merge two `{ dateKey: count }` maps with a cutoff date. */
+function spliceDateSeries(
+  legacy: Record<string, number> | undefined,
+  fresh: Record<string, number> | undefined,
+  cutoff: string
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (legacy) {
+    for (const [date, val] of Object.entries(legacy)) {
+      const day = date.split(/[T\s]/)[0];
+      if (day < cutoff) out[date] = val;
+    }
+  }
+  if (fresh) {
+    for (const [date, val] of Object.entries(fresh)) {
+      const day = date.split(/[T\s]/)[0];
+      if (day >= cutoff) out[date] = val;
+    }
+  }
+  return out;
+}
+
+/** Merge a DAU insights-shaped response. */
+function spliceDAU(legacy: unknown, fresh: unknown): unknown {
+  const legacySeries = isObject(legacy) && isObject(legacy.series)
+    ? (legacy.series['A. DAU'] as Record<string, number> | undefined)
+    : undefined;
+  const freshSeries = isObject(fresh) && isObject(fresh.series)
+    ? (fresh.series['A. DAU'] as Record<string, number> | undefined)
+    : undefined;
+  return {
+    series: { 'A. DAU': spliceDateSeries(legacySeries, freshSeries, CUTOFF_DATE) },
+    date_range: isObject(fresh) ? fresh.date_range : null,
+  };
+}
+
+/** Merge an events-API response: `{ data: { values: { [event]: { [date]: n } } } }`. */
+function spliceEvents(legacy: unknown, fresh: unknown): unknown {
+  const legacyValues = isObject(legacy) && isObject(legacy.data) && isObject(legacy.data.values)
+    ? (legacy.data.values as Record<string, Record<string, number>>)
+    : {};
+  const freshValues = isObject(fresh) && isObject(fresh.data) && isObject(fresh.data.values)
+    ? (fresh.data.values as Record<string, Record<string, number>>)
+    : {};
+
+  const eventNames = new Set<string>([...Object.keys(legacyValues), ...Object.keys(freshValues)]);
+  const merged: Record<string, Record<string, number>> = {};
+  for (const ev of eventNames) {
+    merged[ev] = spliceDateSeries(legacyValues[ev], freshValues[ev], CUTOFF_DATE);
+  }
+  return { data: { values: merged } };
+}
+
+/** Merge an engagement payload (totals + unique each in events-API shape). */
+function spliceEngagement(legacy: unknown, fresh: unknown): unknown {
+  const lg = isObject(legacy) ? legacy : {};
+  const fr = isObject(fresh) ? fresh : {};
+  return {
+    totals: spliceEvents(lg.totals, fr.totals),
+    unique: spliceEvents(lg.unique, fr.unique),
+  };
+}
+
+/**
+ * Snapshot the current production blob to the legacy slot if no legacy blob
+ * exists yet. Runs at most once — subsequent refreshes leave it alone, so the
+ * frozen pre-cutoff data is never overwritten by accident.
+ */
+async function ensureLegacySnapshot(): Promise<MixpanelBlobPayload | null> {
+  const existingLegacy = await getLegacyBlobData();
+  if (existingLegacy) return existingLegacy;
+
+  const current = await getExistingBlobData();
+  if (!current) {
+    console.log('No current blob to snapshot as legacy — starting fresh');
+    return null;
+  }
+
+  try {
+    await put(LEGACY_BLOB_FILENAME, JSON.stringify(current), {
+      access: 'public',
+      addRandomSuffix: false,
+      allowOverwrite: false,
+      contentType: 'application/json',
+    });
+    console.log(`Snapshotted current blob to ${LEGACY_BLOB_FILENAME} (frozen reference for dates < ${CUTOFF_DATE})`);
+    return current;
+  } catch (err) {
+    console.warn('Failed to write legacy snapshot:', err);
+    return current;
+  }
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -159,7 +311,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   console.log('Starting Mixpanel data refresh...');
 
-  // Fetch existing blob for fallback
+  // Snapshot the current blob as the legacy reference on the very first run
+  // after this code lands — we'll splice anything < CUTOFF_DATE from it
+  // forever after. Existing data is also the fallback if a fetch fails.
+  const legacyData = await ensureLegacySnapshot();
   const existingData = await getExistingBlobData();
 
   // Fetch everything SEQUENTIALLY to avoid rate limits
@@ -203,13 +358,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // Merge: use new data if succeeded, keep old if failed
-  const payload: MixpanelBlobPayload = {
+  // First, choose the "new project" payload per metric: prefer the fresh
+  // fetch, fall back to whatever was already in the current blob (which
+  // was itself a splice of legacy + previous fresh).
+  const newProject = {
     dau: dau ?? existingData?.dau ?? null,
     wau: wau ?? existingData?.wau ?? null,
     mau: mau ?? existingData?.mau ?? null,
     weeklyEngagement: weeklyEngagement ?? existingData?.weeklyEngagement ?? null,
     monthlyEngagement: monthlyEngagement ?? existingData?.monthlyEngagement ?? null,
+  };
+
+  // Splice legacy (< CUTOFF_DATE) with new-project data (>= CUTOFF_DATE).
+  // If there's no legacy blob (first-ever deploy), this just passes through
+  // the new-project data unchanged.
+  const payload: MixpanelBlobPayload = {
+    dau: spliceDAU(legacyData?.dau, newProject.dau),
+    wau: spliceEvents(legacyData?.wau, newProject.wau),
+    mau: spliceEvents(legacyData?.mau, newProject.mau),
+    weeklyEngagement: spliceEngagement(legacyData?.weeklyEngagement, newProject.weeklyEngagement),
+    monthlyEngagement: spliceEngagement(legacyData?.monthlyEngagement, newProject.monthlyEngagement),
     errors: errorCount > 0 ? errors : undefined,
     refreshedAt: new Date().toISOString(),
   };
