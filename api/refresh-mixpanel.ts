@@ -61,71 +61,119 @@ function maxDate(a: string, b: string): string {
   return a > b ? a : b;
 }
 
+/**
+ * Active-users counts via JQL. Mixpanel's /events API can't truly dedupe
+ * unique users across multiple events (it gives unique-per-event), so we
+ * bucket events by (bucketKey, distinct_id), null-reduce to dedupe, then
+ * count per bucket. bucketKey is a JS function body returned as a string.
+ *
+ * Returns a `{ date: count }` map.
+ */
+async function fetchActiveUsersByBucket(
+  fromDate: string,
+  toDate: string,
+  bucketKeyExpr: string
+): Promise<Record<string, number>> {
+  const script = `
+function main() {
+  return Events({
+    from_date: ${JSON.stringify(fromDate)},
+    to_date: ${JSON.stringify(toDate)}
+  })
+  .groupBy(
+    [
+      function(event) { ${bucketKeyExpr} },
+      "distinct_id"
+    ],
+    mixpanel.reducer.null()
+  )
+  .groupBy(["key.0"], mixpanel.reducer.count());
+}`.trim();
+
+  const body = new URLSearchParams();
+  body.append('project_id', PROJECT_ID);
+  body.append('script', script);
+
+  const res = await fetch('https://eu.mixpanel.com/api/2.0/jql', {
+    method: 'POST',
+    headers: { ...MIXPANEL_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  if (!res.ok) throw new Error(`Mixpanel JQL HTTP ${res.status}`);
+  const rows = (await res.json()) as Array<{ key: [string]; value: number }>;
+
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    if (r && Array.isArray(r.key) && typeof r.key[0] === 'string') {
+      out[r.key[0]] = Number(r.value) || 0;
+    }
+  }
+  return out;
+}
+
 async function fetchDAU() {
-  // Old project used a Mixpanel insights bookmark. The new project doesn't
-  // have one wired up yet, so derive DAU directly from the events API:
-  // unique users with at least one "Wallet Connected" event per day. We
-  // reshape the response into the { series: { 'A. DAU': { date: n } } }
-  // shape the dashboard already parses (see transformDAUData).
+  // Per-day bucket: YYYY-MM-DD
   const today = new Date();
   const thirtyDaysAgo = new Date(today);
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const params = new URLSearchParams({
-    project_id: PROJECT_ID,
-    event: JSON.stringify(['Wallet Connected']),
-    type: 'unique',
-    unit: 'day',
-    from_date: maxDate(toDateStr(thirtyDaysAgo), CUTOFF_DATE),
-    to_date: toDateStr(today),
-  });
+  const fromDate = maxDate(toDateStr(thirtyDaysAgo), CUTOFF_DATE);
+  const toDate = toDateStr(today);
 
-  const raw = (await mixpanelGet(
-    `https://eu.mixpanel.com/api/2.0/events?${params}`
-  )) as { data?: { values?: Record<string, Record<string, number>> } };
+  const series = await fetchActiveUsersByBucket(
+    fromDate,
+    toDate,
+    'return new Date(event.time).toISOString().slice(0, 10);'
+  );
 
-  const series = raw.data?.values?.['Wallet Connected'] ?? {};
   return {
     series: { 'A. DAU': series },
-    date_range: {
-      from_date: maxDate(toDateStr(thirtyDaysAgo), CUTOFF_DATE),
-      to_date: toDateStr(today),
-    },
+    date_range: { from_date: fromDate, to_date: toDate },
   };
 }
 
 async function fetchWAU() {
+  // Per-week bucket: Monday-anchored YYYY-MM-DD (matches Mixpanel "unit=week")
   const today = new Date();
   const from = new Date(today);
-  from.setDate(from.getDate() - 56); // ~8 weeks for trend chart
+  from.setDate(from.getDate() - 56); // ~8 weeks
 
-  const params = new URLSearchParams({
-    project_id: PROJECT_ID,
-    event: JSON.stringify(['Wallet Connected']),
-    type: 'unique',
-    unit: 'week',
-    from_date: maxDate(toDateStr(from), CUTOFF_DATE),
-    to_date: toDateStr(today),
-  });
+  const fromDate = maxDate(toDateStr(from), CUTOFF_DATE);
+  const toDate = toDateStr(today);
 
-  return mixpanelGet(`https://eu.mixpanel.com/api/2.0/events?${params}`);
+  const values = await fetchActiveUsersByBucket(
+    fromDate,
+    toDate,
+    `var d = new Date(event.time);
+     var day = d.getUTCDay();
+     var diff = (day === 0 ? -6 : 1 - day);
+     d.setUTCDate(d.getUTCDate() + diff);
+     return d.toISOString().slice(0, 10);`
+  );
+
+  // Reshape to the dashboard's expected events-API shape with "Wallet Connected" key.
+  // The key name is preserved for backward compatibility with the existing parser
+  // (transformWAUData reads data.values['Wallet Connected']) — the numbers it now
+  // contains are unique active users across ALL events, not wallet connects.
+  return { data: { values: { 'Wallet Connected': values } } };
 }
 
 async function fetchMAU() {
+  // Per-month bucket: first-of-month YYYY-MM-01
   const today = new Date();
   const lastMonth = new Date(today);
   lastMonth.setDate(lastMonth.getDate() - 30);
 
-  const params = new URLSearchParams({
-    project_id: PROJECT_ID,
-    event: JSON.stringify(['Wallet Connected']),
-    type: 'unique',
-    unit: 'month',
-    from_date: maxDate(toDateStr(lastMonth), CUTOFF_DATE),
-    to_date: toDateStr(today),
-  });
+  const fromDate = maxDate(toDateStr(lastMonth), CUTOFF_DATE);
+  const toDate = toDateStr(today);
 
-  return mixpanelGet(`https://eu.mixpanel.com/api/2.0/events?${params}`);
+  const values = await fetchActiveUsersByBucket(
+    fromDate,
+    toDate,
+    `return new Date(event.time).toISOString().slice(0, 7) + '-01';`
+  );
+
+  return { data: { values: { 'Wallet Connected': values } } };
 }
 
 async function fetchEngagement(unit: 'week' | 'month', daysBack: number) {
