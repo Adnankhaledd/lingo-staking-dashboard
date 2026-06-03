@@ -19,19 +19,6 @@ function parseDateUTC(raw: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-/**
- * Returns [startInclusive, endExclusive] UTC dates for the last completed
- * calendar month relative to `now`. If now is in June, returns [May 1, Jun 1).
- */
-function lastCompleteMonth(now: Date): { start: Date; end: Date; label: string } {
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth(); // 0-indexed
-  const start = new Date(Date.UTC(y, m - 1, 1));
-  const end = new Date(Date.UTC(y, m, 1));
-  const label = `${MONTH_NAMES[start.getUTCMonth()]} ${start.getUTCFullYear()}`;
-  return { start, end, label };
-}
-
 /** Returns the UTC date 3 calendar months back from the start of this month. */
 function threeMonthWindow(now: Date): { start: Date; end: Date; label: string } {
   const y = now.getUTCFullYear();
@@ -51,46 +38,36 @@ interface KPI {
 
 function computeKPIs(data: StakerLTVRow[]) {
   const now = new Date();
-  const lastMonth = lastCompleteMonth(now);
   const threeMo = threeMonthWindow(now);
 
   // Filter once: serious first stakers
   const serious = data.filter(r => (r.first_stake ?? 0) >= MIN_FIRST_STAKE_LINGO);
 
-  // KPI 1 — sum of first deposits during the last completed month
-  let lastMonthSum = 0;
-  let lastMonthCount = 0;
-  for (const r of serious) {
-    const d = parseDateUTC(r.first_stake_date);
-    if (!d) continue;
-    if (d >= lastMonth.start && d < lastMonth.end) {
-      lastMonthSum += r.first_stake ?? 0;
-      lastMonthCount += 1;
-    }
-  }
-
-  // KPI 2 — average per-user LTV (total_staked) over the last 3 completed months
-  let threeMoLtvSum = 0;
-  let threeMoCount = 0;
+  // Both KPIs use the same 3-month cohort — average first_stake vs average total_staked.
+  let firstStakeSum = 0;
+  let ltvSum = 0;
+  let count = 0;
   for (const r of serious) {
     const d = parseDateUTC(r.first_stake_date);
     if (!d) continue;
     if (d >= threeMo.start && d < threeMo.end) {
-      threeMoLtvSum += r.total_staked ?? 0;
-      threeMoCount += 1;
+      firstStakeSum += r.first_stake ?? 0;
+      ltvSum += r.total_staked ?? 0;
+      count += 1;
     }
   }
-  const avgLtv = threeMoCount > 0 ? threeMoLtvSum / threeMoCount : 0;
+  const avgFirstStake = count > 0 ? firstStakeSum / count : 0;
+  const avgLtv = count > 0 ? ltvSum / count : 0;
 
   return {
-    lastMonthFirstDeposits: {
-      value: lastMonthSum,
-      userCount: lastMonthCount,
-      rangeLabel: lastMonth.label,
+    avgFirstStakeLast3Months: {
+      value: avgFirstStake,
+      userCount: count,
+      rangeLabel: threeMo.label,
     } as KPI,
     avgLtvLast3Months: {
       value: avgLtv,
-      userCount: threeMoCount,
+      userCount: count,
       rangeLabel: threeMo.label,
     } as KPI,
   };
@@ -140,8 +117,8 @@ function StatCard({
 export function LTVHighlightCards({ data, isLoading }: LTVHighlightCardsProps) {
   const kpis = useMemo(() => (data ? computeKPIs(data) : null), [data]);
 
-  const lastMonth = kpis?.lastMonthFirstDeposits;
-  const avg3mo = kpis?.avgLtvLast3Months;
+  const avgFirst = kpis?.avgFirstStakeLast3Months;
+  const avgLtv = kpis?.avgLtvLast3Months;
 
   return (
     <div>
@@ -153,28 +130,28 @@ export function LTVHighlightCards({ data, isLoading }: LTVHighlightCardsProps) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <StatCard
-          label="First Deposits Last Month"
-          value={lastMonth ? formatNumber(Math.round(lastMonth.value)) : '—'}
-          unit="LINGO"
+          label="Avg First Deposit (Last 3 Months)"
+          value={avgFirst ? formatNumber(Math.round(avgFirst.value)) : '—'}
+          unit="LINGO / staker"
           sub={
-            lastMonth
-              ? `${lastMonth.userCount.toLocaleString()} new stakers in ${lastMonth.rangeLabel}`
-              : 'Sum of first stakes from new stakers in the last completed month'
+            avgFirst
+              ? `Avg across ${avgFirst.userCount.toLocaleString()} stakers who first staked ${avgFirst.rangeLabel}`
+              : 'Average first-stake size per new staker in the last 3 months'
           }
           accent="#C4B5D4"
-          loading={isLoading && !lastMonth}
+          loading={isLoading && !avgFirst}
         />
         <StatCard
           label="Avg LTV (Last 3 Months)"
-          value={avg3mo ? formatNumber(Math.round(avg3mo.value)) : '—'}
+          value={avgLtv ? formatNumber(Math.round(avgLtv.value)) : '—'}
           unit="LINGO / staker"
           sub={
-            avg3mo
-              ? `Avg across ${avg3mo.userCount.toLocaleString()} stakers who first staked ${avg3mo.rangeLabel}`
+            avgLtv
+              ? `Avg across ${avgLtv.userCount.toLocaleString()} stakers who first staked ${avgLtv.rangeLabel}`
               : 'Average total LTV per staker who joined in the last 3 months'
           }
           accent="#5EB851"
-          loading={isLoading && !avg3mo}
+          loading={isLoading && !avgLtv}
         />
       </div>
     </div>
