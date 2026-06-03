@@ -5,6 +5,7 @@ import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, St
 import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimersTable';
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { StakerLTVTable } from '../components/cards/StakerLTVTable';
+import { LTVCohortTable } from '../components/cards/LTVCohortTable';
 import { StakerConcentrationCard } from '../components/cards/StakerConcentrationCard';
 import { TierGrowthTable } from '../components/cards/TierGrowthTable';
 import { StakerLTVSection } from '../components/sections/StakerLTVSection';
@@ -949,6 +950,15 @@ export function Dashboard() {
             <StakerLTVTable
               data={stakerLTV ?? []}
               isLoading={loadingStakerLTV}
+            />
+          </div>
+
+          {/* Row 3.7c: LTV cohort table by first-stake month (last 5 months) */}
+          <div className="mb-5">
+            <LTVCohortTable
+              data={stakerLTV ?? []}
+              isLoading={loadingStakerLTV}
+              months={5}
             />
           </div>
 
