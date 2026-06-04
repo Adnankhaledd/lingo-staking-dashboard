@@ -31,7 +31,10 @@ async function fetchBlobJson<T = unknown>(pathname: string): Promise<T | null> {
 const MIXPANEL_API_SECRET = process.env.MIXPANEL_API_SECRET_NEW
   || process.env.MIXPANEL_API_SECRET
   || '010125f09fef119ad08d0eb062be12b6';
-const PROJECT_ID = '4022491'; // NEW project — used for all new queries
+// NEW app project. Pre-migration data was in 4123140; legacy snapshot is
+// frozen and covers dates < CUTOFF_DATE, so we don't need to query the old
+// project here.
+const PROJECT_ID = '4518653';
 const CUTOFF_DATE = '2026-06-01'; // legacy < CUTOFF, new >= CUTOFF
 
 const BLOB_FILENAME = 'mixpanel-data.json';
