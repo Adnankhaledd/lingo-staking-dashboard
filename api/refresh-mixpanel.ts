@@ -77,6 +77,13 @@ async function fetchActiveUsersByBucket(
   toDate: string,
   bucketKeyExpr: string
 ): Promise<Record<string, number>> {
+  // Two-stage groupBy:
+  //  1. Group by (bucket, distinct_id) with null reducer → one row per
+  //     unique (bucket, user) pair (this is the dedup step).
+  //  2. Group by bucket (key.0) with count reducer → counts the rows
+  //     produced by stage 1 per bucket = unique users per bucket.
+  // Explicit function accessor on event.distinct_id avoids any ambiguity
+  // about whether the string "distinct_id" would look in properties.
   const script = `
 function main() {
   return Events({
@@ -86,7 +93,7 @@ function main() {
   .groupBy(
     [
       function(event) { ${bucketKeyExpr} },
-      "distinct_id"
+      function(event) { return event.distinct_id; }
     ],
     mixpanel.reducer.null()
   )
