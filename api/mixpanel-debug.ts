@@ -32,32 +32,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const fromDate = toDateStr(from);
   const toDate = toDateStr(today);
 
-  // For each day we emit two metrics in one pass: total events fired,
-  // and number of distinct users. If our dedup is correct, totalEvents
-  // will be >> uniqueUsers on any active day.
-  const script = `
+  // Two separate JQL scripts — combining inside a single JQL pipeline is
+  // brittle because .groupBy returns a JQL pipeline (not a real Array)
+  // and .concat() etc don't exist on it. Running them in parallel and
+  // merging in Node is cleaner.
+  const dayKeyFn = 'function(event) { return new Date(event.time).toISOString().slice(0, 10); }';
+  const distinctIdFn = 'function(event) { return event.distinct_id; }';
+
+  const totalEventsScript = `
 function main() {
-  var dayKey = function(event) { return new Date(event.time).toISOString().slice(0, 10); };
-  var distinctIdKey = function(event) { return event.distinct_id; };
+  return Events({from_date: ${JSON.stringify(fromDate)}, to_date: ${JSON.stringify(toDate)}})
+    .groupBy([${dayKeyFn}], mixpanel.reducer.count());
+}`.trim();
 
-  var totalEvents = Events({from_date: ${JSON.stringify(fromDate)}, to_date: ${JSON.stringify(toDate)}})
-    .groupBy([dayKey], mixpanel.reducer.count());
-
-  var uniqueUsers = Events({from_date: ${JSON.stringify(fromDate)}, to_date: ${JSON.stringify(toDate)}})
-    .groupBy([dayKey, distinctIdKey], mixpanel.reducer.null())
+  const uniqueUsersScript = `
+function main() {
+  return Events({from_date: ${JSON.stringify(fromDate)}, to_date: ${JSON.stringify(toDate)}})
+    .groupBy([${dayKeyFn}, ${distinctIdFn}], mixpanel.reducer.null())
     .groupBy(["key.0"], mixpanel.reducer.count());
-
-  // Merge: tag rows with which series they're from so the client can re-split.
-  return totalEvents.map(function(r) { return {key: [r.key[0], "events"], value: r.value}; })
-    .concat(uniqueUsers.map(function(r) { return {key: [r.key[0], "users"], value: r.value}; }));
 }`.trim();
 
   const auth = `Basic ${Buffer.from(MIXPANEL_API_SECRET + ':').toString('base64')}`;
-  const body = new URLSearchParams();
-  body.append('project_id', PROJECT_ID);
-  body.append('script', script);
 
-  try {
+  async function runJql(script: string): Promise<{ ok: true; rows: Array<{ key: [string]; value: number }> } | { ok: false; error: string; rawText: string }> {
+    const body = new URLSearchParams();
+    body.append('project_id', PROJECT_ID);
+    body.append('script', script);
     const r = await fetch('https://eu.mixpanel.com/api/2.0/jql', {
       method: 'POST',
       headers: {
@@ -67,23 +67,31 @@ function main() {
       },
       body: body.toString(),
     });
-
     if (!r.ok) {
-      return res.status(200).json({
-        projectId: PROJECT_ID,
-        fromDate, toDate,
-        error: `Mixpanel HTTP ${r.status}`,
-        rawText: (await r.text()).slice(0, 500),
-      });
+      return { ok: false, error: `HTTP ${r.status}`, rawText: (await r.text()).slice(0, 500) };
+    }
+    return { ok: true, rows: await r.json() as Array<{ key: [string]; value: number }> };
+  }
+
+  try {
+    const [totalRes, uniqueRes] = await Promise.all([
+      runJql(totalEventsScript),
+      runJql(uniqueUsersScript),
+    ]);
+
+    if (!totalRes.ok) {
+      return res.status(200).json({ projectId: PROJECT_ID, fromDate, toDate, stage: 'totalEvents', ...totalRes });
+    }
+    if (!uniqueRes.ok) {
+      return res.status(200).json({ projectId: PROJECT_ID, fromDate, toDate, stage: 'uniqueUsers', ...uniqueRes });
     }
 
-    const rows = (await r.json()) as Array<{ key: [string, string]; value: number }>;
     const byDay: Record<string, { totalEvents?: number; uniqueUsers?: number }> = {};
-    for (const row of rows) {
-      const [day, kind] = row.key;
-      byDay[day] = byDay[day] ?? {};
-      if (kind === 'events') byDay[day].totalEvents = row.value;
-      else if (kind === 'users') byDay[day].uniqueUsers = row.value;
+    for (const row of totalRes.rows) {
+      if (row?.key?.[0]) byDay[row.key[0]] = { ...(byDay[row.key[0]] ?? {}), totalEvents: row.value };
+    }
+    for (const row of uniqueRes.rows) {
+      if (row?.key?.[0]) byDay[row.key[0]] = { ...(byDay[row.key[0]] ?? {}), uniqueUsers: row.value };
     }
 
     const series = Object.entries(byDay)
