@@ -2,7 +2,6 @@ import { useMemo } from 'react';
 import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, CheckCircle } from 'lucide-react';
 import { Header } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, StakingUpdateCard } from '../components/cards';
-import { DecubateAPYClaimersTable } from '../components/cards/DecubateAPYClaimersTable';
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { StakerLTVTable } from '../components/cards/StakerLTVTable';
 import { LTVHighlightCards } from '../components/cards/LTVHighlightCards';
@@ -40,7 +39,6 @@ import {
   type BuyPressureRow,
   type LockDistributionRow,
   type WeeklyLockBreakdownRow,
-  type DecubateAPYClaimerRow,
   type StakeDailyBreakdownRow,
   type StakerLTVRow,
   type LTVByThresholdRow,
@@ -113,11 +111,6 @@ export function Dashboard() {
     isLoading: loadingAPYClaims,
     executedAt: apyClaimsExecutedAt,
   } = useDuneQuery<APYClaimsRow>(DUNE_QUERIES.APY_CLAIMS);
-
-  const {
-    data: decubateAPYClaimers,
-    isLoading: loadingDecubateAPYClaimers,
-  } = useDuneQuery<DecubateAPYClaimerRow>(DUNE_QUERIES.DECUBATE_APY_CLAIMERS);
 
   const {
     data: stakeBreakdown,
@@ -1414,14 +1407,6 @@ export function Dashboard() {
                 </div>
               )}
             </ChartCard>
-          </div>
-
-          {/* Decubate APY Claimers Table */}
-          <div className="mb-8">
-            <DecubateAPYClaimersTable
-              data={decubateAPYClaimers ?? []}
-              isLoading={loadingDecubateAPYClaimers}
-            />
           </div>
 
           {/* Community Rewards */}

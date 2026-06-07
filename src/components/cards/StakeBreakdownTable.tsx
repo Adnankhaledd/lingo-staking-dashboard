@@ -151,7 +151,7 @@ function LockCell({ total, newAmt, oldAmt, newWallets, oldWallets }: {
 }
 
 export function StakeBreakdownTable({ data, isLoading }: StakeBreakdownTableProps) {
-  const [period, setPeriod] = useState<Period>('day');
+  const [period, setPeriod] = useState<Period>('month');
   const [page, setPage] = useState(0);
 
   const rows = useMemo(() => aggregate(data, period), [data, period]);
