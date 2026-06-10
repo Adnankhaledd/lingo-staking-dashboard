@@ -181,14 +181,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'DUNE_API_KEY not configured' });
   }
 
-  console.log('Starting Dune data refresh...');
+  // Optional partial refresh: if the request body contains a non-empty
+  // queryIds array, only those queries are pulled from Dune. Everything else
+  // in the blob is left untouched. Useful for page-scoped refresh buttons.
+  let requestedIds: string[] | null = null;
+  try {
+    const body = (req.body && typeof req.body === 'object') ? (req.body as Record<string, unknown>) : {};
+    if (Array.isArray(body.queryIds) && body.queryIds.length > 0) {
+      const set = new Set(body.queryIds.map(String));
+      requestedIds = Object.keys(QUERIES).filter(id => set.has(id));
+      if (requestedIds.length === 0) {
+        return res.status(400).json({ error: 'queryIds provided but none match the known query set' });
+      }
+    }
+  } catch { /* fall through to full refresh */ }
+
+  console.log(`Starting Dune data refresh${requestedIds ? ` (scoped to ${requestedIds.length} queries: ${requestedIds.join(', ')})` : ' (all queries)'}...`);
 
   // Read existing blob data first for merge
   const existingData = await getExistingBlobData();
   console.log(`Existing blob: ${existingData ? `${existingData.successCount} queries from ${existingData.refreshedAt}` : 'none'}`);
 
-  // Fetch all query results in parallel
-  const entries = Object.entries(QUERIES);
+  // Fetch the requested queries in parallel; if no filter, all of them.
+  const entries = requestedIds
+    ? (Object.entries(QUERIES).filter(([id]) => requestedIds!.includes(id)) as Array<[string, number]>)
+    : Object.entries(QUERIES);
   const results = await Promise.all(
     entries.map(async ([queryId, limit]) => {
       const result = await fetchQueryResults(queryId, limit);

@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
-import { Clock, RefreshCw, Gift, Users, Hash, DollarSign } from 'lucide-react';
-import { softRefresh } from '../hooks/useDuneQuery';
+import { useCallback, useMemo, useState } from 'react';
+import { Clock, RefreshCw, Gift, Users, Hash, DollarSign, Database } from 'lucide-react';
+import { softRefresh, clearDuneCache } from '../hooks/useDuneQuery';
 import { formatNumber, formatCurrency, formatDateTime } from '../utils/formatters';
 import {
   useDuneQuery,
@@ -170,6 +170,59 @@ export function Claims() {
     window.location.reload();
   };
 
+  // ── Re-pull from Dune (scoped to the 6 queries that feed this page) ──
+  // Uses the same admin password as /admin so we don't expose Dune fetches
+  // to anonymous visitors. Prompts once per session if not already stored.
+  const CLAIMS_QUERY_IDS = useMemo(
+    () => [
+      DUNE_QUERIES.WEEKLY_CLAIM_SUMMARY,
+      DUNE_QUERIES.WEEKLY_CLAIMS_BY_SOURCE,
+      DUNE_QUERIES.TOP_CLAIMERS,
+      DUNE_QUERIES.DECUBATE_WEEKLY_CLAIMS,
+      DUNE_QUERIES.DECUBATE_CLAIM_FEED,
+      DUNE_QUERIES.CLAIMS_BY_TYPE,
+    ],
+    []
+  );
+  const [isRePulling, setIsRePulling] = useState(false);
+  const [rePullMessage, setRePullMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const handleRePullFromDune = useCallback(async () => {
+    let password = sessionStorage.getItem('admin_password') || '';
+    if (!password) {
+      const entered = window.prompt('Admin password (Dune re-pull is gated):');
+      if (!entered) return;
+      password = entered.trim();
+      sessionStorage.setItem('admin_password', password);
+    }
+
+    setIsRePulling(true);
+    setRePullMessage(null);
+    try {
+      const res = await fetch('/api/refresh-dune', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+        body: JSON.stringify({ queryIds: CLAIMS_QUERY_IDS }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        sessionStorage.removeItem('admin_password');
+        setRePullMessage({ kind: 'err', text: 'Wrong password — try again.' });
+        return;
+      }
+      if (!res.ok) {
+        setRePullMessage({ kind: 'err', text: data?.error || `HTTP ${res.status}` });
+        return;
+      }
+      clearDuneCache();
+      setRePullMessage({ kind: 'ok', text: data?.message || 'Re-pulled from Dune. Reload to see fresh data.' });
+    } catch (err) {
+      setRePullMessage({ kind: 'err', text: err instanceof Error ? err.message : 'Network error' });
+    } finally {
+      setIsRePulling(false);
+    }
+  }, [CLAIMS_QUERY_IDS]);
+
   return (
     <div className="min-h-screen" style={{ background: 'linear-gradient(180deg, #14141F 0%, #1A1A2E 50%, #14141F 100%)' }}>
       {/* Header */}
@@ -196,15 +249,45 @@ export function Claims() {
               <button
                 onClick={handleRefresh}
                 className="flex items-center gap-1.5 text-xs text-soft-gray bg-dark3/60 px-3 py-1.5 rounded-lg border border-white/5 hover:bg-white/10 hover:text-lavender transition-colors cursor-pointer"
-                title="Clear cache and refresh data"
+                title="Clear local cache and reload — does not hit Dune"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Refresh</span>
+              </button>
+              <button
+                onClick={handleRePullFromDune}
+                disabled={isRePulling}
+                className="flex items-center gap-1.5 text-xs text-purple bg-purple/10 px-3 py-1.5 rounded-lg border border-purple/30 hover:bg-purple/20 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Re-pull the 6 claims queries from Dune (admin-only)"
+              >
+                <Database className={`w-3.5 h-3.5 ${isRePulling ? 'animate-pulse' : ''}`} />
+                <span className="hidden sm:inline">{isRePulling ? 'Pulling…' : 'Re-pull from Dune'}</span>
               </button>
             </div>
           </div>
         </div>
       </header>
+
+      {/* Re-pull from Dune status banner (auto-hides when no message) */}
+      {rePullMessage && (
+        <div className="w-full max-w-[1400px] mx-auto px-6 lg:px-10 pt-4">
+          <div
+            className={`flex items-start justify-between gap-3 px-4 py-3 rounded-lg border text-sm ${
+              rePullMessage.kind === 'ok'
+                ? 'bg-green1/10 border-green1/30 text-green1'
+                : 'bg-red-400/10 border-red-400/30 text-red-300'
+            }`}
+          >
+            <span>{rePullMessage.text}</span>
+            <button
+              onClick={() => setRePullMessage(null)}
+              className="text-xs opacity-70 hover:opacity-100 underline cursor-pointer"
+            >
+              dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <main className="w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-8 space-y-8">
