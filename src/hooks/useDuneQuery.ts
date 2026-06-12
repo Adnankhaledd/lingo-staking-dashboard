@@ -252,6 +252,7 @@ export const DUNE_QUERIES = {
   NEW_LARGE_STAKERS: '7411888',
   STAKERS_BY_USD_THRESHOLD: '7432116',
   MONTHLY_TIER_GROWTH: '7568254',
+  CLAIMS_HOLD_BREAKDOWN: '7708413',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -595,6 +596,18 @@ export interface ClaimsByTypeRow {
   total_claimed: number;
   remaining_to_claim: number;
   pct_claimed: number;
+}
+
+// Per-(source, claim_type) breakdown of how much claimed LINGO is still
+// held vs sold/transferred (Dune 7708413). 16 rows max.
+export interface ClaimsHoldBreakdownRow {
+  source: string;
+  claim_type: string;
+  num_wallets: number;
+  total_claimed: number;            // LINGO
+  still_held: number;                // LINGO
+  net_sold_or_transferred: number;   // LINGO
+  pct_still_held: number;            // 0-100
 }
 
 export interface DecubateClaimFeedRow {

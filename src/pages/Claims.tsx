@@ -11,6 +11,7 @@ import {
   type DecubateWeeklyClaimsRow,
   type DecubateClaimFeedRow,
   type ClaimsByTypeRow,
+  type ClaimsHoldBreakdownRow,
 } from '../hooks/useDuneQuery';
 import { ClaimsBySourceChart } from '../components/charts/ClaimsBySourceChart';
 import { ClaimsSummaryChart } from '../components/charts/ClaimsSummaryChart';
@@ -18,6 +19,7 @@ import { DecubateWeeklyClaimsChart } from '../components/charts/DecubateWeeklyCl
 import { CombinedClaimsChart } from '../components/charts/CombinedClaimsChart';
 import { DecubateClaimFeedTable } from '../components/cards/DecubateClaimFeedTable';
 import { ClaimsByTypeTable } from '../components/cards/ClaimsByTypeTable';
+import { ClaimsHoldBreakdownTable } from '../components/cards/ClaimsHoldBreakdownTable';
 import { TopClaimersTable } from '../components/cards/TopClaimersTable';
 import lingoLogo from '../assets/logo-lingo.svg';
 
@@ -65,6 +67,12 @@ export function Claims() {
     data: claimsByType,
     isLoading: loadingClaimsByType,
   } = useDuneQuery<ClaimsByTypeRow>(DUNE_QUERIES.CLAIMS_BY_TYPE);
+
+  const {
+    data: holdBreakdown,
+    isLoading: loadingHoldBreakdown,
+    executedAt: holdBreakdownExecutedAt,
+  } = useDuneQuery<ClaimsHoldBreakdownRow>(DUNE_QUERIES.CLAIMS_HOLD_BREAKDOWN);
 
   // Transform summary data for chart
   const summaryChartData = useMemo(() => {
@@ -181,6 +189,7 @@ export function Claims() {
       DUNE_QUERIES.DECUBATE_WEEKLY_CLAIMS,
       DUNE_QUERIES.DECUBATE_CLAIM_FEED,
       DUNE_QUERIES.CLAIMS_BY_TYPE,
+      DUNE_QUERIES.CLAIMS_HOLD_BREAKDOWN,
     ],
     []
   );
@@ -361,6 +370,13 @@ export function Claims() {
         <ClaimsByTypeTable
           data={claimsByType ?? []}
           isLoading={loadingClaimsByType}
+        />
+
+        {/* Claims: Held vs Sold — per (source, claim type), with totals row */}
+        <ClaimsHoldBreakdownTable
+          data={holdBreakdown}
+          isLoading={loadingHoldBreakdown}
+          lastUpdated={holdBreakdownExecutedAt}
         />
 
         {/* Top Claimers Table */}
