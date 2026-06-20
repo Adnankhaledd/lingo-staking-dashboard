@@ -255,3 +255,13 @@
   font-size: 12px;
   font-family: 'Afacad', sans-serif;
 }
+
+/* Hide the scrollbar on overflow-x containers (e.g. SectionNav on mobile)
+   while still allowing horizontal scroll. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}

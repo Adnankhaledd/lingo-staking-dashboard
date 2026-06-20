@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Users, Calendar, CalendarDays, CalendarRange, Rocket, Ticket, CheckCircle } from 'lucide-react';
-import { Header } from '../components/layout';
+import { Header, SectionNav, type SectionNavItem } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, TopStakersTable, TotalFeesCard, StakingUpdateCard } from '../components/cards';
 import { StakeBreakdownTable } from '../components/cards/StakeBreakdownTable';
 import { StakerLTVTable } from '../components/cards/StakerLTVTable';
@@ -69,6 +69,23 @@ import {
   transformNewLargeStakersData,
 } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
+
+// Top-level sections shown in the sticky jump-nav. Each id must match the
+// id attribute on the corresponding <section> below — IntersectionObserver
+// in SectionNav highlights the one currently in view.
+const SECTIONS: SectionNavItem[] = [
+  { id: 'overview',     label: 'Overview' },
+  { id: 'revenue',      label: 'Revenue' },
+  { id: 'trading',      label: 'Trading' },
+  { id: 'active-users', label: 'Active Users' },
+  { id: 'staking',      label: 'Staking' },
+  { id: 'ltv',          label: 'LTV' },
+  { id: 'new-users',    label: 'New Users' },
+  { id: 'wallets',      label: 'Wallets' },
+  { id: 'rewards',      label: 'Rewards' },
+  { id: 'retention',    label: 'Retention' },
+  { id: 'top-stakers',  label: 'Top Stakers' },
+];
 
 export function Dashboard() {
   // Fetch data from Dune Analytics
@@ -479,6 +496,9 @@ export function Dashboard() {
       {/* Header */}
       <Header lastUpdated={lastUpdated} />
 
+      {/* Sticky jump-nav (sits just under the main Header) */}
+      <SectionNav sections={SECTIONS} />
+
       {/* Main Content */}
       <main className="relative w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
         {/* ═══════════════════════════════════════════════════════════════
@@ -486,7 +506,7 @@ export function Dashboard() {
         ═══════════════════════════════════════════════════════════════ */}
 
         {/* Staking Update — hero chart with W/M/Q/Y toggle */}
-        <section className="mb-10">
+        <section id="overview" className="mb-10 scroll-mt-32">
           <StakingUpdateCard data={totalStakedData} isLoading={loadingTotalStaked} />
         </section>
 
@@ -512,7 +532,7 @@ export function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════
             REVENUE & FEES
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
+        <section id="revenue" className="mb-10 scroll-mt-32">
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Revenue & Fees
           </h2>
@@ -591,7 +611,7 @@ export function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════
             TRADING VOLUME & BUY PRESSURE
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
+        <section id="trading" className="mb-10 scroll-mt-32">
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Trading Volume & Buy Pressure
           </h2>
@@ -605,7 +625,7 @@ export function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════
             ACTIVE USERS & ENGAGEMENT (Mixpanel)
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
+        <section id="active-users" className="mb-10 scroll-mt-32">
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Active Users
           </h2>
@@ -768,7 +788,7 @@ export function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════
             STAKING VOLUME
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
+        <section id="staking" className="mb-10 scroll-mt-32">
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Staking Volume
           </h2>
@@ -928,32 +948,6 @@ export function Dashboard() {
             />
           </div>
 
-          {/* Row 3.7a: Staker LTV aggregate section (hero KPIs + growth + cohort) */}
-          <div className="mb-5">
-            <StakerLTVSection
-              byThreshold={ltvByThreshold}
-              byTier={ltvByTier}
-              byGrowth={growthTiers}
-              isLoading={loadingLtvByThreshold || loadingLtvByTier || loadingGrowthTiers}
-            />
-          </div>
-
-          {/* Row 3.7b: per-wallet LTV table (Dune 7340503) */}
-          <div className="mb-5">
-            <StakerLTVTable
-              data={stakerLTV ?? []}
-              isLoading={loadingStakerLTV}
-            />
-          </div>
-
-          {/* Row 3.7c: LTV highlight cards — avg first deposit + avg LTV at 2k+ threshold */}
-          <div className="mb-5">
-            <LTVHighlightCards
-              data={ltvByThreshold ?? []}
-              isLoading={loadingLtvByThreshold}
-            />
-          </div>
-
           {/* Row 4: Lock Duration Breakdown (Monthly bar + Current donut) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
             <ChartCard
@@ -1001,9 +995,46 @@ export function Dashboard() {
         </section>
 
         {/* ═══════════════════════════════════════════════════════════════
+            STAKER LTV — pulled out of Staking into its own top-level section
+            so it shows up in the jump-nav and reads as a peer to Staking
+            rather than a sub-section. Contains all three LTV views.
+        ═══════════════════════════════════════════════════════════════ */}
+        <section id="ltv" className="mb-10 scroll-mt-32">
+          <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
+            Staker LTV
+          </h2>
+
+          {/* Aggregate KPIs + growth + cohort */}
+          <div className="mb-5">
+            <StakerLTVSection
+              byThreshold={ltvByThreshold}
+              byTier={ltvByTier}
+              byGrowth={growthTiers}
+              isLoading={loadingLtvByThreshold || loadingLtvByTier || loadingGrowthTiers}
+            />
+          </div>
+
+          {/* Per-wallet LTV table (Dune 7340503) */}
+          <div className="mb-5">
+            <StakerLTVTable
+              data={stakerLTV ?? []}
+              isLoading={loadingStakerLTV}
+            />
+          </div>
+
+          {/* LTV highlight cards — avg first deposit + avg LTV at 2k+ threshold */}
+          <div className="mb-5">
+            <LTVHighlightCards
+              data={ltvByThreshold ?? []}
+              isLoading={loadingLtvByThreshold}
+            />
+          </div>
+        </section>
+
+        {/* ═══════════════════════════════════════════════════════════════
             NEW USERS — acquisition-focused metrics about first-time stakers
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
+        <section id="new-users" className="mb-10 scroll-mt-32">
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             New Users
           </h2>
@@ -1180,7 +1211,7 @@ export function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════
             WALLET ANALYSIS
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
+        <section id="wallets" className="mb-10 scroll-mt-32">
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Wallet Analysis
           </h2>
@@ -1330,7 +1361,7 @@ export function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════
             REWARDS DISTRIBUTION
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
+        <section id="rewards" className="mb-10 scroll-mt-32">
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Rewards Distribution
           </h2>
@@ -1487,7 +1518,7 @@ export function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════
             STAKER RETENTION
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10">
+        <section id="retention" className="mb-10 scroll-mt-32">
           <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest mb-5">
             Staker Retention
           </h2>
@@ -1571,7 +1602,7 @@ export function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════
             TOP STAKERS
         ═══════════════════════════════════════════════════════════════ */}
-        <section className="mb-10 space-y-5">
+        <section id="top-stakers" className="mb-10 space-y-5 scroll-mt-32">
           <StakerConcentrationCard
             topStakers={topStakers}
             totalStakedAllWallets={liveTotalStaked}
