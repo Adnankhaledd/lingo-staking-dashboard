@@ -1,5 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { classifyProvenance, type ProvenanceSource } from './_lib/provenance';
 
 /**
  * /api/backfill-stake-sources — one-off historical provenance run.
@@ -210,6 +209,187 @@ async function postSlackSummary(
   });
   return res.ok;
 }
+
+// ─── Stake provenance classifier (inlined — Vercel does not bundle api/_lib) ──
+const PROV_LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
+const PROV_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const PROV_SWAP_TOPICS = new Set([
+  '0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67',
+  '0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822',
+  '0xb3e2773606abfd36b5bd91394b3a54d1398336c65005baf7bf7a05efeffaf75b',
+]);
+const PROV_CLAIM_TOPICS = new Set([
+  '0x47cee97cb7acd717b3c0aa1435d004cd5b3c8c57d70dbceb4e4458bbd60e39d4',
+  '0x4ec90e965519d92681267467f775ada5bd214aa92c0dc93d90a5e880ce9ed026',
+  '0xc0e523490dd523c33b1878c9eb14ff46991233ed7e7a40b6f37fdb4e4dac6b32',
+  '0xfb81f9b30d73d830c3544b34d827c08142579ee75710b490bb0237bf89e0fcc7',
+]);
+const PROV_KNOWN_WALLETS: Record<string, string> = {
+  '0x0e0bc2919540119fc22a502842a74af4d81502b6': 'Treasury',
+  '0x9399da51c1a85e64cce4b30b554875d2b89b2445': 'Liquidity',
+  '0x7e3e2d6b8b87ce617b7ccdd63d0f5449e4057513': 'Team Buybacks',
+  '0x69892fc8e176d9750e7f0ca06fc9aede0fc97bcb': 'Team Buybacks',
+  '0x61f8d3fc749ecda98d378bc2cc8459ba0f7dfd58': 'Team Multisig',
+  '0x7c91baca69ad289ec5de46b0b36287770a1ea91e': 'Distribution',
+};
+const PROV_WINDOW_BLOCKS = 43_200; // ~24h on Base
+
+export type ProvenanceSource =
+  | 'bought' | 'claimed' | 'restaked' | 'transferred'
+  | 'transferred_bought_upstream' | 'internal' | 'preheld' | 'unknown';
+
+interface Provenance {
+  source: ProvenanceSource;
+  label: string;
+  emoji: string;
+  detail: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+const PROV_LABELS: Record<ProvenanceSource, { label: string; emoji: string }> = {
+  bought:                      { label: 'Bought on DEX',                 emoji: '🛒' },
+  claimed:                     { label: 'Claimed',                       emoji: '🎁' },
+  restaked:                    { label: 'Unstaked & re-staked',          emoji: '🔁' },
+  transferred:                 { label: 'Transferred in',                emoji: '↔️' },
+  transferred_bought_upstream: { label: 'Transferred (bought upstream)', emoji: '🛒' },
+  internal:                    { label: 'From project wallet',           emoji: '🏦' },
+  preheld:                     { label: 'Pre-held balance',              emoji: '⏳' },
+  unknown:                     { label: 'Source unknown',                emoji: '❔' },
+};
+
+function provMk(source: ProvenanceSource, confidence: Provenance['confidence'], detail = ''): Provenance {
+  return { source, ...PROV_LABELS[source], detail, confidence };
+}
+
+interface ProvReceiptLog { address: string; topics: string[]; data: string }
+interface ProvTxReceipt { transactionHash: string; logs: ProvReceiptLog[] }
+interface ProvAssetTransfer { from: string; to: string; hash: string; blockNum: string; value: number | null }
+interface ProvInboundLeg { from: string; value: bigint }
+interface ProvReceiptSignals { hasSwap: boolean; hasClaim: boolean; inbound: ProvInboundLeg[] }
+
+async function provRpc<T>(method: string, params: unknown[]): Promise<T | null> {
+  try {
+    const res = await fetch(ALCHEMY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.error) return null;
+    return (data.result ?? null) as T | null;
+  } catch {
+    return null;
+  }
+}
+
+async function provGetReceipt(txHash: string): Promise<ProvTxReceipt | null> {
+  return provRpc<ProvTxReceipt>('eth_getTransactionReceipt', [txHash]);
+}
+
+async function provGetCode(address: string): Promise<string> {
+  return (await provRpc<string>('eth_getCode', [address, 'latest'])) ?? '0x';
+}
+
+async function provInbound(wallet: string, fromBlock: number, toBlock: number, maxCount = 0x14): Promise<ProvAssetTransfer[]> {
+  if (toBlock < 0) return [];
+  const result = await provRpc<{ transfers: ProvAssetTransfer[] }>('alchemy_getAssetTransfers', [{
+    contractAddresses: [PROV_LINGO_TOKEN],
+    category: ['erc20'],
+    toAddress: wallet,
+    fromBlock: '0x' + Math.max(0, fromBlock).toString(16),
+    toBlock: '0x' + Math.max(0, toBlock).toString(16),
+    order: 'desc',
+    maxCount: '0x' + maxCount.toString(16),
+    withMetadata: false,
+  }]);
+  return result?.transfers ?? [];
+}
+
+function provAnalyze(receipt: ProvTxReceipt, walletLc: string): ProvReceiptSignals {
+  let hasSwap = false;
+  let hasClaim = false;
+  const inbound: ProvInboundLeg[] = [];
+  for (const log of receipt.logs ?? []) {
+    const topic0 = (log.topics?.[0] ?? '').toLowerCase();
+    if (PROV_SWAP_TOPICS.has(topic0)) hasSwap = true;
+    if (PROV_CLAIM_TOPICS.has(topic0)) hasClaim = true;
+    if (log.address?.toLowerCase() === PROV_LINGO_TOKEN && topic0 === PROV_TRANSFER_TOPIC && log.topics.length >= 3) {
+      const to = '0x' + log.topics[2].slice(26).toLowerCase();
+      if (to === walletLc) {
+        const from = '0x' + log.topics[1].slice(26).toLowerCase();
+        let value = 0n;
+        try { value = BigInt(log.data); } catch { /* malformed → 0 */ }
+        inbound.push({ from, value });
+      }
+    }
+  }
+  return { hasSwap, hasClaim, inbound };
+}
+
+function provToLingo(weiValue: bigint): number {
+  return Number(weiValue / BigInt(10 ** 16)) / 100;
+}
+
+async function provBoughtUpstream(eoa: string, beforeBlock: number): Promise<boolean> {
+  const ts = await provInbound(eoa, beforeBlock - PROV_WINDOW_BLOCKS, beforeBlock, 0x5);
+  if (ts.length === 0) return false;
+  const r = await provGetReceipt(ts[0].hash);
+  if (!r) return false;
+  return provAnalyze(r, eoa.toLowerCase()).hasSwap;
+}
+
+interface ClassifyInput {
+  wallet: string;
+  stakeTxHash: string;
+  stakeBlock: number;
+  amount: number;
+}
+
+async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
+  try {
+    const walletLc = input.wallet.toLowerCase();
+    const stakeReceipt = await provGetReceipt(input.stakeTxHash);
+    if (stakeReceipt) {
+      const a = provAnalyze(stakeReceipt, walletLc);
+      if (a.hasSwap) return provMk('bought', 'high', 'Swap in the stake tx');
+      if (a.hasClaim) return provMk('claimed', 'high', 'Claim event in the stake tx');
+      const principal = a.inbound.slice().sort((x, y) => (y.value > x.value ? 1 : y.value < x.value ? -1 : 0))[0];
+      if (principal && provToLingo(principal.value) >= input.amount * 0.5) {
+        const from = principal.from;
+        const conf: Provenance['confidence'] = a.inbound.length > 1 ? 'medium' : 'high';
+        if (from === STAKING_CONTRACT) return provMk('restaked', conf, 'Came from the staking contract');
+        if (PROV_KNOWN_WALLETS[from]) return provMk('internal', conf, `From ${PROV_KNOWN_WALLETS[from]}`);
+        if ((await provGetCode(from)) !== '0x') return provMk('claimed', 'low', `From contract ${from.slice(0, 10)}… in the stake tx (no claim event)`);
+      }
+    }
+    const transfers = (await provInbound(walletLc, input.stakeBlock - PROV_WINDOW_BLOCKS, input.stakeBlock))
+      .filter(t => t.hash.toLowerCase() !== input.stakeTxHash.toLowerCase());
+    if (transfers.length === 0) return provMk('preheld', 'low', 'No inbound LINGO in the ~24h before staking');
+    const latest = transfers[0];
+    const from = latest.from.toLowerCase();
+    const multi = new Set(transfers.map(t => t.from.toLowerCase())).size > 1;
+    if (from === STAKING_CONTRACT) return provMk('restaked', multi ? 'medium' : 'high', 'Unstaked then re-staked');
+    if (PROV_KNOWN_WALLETS[from]) return provMk('internal', multi ? 'medium' : 'high', `From ${PROV_KNOWN_WALLETS[from]}`);
+    if ((await provGetCode(from)) !== '0x') {
+      const r = await provGetReceipt(latest.hash);
+      if (r) {
+        const sig = provAnalyze(r, walletLc);
+        if (sig.hasSwap) return provMk('bought', multi ? 'medium' : 'high', 'Received from a DEX/pool just before staking');
+        if (sig.hasClaim) return provMk('claimed', multi ? 'medium' : 'high', 'Claim event just before staking');
+      }
+      return provMk('claimed', 'low', `From contract ${from.slice(0, 10)}… (unrecognized event)`);
+    }
+    const blockNum = parseInt(latest.blockNum, 16);
+    if (Number.isFinite(blockNum) && await provBoughtUpstream(from, blockNum)) {
+      return provMk('transferred_bought_upstream', 'medium', `Sent from ${from.slice(0, 10)}… which bought it on-chain`);
+    }
+    return provMk('transferred', 'low', `Wallet transfer from ${from.slice(0, 10)}…`);
+  } catch {
+    return provMk('unknown', 'low', 'Classification error');
+  }
+}
+// ─── end provenance classifier ─────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Auth: admin password (header OR ?password= for browser CSV downloads) or cron secret
