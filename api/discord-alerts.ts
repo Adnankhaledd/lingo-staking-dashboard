@@ -379,11 +379,12 @@ const PROV_KNOWN_WALLETS: Record<string, string> = {
   '0x61f8d3fc749ecda98d378bc2cc8459ba0f7dfd58': 'Team Multisig',
   '0x7c91baca69ad289ec5de46b0b36287770a1ea91e': 'Distribution',
 };
-// Project-owned distribution/claim contracts (verified on-chain: owner() ==
-// Treasury). LINGO arriving from one of these is a claim/distribution, not a buy.
-const PROV_CLAIM_CONTRACTS = new Set([
-  '0x2f26621e931c32542579cf8860d7e8616df32e0e', // Treasury-owned distribution contract
-]);
+// Claim/distribution contracts (verified on-chain). LINGO arriving from one of
+// these is a claim, not a buy. Value is the human label shown in the alert.
+const PROV_CLAIM_CONTRACTS: Record<string, string> = {
+  '0x2f26621e931c32542579cf8860d7e8616df32e0e': 'APY reward claim', // Treasury-owned APY claim contract
+  '0xad11f733e401e16c72033c5decaf05dcc0e1beb8': 'Vesting claim',    // Vesting contract
+};
 const PROV_WINDOW_BLOCKS = 43_200; // ~24h on Base
 
 type ProvenanceSource =
@@ -513,7 +514,7 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
         const conf: Provenance['confidence'] = a.inbound.length > 1 ? 'medium' : 'high';
         if (from === STAKING_CONTRACT) return provMk('restaked', conf, 'Came from the staking contract');
         if (PROV_KNOWN_WALLETS[from]) return provMk('internal', conf, `From ${PROV_KNOWN_WALLETS[from]}`);
-        if (PROV_CLAIM_CONTRACTS.has(from)) return provMk('claimed', conf, 'From a project distribution/claim contract');
+        if (PROV_CLAIM_CONTRACTS[from]) return provMk('claimed', conf, PROV_CLAIM_CONTRACTS[from]);
         if ((await provGetCode(from)) !== '0x') return provMk('claimed', 'low', `From contract ${from.slice(0, 10)}… in the stake tx (no claim event)`);
       }
     }
@@ -526,7 +527,7 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
     const multi = new Set(transfers.map(t => t.from.toLowerCase())).size > 1;
     if (from === STAKING_CONTRACT) return provMk('restaked', multi ? 'medium' : 'high', 'Unstaked then re-staked');
     if (PROV_KNOWN_WALLETS[from]) return provMk('internal', multi ? 'medium' : 'high', `From ${PROV_KNOWN_WALLETS[from]}`);
-    if (PROV_CLAIM_CONTRACTS.has(from)) return provMk('claimed', multi ? 'medium' : 'high', 'From a project distribution/claim contract');
+    if (PROV_CLAIM_CONTRACTS[from]) return provMk('claimed', multi ? 'medium' : 'high', PROV_CLAIM_CONTRACTS[from]);
     if ((await provGetCode(from)) !== '0x') {
       const r = await provGetReceipt(latest.hash);
       if (r) {
