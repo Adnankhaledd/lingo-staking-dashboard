@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { put, list } from '@vercel/blob';
+import { classifyProvenance, type Provenance } from './_lib/provenance';
 
 // Inline blob helper — direct URL fetch with list() fallback
 async function fetchBlobJson<T = unknown>(pathname: string): Promise<T | null> {
@@ -23,6 +24,7 @@ async function fetchBlobJson<T = unknown>(pathname: string): Promise<T | null> {
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const STAKING_CONTRACT = (process.env.STAKING_CONTRACT_ADDRESS || '').toLowerCase();
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const MIN_AMOUNT = 10_000;
 const BLOB_KEY = 'discord-last-block.json';
@@ -311,14 +313,57 @@ async function sendDiscordEmbed(
   }
 }
 
+// Slack Block Kit message — same content as the Discord embed PLUS a Source
+// line from the provenance classifier. Posts only when SLACK_WEBHOOK_URL is set.
+async function sendSlackMessage(
+  event: StakingEvent,
+  totalStaked: number,
+  stakerType: 'new' | 'returning',
+  provenance: Provenance,
+): Promise<void> {
+  const emoji = event.lockDuration === 'Flexible' ? '🔓' : '🔒';
+  const stakerLabel = stakerType === 'new' ? '🆕 New Staker' : '🔁 Returning';
+
+  const fields: Array<{ type: 'mrkdwn'; text: string }> = [
+    { type: 'mrkdwn', text: `*Wallet:*\n<https://basescan.org/address/${event.wallet}|\`${shortenAddress(event.wallet)}\`>` },
+    { type: 'mrkdwn', text: `*Lock Duration:*\n${event.lockDuration}` },
+    { type: 'mrkdwn', text: `*Amount:*\n${event.amount.toLocaleString()} LINGO` },
+  ];
+  if (totalStaked > 0) {
+    fields.push({ type: 'mrkdwn', text: `*Total Staked:*\n${formatAmount(totalStaked)} LINGO` });
+  }
+  fields.push({ type: 'mrkdwn', text: `*Type:*\n${stakerLabel}` });
+  // NEW: the source section the user asked for
+  const sourceText = `${provenance.emoji} ${provenance.label}` +
+    (provenance.detail ? `\n_${provenance.detail}_` : '');
+  fields.push({ type: 'mrkdwn', text: `*Source:*\n${sourceText}` });
+
+  const blocks = [
+    { type: 'header', text: { type: 'plain_text', text: `${emoji} ${formatAmount(event.amount)} LINGO Staked`, emoji: true } },
+    { type: 'section', fields },
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `<https://basescan.org/tx/${event.txHash}|View transaction> · Lingo Staking Bot` }] },
+  ];
+
+  const response = await fetch(SLACK_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: `${formatAmount(event.amount)} LINGO staked — ${provenance.label}`, blocks }),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Slack webhook failed: ${response.status} ${body.slice(0, 200)}`);
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!ALCHEMY_API_KEY || !STAKING_CONTRACT || !DISCORD_WEBHOOK_URL) {
+  // Need Alchemy + the staking contract, and at least one destination webhook.
+  if (!ALCHEMY_API_KEY || !STAKING_CONTRACT || (!DISCORD_WEBHOOK_URL && !SLACK_WEBHOOK_URL)) {
     return res.status(200).json({
       message: 'Not configured',
       missing: [
         !ALCHEMY_API_KEY && 'ALCHEMY_API_KEY',
         !STAKING_CONTRACT && 'STAKING_CONTRACT_ADDRESS',
-        !DISCORD_WEBHOOK_URL && 'DISCORD_WEBHOOK_URL',
+        (!DISCORD_WEBHOOK_URL && !SLACK_WEBHOOK_URL) && 'DISCORD_WEBHOOK_URL or SLACK_WEBHOOK_URL',
       ].filter(Boolean),
     });
   }
@@ -362,13 +407,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const wallet = event.wallet.toLowerCase();
 
-      // Fetch total staked AND classify the wallet in parallel
-      const [totalStaked, stakerType] = await Promise.all([
+      // Fetch total staked, classify the wallet, and (only if Slack is on)
+      // classify token provenance — all in parallel. Provenance is best-effort:
+      // classifyProvenance never throws, so it can't break the Discord post.
+      const [totalStaked, stakerType, provenance] = await Promise.all([
         getTotalStaked(wallet),
         classifyStaker(wallet, event.blockNumber, knownSet),
+        SLACK_WEBHOOK_URL
+          ? classifyProvenance({ wallet, stakeTxHash: event.txHash, stakeBlock: event.blockNumber, amount: event.amount })
+          : Promise.resolve(null),
       ]);
 
-      await sendDiscordEmbed(event, totalStaked, stakerType);
+      // Discord stays exactly as before (only when configured).
+      if (DISCORD_WEBHOOK_URL) {
+        await sendDiscordEmbed(event, totalStaked, stakerType);
+      }
+      // Slack adds the new Source section.
+      if (SLACK_WEBHOOK_URL && provenance) {
+        try {
+          await sendSlackMessage(event, totalStaked, stakerType, provenance);
+        } catch (slackErr) {
+          console.warn('Slack post failed:', slackErr instanceof Error ? slackErr.message : slackErr);
+        }
+      }
 
       // Mark as seen and remember we've classified this wallet
       seenSet.add(event.txHash);
