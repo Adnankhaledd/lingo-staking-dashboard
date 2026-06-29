@@ -30,6 +30,10 @@
     {
       "path": "/api/discord-alerts",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/monthly-stake-report",
+      "schedule": "0 1 1 * *"
     }
   ]
 }
