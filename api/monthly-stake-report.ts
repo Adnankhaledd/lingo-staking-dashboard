@@ -104,7 +104,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!range) return res.status(200).json({ error: 'Could not resolve block range' });
 
     // Page through the month via the backfill endpoint (single classifier source).
-    const base = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://lingo-staking-dashboard.vercel.app';
+    // NOTE: use the PUBLIC production domain, not VERCEL_URL — the deployment-
+    // specific URL is behind Vercel deployment protection and returns an HTML
+    // login page (not JSON) to server-side self-calls. Override via SELF_BASE_URL.
+    const base = process.env.SELF_BASE_URL || 'https://lingo-staking-dashboard.vercel.app';
     const headers: Record<string, string> = {};
     if (ADMIN_PASSWORD) headers['X-Admin-Password'] = ADMIN_PASSWORD;
     if (CRON_SECRET) headers['Authorization'] = `Bearer ${CRON_SECRET}`;
@@ -120,7 +123,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const url = `${base}/api/backfill-stake-sources?fromBlock=${range.fromBlock}&beforeBlock=${cursor}&limit=200&format=json`;
       const r = await fetch(url, { headers });
       if (!r.ok) break;
-      const page = (await r.json()) as BackfillPage;
+      let page: BackfillPage;
+      try {
+        page = (await r.json()) as BackfillPage;
+      } catch {
+        // Non-JSON (e.g. an auth/HTML page) — stop paging rather than crash.
+        break;
+      }
       for (const [src, v] of Object.entries(page.summary ?? {})) {
         const t = totals[src] ?? { count: 0, lingo: 0 };
         t.count += v.count; t.lingo += v.lingo;
