@@ -253,6 +253,7 @@ export const DUNE_QUERIES = {
   STAKERS_BY_USD_THRESHOLD: '7432116',
   MONTHLY_TIER_GROWTH: '7568254',
   CLAIMS_HOLD_BREAKDOWN: '7708413',
+  TOP100_MONTHLY_STAKED: '7866579',
 } as const;
 
 // ─── Row type definitions ───────────────────────────────────────────
@@ -596,6 +597,18 @@ export interface ClaimsByTypeRow {
   total_claimed: number;
   remaining_to_claim: number;
   pct_claimed: number;
+}
+
+// Monthly LINGO staked by that month's top-100 stakers (Dune 7866579).
+// One row per calendar month; the current month is partial.
+export interface Top100MonthlyRow {
+  month: string;                 // "2026-06-01 00:00:00.000 UTC"
+  total_users_that_month: number;
+  total_lingo: number;           // all LINGO staked that month
+  top_100_count: number;         // ≤100 (fewer in low-activity months)
+  top_100_lingo: number;         // LINGO staked by the month's top 100
+  top_100_pct_of_total: number;  // 0-100
+  avg_per_top_user: number;      // LINGO
 }
 
 // Per-(source, claim_type) breakdown of how much claimed LINGO is still

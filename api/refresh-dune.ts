@@ -103,6 +103,7 @@ const QUERIES: Record<string, number> = {
   '7432116': 1,    // STAKERS_BY_USD_THRESHOLD (single-row snapshot)
   '7568254': 100,  // MONTHLY_TIER_GROWTH
   '7708413': 100,  // CLAIMS_HOLD_BREAKDOWN
+  '7866579': 50,   // TOP100_MONTHLY_STAKED
 };
 
 interface QueryResult {

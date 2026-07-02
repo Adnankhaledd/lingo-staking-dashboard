@@ -16,6 +16,7 @@ import { StakingFlowChart } from '../components/charts/StakingFlowChart';
 import { LockDistributionChart } from '../components/charts/LockDistributionChart';
 import { WeeklyLockChart } from '../components/charts/WeeklyLockChart';
 import { StakeDailyChart } from '../components/charts/StakeDailyChart';
+import { Top100MonthlyChart } from '../components/charts/Top100MonthlyChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { LiveActivityFeed } from '../components/LiveActivityFeed';
 import { useLiveTotalStaked } from '../hooks/useLiveTotalStaked';
@@ -45,6 +46,7 @@ import {
   type LTVByFirstDepositTierRow,
   type GrowthTierDistributionRow,
   type NewLargeStakersRow,
+  type Top100MonthlyRow,
   type StakersByUSDThresholdRow,
   type MonthlyTierGrowthRow,
 } from '../hooks/useDuneQuery';
@@ -215,6 +217,12 @@ export function Dashboard() {
     data: monthlyTierGrowth,
     isLoading: loadingMonthlyTierGrowth,
   } = useDuneQuery<MonthlyTierGrowthRow>(DUNE_QUERIES.MONTHLY_TIER_GROWTH);
+
+  const {
+    data: top100Monthly,
+    isLoading: loadingTop100Monthly,
+    executedAt: top100MonthlyExecutedAt,
+  } = useDuneQuery<Top100MonthlyRow>(DUNE_QUERIES.TOP100_MONTHLY_STAKED);
 
   // Alchemy live total staked (polls every 5 min, 1 API call)
   const { totalStaked: liveTotalStaked } = useLiveTotalStaked();
@@ -1603,6 +1611,12 @@ export function Dashboard() {
             TOP STAKERS
         ═══════════════════════════════════════════════════════════════ */}
         <section id="top-stakers" className="mb-10 space-y-5 scroll-mt-32">
+          {/* Monthly staking by the top-100 stakers, with MoM change labels */}
+          <Top100MonthlyChart
+            data={top100Monthly}
+            isLoading={loadingTop100Monthly}
+            lastUpdated={top100MonthlyExecutedAt}
+          />
           <StakerConcentrationCard
             topStakers={topStakers}
             totalStakedAllWallets={liveTotalStaked}
