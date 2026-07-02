@@ -358,9 +358,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const adminPassword = process.env.ADMIN_PASSWORD;
   const requestPassword = req.headers['x-admin-password'] as string;
 
+  // When CRON_SECRET is set, Vercel cron sends it as a Bearer token automatically.
+  // (The spoofable x-vercel-cron header is deliberately not trusted.)
   const isCronAuth = !cronSecret ||
-    authHeader === `Bearer ${cronSecret}` ||
-    req.headers['x-vercel-cron'] === '1';
+    authHeader === `Bearer ${cronSecret}`;
   const isAdminAuth = adminPassword && requestPassword === adminPassword;
 
   if (!isCronAuth && !isAdminAuth) {

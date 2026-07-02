@@ -71,7 +71,9 @@ interface BackfillPage {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Auth: cron or admin (password via header or query for manual runs)
-  const isCron = !CRON_SECRET || req.headers.authorization === `Bearer ${CRON_SECRET}` || req.headers['x-vercel-cron'] === '1';
+  // When CRON_SECRET is set, Vercel cron sends it as a Bearer token automatically.
+  // (The spoofable x-vercel-cron header is deliberately not trusted.)
+  const isCron = !CRON_SECRET || req.headers.authorization === `Bearer ${CRON_SECRET}`;
   const pw = (req.headers['x-admin-password'] as string | undefined) ?? (req.query.password as string | undefined);
   const isAdmin = ADMIN_PASSWORD && pw === ADMIN_PASSWORD;
   if (!isCron && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
@@ -117,17 +119,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let pages = 0;
     let totalCount = 0;
     let totalLingo = 0;
+    let more = true;
+    let partial = false;
+    const startMs = Date.now();
 
-    while (pages < 12) {
+    while (more && pages < 12) {
+      // Stay inside a 45s paging budget so the Slack post always happens
+      // before the function's maxDuration kills the invocation.
+      const remaining = 45_000 - (Date.now() - startMs);
+      if (remaining < 3_000) { partial = true; break; }
       pages++;
       const url = `${base}/api/backfill-stake-sources?fromBlock=${range.fromBlock}&beforeBlock=${cursor}&limit=200&format=json`;
-      const r = await fetch(url, { headers });
-      if (!r.ok) break;
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), Math.min(remaining, 20_000));
+      let r: Response;
+      try {
+        r = await fetch(url, { headers, signal: ctl.signal });
+      } catch {
+        partial = true;
+        break;
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!r.ok) { partial = true; break; }
       let page: BackfillPage;
       try {
         page = (await r.json()) as BackfillPage;
       } catch {
         // Non-JSON (e.g. an auth/HTML page) — stop paging rather than crash.
+        partial = true;
         break;
       }
       for (const [src, v] of Object.entries(page.summary ?? {})) {
@@ -136,9 +156,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         totals[src] = t;
         totalCount += v.count; totalLingo += v.lingo;
       }
-      if (!page.hasMore || page.nextBeforeBlock == null) break;
-      cursor = page.nextBeforeBlock;
+      more = !!(page.hasMore && page.nextBeforeBlock != null);
+      if (more) cursor = page.nextBeforeBlock as number;
     }
+    if (more) partial = true; // pages/time exhausted with blocks left unscanned
 
     // Build the Slack message
     const denom = totalCount || 1;
@@ -153,7 +174,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — ${monthLabel}`, emoji: true } },
       { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥10,000 LINGO, by where the staked LINGO came from:` } },
       { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || '_No stakes ≥10k LINGO last month_' } },
-      { type: 'context', elements: [{ type: 'mrkdwn', text: `Total: *${totalCount}* stakes · ${Math.round(totalLingo).toLocaleString()} LINGO${pages >= 12 ? ' · (capped)' : ''}` }] },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: `Total: *${totalCount}* stakes · ${Math.round(totalLingo).toLocaleString()} LINGO${partial ? ' · ⚠️ partial — some pages failed or range too large' : ''}` }] },
     ];
 
     const slackRes = await fetch(SLACK_WEBHOOK_URL, {
@@ -166,6 +187,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       month: monthLabel,
       range,
       pages,
+      partial,
       totalCount,
       totalLingo: Math.round(totalLingo),
       summary: totals,
