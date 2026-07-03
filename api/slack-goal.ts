@@ -275,9 +275,14 @@ function buildGoalBlocks(goal: Goal, p: Progress, opts: { finalResult?: boolean 
     statusLine = '⚠️ *Behind pace*';
   }
 
-  const paceHint = (!p.reached && !p.expired)
-    ? `\nAt the current rate you'll add ~*${fmtLingo(p.projectedGain)}* by the deadline (goal: ${fmtLingo(p.neededGain)}).`
-    : '';
+  // Only project once there's a meaningful sample — a brand-new goal has no
+  // rate yet, and "you'll add ~0" next to "on pace" reads as a contradiction.
+  let paceHint = '';
+  if (!p.reached && !p.expired) {
+    if (p.elapsedFrac < 0.05) paceHint = '\nJust set — progress and a projection will appear as staking comes in.';
+    else if (p.gained <= 0) paceHint = '\nNo net new staking counted yet.';
+    else paceHint = `\nAt the current rate you'll add ~*${fmtLingo(p.projectedGain)}* by the deadline (goal: ${fmtLingo(p.neededGain)}).`;
+  }
 
   const detail = [
     `*Progress:* \`${progressBar(p.progressFrac)}\` ${pct}%${overshoot}`,
