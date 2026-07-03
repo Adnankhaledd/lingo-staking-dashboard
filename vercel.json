@@ -34,6 +34,10 @@
     {
       "path": "/api/monthly-stake-report",
       "schedule": "0 1 1 * *"
+    },
+    {
+      "path": "/api/slack-goal",
+      "schedule": "0 9 * * *"
     }
   ]
 }
