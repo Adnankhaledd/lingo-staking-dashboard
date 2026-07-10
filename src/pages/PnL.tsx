@@ -7,7 +7,14 @@ import {
   Lock, DollarSign, TrendingUp, TrendingDown, Minus,
   Plus, Trash2, LogOut, Wallet, Calendar, Download,
 } from 'lucide-react';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, formatNumber } from '../utils/formatters';
+import {
+  useDuneQuery,
+  DUNE_QUERIES,
+  type CommunityRewardsRow,
+  type APYClaimsRow,
+} from '../hooks/useDuneQuery';
+import { transformCommunityRewardsData, transformAPYClaimsData } from '../utils/dataTransformers';
 import lingoLogo from '../assets/logo-lingo.svg';
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -182,6 +189,24 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   const [frozen, setFrozen] = useState<FrozenSnapshot | null>(null);
   const [settings, setSettings] = useState<PnLSettings>({ treasuryBalance: 0, annualRevenueTarget: 0, annualExpenseTarget: 0 });
   const [expensesLoaded, setExpensesLoaded] = useState(false);
+
+  // Reward-wallet (community rewards) and APY-wallet monthly LINGO sent — from
+  // the shared Dune blob. Both queries already exist and refresh via cron.
+  const { data: communityRewards, isLoading: loadingRewards } =
+    useDuneQuery<CommunityRewardsRow>(DUNE_QUERIES.COMMUNITY_REWARDS);
+  const { data: apyClaims, isLoading: loadingApy } =
+    useDuneQuery<APYClaimsRow>(DUNE_QUERIES.APY_CLAIMS);
+
+  const rewardWalletMonthly = useMemo(
+    () => transformCommunityRewardsData(communityRewards)
+      .map(r => ({ month: r.month, lingoOut: r.lingoOut, usdValue: r.usdValue, count: r.transfers })),
+    [communityRewards],
+  );
+  const apyWalletMonthly = useMemo(
+    () => transformAPYClaimsData(apyClaims)
+      .map(r => ({ month: r.month, lingoOut: Math.round(r.lingo), usdValue: Math.round(r.usd), count: r.claims })),
+    [apyClaims],
+  );
 
   // Fetch
   const fetchExpenses = useCallback(async () => {
@@ -593,6 +618,24 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
           onEdit={() => setHasEdited(true)} autoRevenue={autoRevenueByMonth}
         />
 
+        {/* Rewards paid out per month, by source wallet */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          <MonthlyLingoSentTable
+            title="Reward Wallet — LINGO Sent / Month"
+            subtitle="Community reward transfers out of the reward wallet"
+            countLabel="Transfers"
+            rows={rewardWalletMonthly}
+            isLoading={loadingRewards}
+          />
+          <MonthlyLingoSentTable
+            title="APY Wallet — LINGO Sent / Month"
+            subtitle="APY reward payouts from the APY wallet"
+            countLabel="Payouts"
+            rows={apyWalletMonthly}
+            isLoading={loadingApy}
+          />
+        </div>
+
       </main>
     </div>
   );
@@ -609,6 +652,80 @@ function KPI({ icon, label, value, color, sub }: { icon: React.ReactNode; label:
       </div>
       <p className={`text-xl font-bold relative z-10 ${color ?? 'text-lavender'}`}>{value}</p>
       {sub && <p className="text-xs text-soft-gray/60 mt-1 relative z-10">{sub}</p>}
+    </div>
+  );
+}
+
+// ─── Monthly LINGO-sent table (reward wallet / APY wallet) ──────────
+
+interface MonthlyLingoRow { month: string; lingoOut: number; usdValue: number; count: number }
+
+function MonthlyLingoSentTable({
+  title, subtitle, countLabel, rows, isLoading,
+}: {
+  title: string;
+  subtitle: string;
+  countLabel: string;
+  rows: MonthlyLingoRow[];
+  isLoading?: boolean;
+}) {
+  // Newest month first for readability.
+  const ordered = [...rows].reverse();
+  const totalLingo = rows.reduce((s, r) => s + r.lingoOut, 0);
+  const totalUsd = rows.reduce((s, r) => s + r.usdValue, 0);
+  const totalCount = rows.reduce((s, r) => s + r.count, 0);
+
+  return (
+    <div className="flagship-card rounded-2xl overflow-hidden">
+      <div className="p-5 border-b border-white/5 relative z-10">
+        <h3 className="text-lg font-semibold text-lavender">{title}</h3>
+        <p className="text-sm text-soft-gray mt-1">{subtitle}</p>
+      </div>
+      <div className="relative z-10 overflow-x-auto">
+        <table className="w-full min-w-[380px]">
+          <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
+            <tr className="border-b border-white/5">
+              <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-5">Month</th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-3">LINGO Sent</th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-3">USD</th>
+              <th className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-5">{countLabel}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              [...Array(5)].map((_, i) => (
+                <tr key={i} className="border-b border-white/5">
+                  <td className="py-3 px-5"><div className="skeleton h-4 w-16 rounded" /></td>
+                  <td className="py-3 px-3"><div className="skeleton h-4 w-20 rounded ml-auto" /></td>
+                  <td className="py-3 px-3"><div className="skeleton h-4 w-16 rounded ml-auto" /></td>
+                  <td className="py-3 px-5"><div className="skeleton h-4 w-10 rounded ml-auto" /></td>
+                </tr>
+              ))
+            ) : ordered.length === 0 ? (
+              <tr><td colSpan={4} className="py-10 text-center text-soft-gray text-sm">No data available</td></tr>
+            ) : (
+              ordered.map(r => (
+                <tr key={r.month} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                  <td className="py-2.5 px-5 text-sm text-lavender font-medium whitespace-nowrap">{r.month}</td>
+                  <td className="py-2.5 px-3 text-right text-sm font-semibold text-lavender">{formatNumber(r.lingoOut)}</td>
+                  <td className="py-2.5 px-3 text-right text-sm text-green1">{formatCurrency(r.usdValue)}</td>
+                  <td className="py-2.5 px-5 text-right text-sm text-soft-gray">{r.count.toLocaleString()}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+          {!isLoading && ordered.length > 0 && (
+            <tfoot>
+              <tr className="border-t-2 border-white/10 bg-white/[0.03]">
+                <td className="py-3 px-5 text-xs font-bold uppercase tracking-wider text-soft-gray">Total</td>
+                <td className="py-3 px-3 text-right text-sm font-bold text-lavender">{formatNumber(totalLingo)}</td>
+                <td className="py-3 px-3 text-right text-sm font-bold text-green1">{formatCurrency(totalUsd)}</td>
+                <td className="py-3 px-5 text-right text-sm font-bold text-soft-gray">{totalCount.toLocaleString()}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
     </div>
   );
 }
