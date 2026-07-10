@@ -176,6 +176,7 @@ const SOURCE_LABELS: Record<string, string> = {
   transferred: '↔️ Transferred in',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
   internal: '🏦 From project wallet',
+  reward: '💸 Reward payout',
   preheld: '⏳ Pre-held balance',
   unknown: '❔ Source unknown',
 };
@@ -232,6 +233,10 @@ const PROV_KNOWN_WALLETS: Record<string, string> = {
   '0x61f8d3fc749ecda98d378bc2cc8459ba0f7dfd58': 'Team Multisig',
   '0x7c91baca69ad289ec5de46b0b36287770a1ea91e': 'Distribution',
 };
+// Reward-distribution hot wallet(s) — transfers from here are reward payouts.
+const PROV_REWARD_WALLETS = new Set([
+  '0x64967c0dd5605dd3efc6a9bb148b2687a532c15f', // community reward wallet
+]);
 // Claim/distribution contracts (verified on-chain). LINGO arriving from one of
 // these is a claim, not a buy. Value is the human label shown in the alert.
 const PROV_CLAIM_CONTRACTS: Record<string, string> = {
@@ -241,7 +246,7 @@ const PROV_CLAIM_CONTRACTS: Record<string, string> = {
 const PROV_WINDOW_BLOCKS = 43_200; // ~24h on Base
 
 export type ProvenanceSource =
-  | 'bought' | 'claimed' | 'restaked' | 'transferred'
+  | 'bought' | 'claimed' | 'reward' | 'restaked' | 'transferred'
   | 'transferred_bought_upstream' | 'internal' | 'preheld' | 'unknown';
 
 interface Provenance {
@@ -259,6 +264,7 @@ const PROV_LABELS: Record<ProvenanceSource, { label: string; emoji: string }> = 
   transferred:                 { label: 'Transferred in',                emoji: '↔️' },
   transferred_bought_upstream: { label: 'Transferred (bought upstream)', emoji: '🛒' },
   internal:                    { label: 'From project wallet',           emoji: '🏦' },
+  reward:                      { label: 'Reward payout',                 emoji: '💸' },
   preheld:                     { label: 'Pre-held balance',              emoji: '⏳' },
   unknown:                     { label: 'Source unknown',                emoji: '❔' },
 };
@@ -366,6 +372,7 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
         const conf: Provenance['confidence'] = a.inbound.length > 1 ? 'medium' : 'high';
         if (from === STAKING_CONTRACT) return provMk('restaked', conf, 'Came from the staking contract');
         if (PROV_KNOWN_WALLETS[from]) return provMk('internal', conf, `From ${PROV_KNOWN_WALLETS[from]}`);
+        if (PROV_REWARD_WALLETS.has(from)) return provMk('reward', conf, 'From the reward wallet');
         if (PROV_CLAIM_CONTRACTS[from]) return provMk('claimed', conf, PROV_CLAIM_CONTRACTS[from]);
         if ((await provGetCode(from)) !== '0x') return provMk('claimed', 'low', `From contract ${from.slice(0, 10)}… in the stake tx (no claim event)`);
       }
@@ -378,6 +385,7 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
     const multi = new Set(transfers.map(t => t.from.toLowerCase())).size > 1;
     if (from === STAKING_CONTRACT) return provMk('restaked', multi ? 'medium' : 'high', 'Unstaked then re-staked');
     if (PROV_KNOWN_WALLETS[from]) return provMk('internal', multi ? 'medium' : 'high', `From ${PROV_KNOWN_WALLETS[from]}`);
+    if (PROV_REWARD_WALLETS.has(from)) return provMk('reward', multi ? 'medium' : 'high', 'From the reward wallet');
     if (PROV_CLAIM_CONTRACTS[from]) return provMk('claimed', multi ? 'medium' : 'high', PROV_CLAIM_CONTRACTS[from]);
     if ((await provGetCode(from)) !== '0x') {
       const r = await provGetReceipt(latest.hash);

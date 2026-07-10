@@ -23,11 +23,12 @@ const CRON_SECRET = process.env.CRON_SECRET || '';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-const SOURCE_ORDER = ['bought', 'transferred_bought_upstream', 'claimed', 'restaked', 'transferred', 'internal', 'preheld', 'unknown'];
+const SOURCE_ORDER = ['bought', 'transferred_bought_upstream', 'claimed', 'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown'];
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
   claimed: '🎁 Claimed',
+  reward: '💸 Reward payout',
   restaked: '🔁 Unstaked & re-staked',
   transferred: '↔️ Transferred in',
   internal: '🏦 From project wallet',

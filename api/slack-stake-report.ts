@@ -49,11 +49,12 @@ const USAGE = [
   `Default period: last 7 days (max ${MAX_DAYS} days). Counts stakes ≥10,000 LINGO.`,
 ].join('\n');
 
-const SOURCE_ORDER = ['bought', 'transferred_bought_upstream', 'claimed', 'restaked', 'transferred', 'internal', 'preheld', 'unknown'];
+const SOURCE_ORDER = ['bought', 'transferred_bought_upstream', 'claimed', 'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown'];
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
   claimed: '🎁 Claimed',
+  reward: '💸 Reward payout',
   restaked: '🔁 Unstaked & re-staked',
   transferred: '↔️ Transferred in',
   internal: '🏦 From project wallet',
