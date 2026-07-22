@@ -7,7 +7,16 @@ import { formatNumber } from '../../utils/formatters';
 import { useStakeLockBreakdown, type LockHistoryRow } from '../../hooks/useStakeLockBreakdown';
 
 // Tier display order + colors (longest lock = warmest).
-const TIER_ORDER = ['Flexible', '1 Month', '3 Months', '6 Months', '12 Months', '24 Months'];
+const TIER_ORDER = ['Flexible', '1 Month', '3 Months', '6 Months', '12 Months', '24 Months', 'Other'];
+
+/**
+ * Non-standard lock durations (promo/admin/dust positions — some hold literally
+ * a few LINGO) get folded into one "Other" bucket. Grouping only: no amounts
+ * are dropped, and the totals still reconcile.
+ */
+function normalizeTier(label: string): string {
+  return label.includes('(other)') ? 'Other' : label;
+}
 const TIER_COLORS: Record<string, string> = {
   'Flexible': '#7B68AE',
   '1 Month': '#5EB8C8',
@@ -28,12 +37,12 @@ function monthLabel(ym: string): string {
 export function LockBreakdownCard() {
   const { data, isLoading, error } = useStakeLockBreakdown();
 
-  // Which tiers actually appear (in display order, unknown ones appended).
+  // Which tiers actually appear, after folding odd durations into "Other".
   const tierKeys = useMemo(() => {
     if (!data) return [];
     const present = new Set<string>();
-    for (const h of data.history) for (const k of Object.keys(h.byTier)) present.add(k);
-    for (const t of data.tiers) present.add(t.tier);
+    for (const h of data.history) for (const k of Object.keys(h.byTier)) present.add(normalizeTier(k));
+    for (const t of data.tiers) present.add(normalizeTier(t.tier));
     const ordered = TIER_ORDER.filter(t => present.has(t));
     const extras = [...present].filter(t => !TIER_ORDER.includes(t)).sort();
     return [...ordered, ...extras];
@@ -43,10 +52,32 @@ export function LockBreakdownCard() {
     if (!data) return [];
     return data.history.map((h: LockHistoryRow) => {
       const row: Record<string, string | number> = { month: monthLabel(h.month), _total: h.total, _locked: h.locked, _free: h.free };
-      for (const k of tierKeys) row[k] = h.byTier[k] ?? 0;
+      for (const k of tierKeys) row[k] = 0;
+      for (const [rawTier, amount] of Object.entries(h.byTier)) {
+        const k = normalizeTier(rawTier);
+        row[k] = (Number(row[k]) || 0) + amount;
+      }
       return row;
     });
   }, [data, tierKeys]);
+
+  // Current tiers, with odd durations merged into a single "Other" row.
+  const displayTiers = useMemo(() => {
+    if (!data) return [];
+    const merged = new Map<string, { tier: string; stillLocked: number; unlockedOrFlexible: number; total: number; positions: number }>();
+    for (const t of data.tiers) {
+      const key = normalizeTier(t.tier);
+      const m = merged.get(key) ?? { tier: key, stillLocked: 0, unlockedOrFlexible: 0, total: 0, positions: 0 };
+      m.stillLocked += t.stillLocked;
+      m.unlockedOrFlexible += t.unlockedOrFlexible;
+      m.total += t.total;
+      m.positions += t.positions;
+      merged.set(key, m);
+    }
+    return [...merged.values()]
+      .filter(t => t.total > 0)
+      .sort((a, b) => TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier));
+  }, [data]);
 
   if (isLoading) {
     return (
@@ -127,11 +158,11 @@ export function LockBreakdownCard() {
 
       {/* Per-tier current split */}
       <div className="space-y-2 mb-6 relative z-10">
-        {tiers.filter(t => t.total > 0).map(t => {
+        {displayTiers.map(t => {
           const pct = (t.total / total) * 100;
           const lockedShare = t.total > 0 ? (t.stillLocked / t.total) * 100 : 0;
           return (
-            <div key={t.durationBlocks} className="flex items-center gap-3">
+            <div key={t.tier} className="flex items-center gap-3">
               <span className="w-24 text-xs text-soft-gray flex items-center gap-1.5 flex-shrink-0">
                 <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TIER_COLORS[t.tier] ?? OTHER_COLOR }} />
                 {t.tier}
