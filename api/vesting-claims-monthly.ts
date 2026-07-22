@@ -23,9 +23,11 @@ const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const DEFAULT_ADDRESS = '0xad11f733e401e16c72033c5decaf05dcc0e1beb8'; // vesting contract
 const DEFAULT_TOPIC = '0xc7798891864187665ac6dd119286e44ec13f014527aeeb2b8eb3fd413df93179';
-const MAX_REQUESTS = 90;
+const MAX_REQUESTS = 140;
 const LOG_PAGE_LIMIT = 9500;
 const BASE_BLOCK_SECONDS = 2;
+// The contract has no activity before this; starting at 0 wastes splits.
+const DEFAULT_FROM_BLOCK = 20_000_000;
 
 interface RawLog { data: string; blockNumber: string }
 
@@ -46,7 +48,10 @@ async function rpc<T>(method: string, params: unknown[]): Promise<{ ok: true; re
 }
 
 /** Fetch all logs, splitting the block range on error or a full page. */
-async function getAllLogs(address: string, topic: string, from: number, to: number, budget: { left: number }): Promise<RawLog[] | null> {
+async function getAllLogs(
+  address: string, topic: string, from: number, to: number,
+  budget: { left: number }, diag: { firstError: string | null; splits: number },
+): Promise<RawLog[] | null> {
   const out: RawLog[] = [];
   const stack: Array<[number, number]> = [[from, to]];
   while (stack.length) {
@@ -59,8 +64,10 @@ async function getAllLogs(address: string, topic: string, from: number, to: numb
       fromBlock: '0x' + lo.toString(16),
       toBlock: '0x' + hi.toString(16),
     }]);
+    if (!r.ok && !diag.firstError) diag.firstError = `[${lo}-${hi}] ${r.error}`;
     if (!r.ok || (r.result?.length ?? 0) >= LOG_PAGE_LIMIT) {
       if (lo === hi) { if (!r.ok) return null; out.push(...(r.result ?? [])); continue; }
+      diag.splits++;
       const mid = Math.floor((lo + hi) / 2);
       stack.push([mid + 1, hi], [lo, mid]);
       continue;
@@ -92,8 +99,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const blkRes = await rpc<{ timestamp: string }>('eth_getBlockByNumber', [headRes.result, false]);
     const headTs = blkRes.ok ? parseInt(blkRes.result.timestamp, 16) : Math.floor(Date.now() / 1000);
 
-    const logs = await getAllLogs(address, topic, 0, head, budget);
-    if (!logs) return res.status(200).json({ error: 'Request budget exhausted — narrow the range' });
+    const qFrom = req.query.fromBlock;
+    const fromBlock = (typeof qFrom === 'string' && /^\d+$/.test(qFrom)) ? parseInt(qFrom, 10) : DEFAULT_FROM_BLOCK;
+
+    const diag = { firstError: null as string | null, splits: 0 };
+    const logs = await getAllLogs(address, topic, fromBlock, head, budget, diag);
+    if (!logs) {
+      return res.status(200).json({
+        error: 'Request budget exhausted — narrow the range with ?fromBlock=',
+        fromBlock, head, splits: diag.splits, firstRpcError: diag.firstError,
+      });
+    }
 
     const weiByMonth = new Map<string, bigint>();
     const countByMonth = new Map<string, number>();
@@ -122,6 +138,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       topic,
       asOfBlock: head,
       requestsUsed: MAX_REQUESTS - budget.left,
+      fromBlock,
+      splits: diag.splits,
+      firstRpcError: diag.firstError,
       totalClaims: logs.length,
       totalLingoClaimed: Math.round(toLingo(totalWei)),
       months,
