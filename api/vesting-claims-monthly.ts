@@ -23,7 +23,7 @@ const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const DEFAULT_ADDRESS = '0xad11f733e401e16c72033c5decaf05dcc0e1beb8'; // vesting contract
 const DEFAULT_TOPIC = '0xc7798891864187665ac6dd119286e44ec13f014527aeeb2b8eb3fd413df93179';
-const MAX_REQUESTS = 140;
+const MAX_REQUESTS = 220; // full history needs ~135; headroom so it can never silently truncate
 const LOG_PAGE_LIMIT = 9500;
 const BASE_BLOCK_SECONDS = 2;
 // The contract has no activity before this; starting at 0 wastes splits.
