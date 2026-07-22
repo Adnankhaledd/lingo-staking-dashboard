@@ -16,6 +16,7 @@ import { StakingFlowChart } from '../components/charts/StakingFlowChart';
 import { LockDistributionChart } from '../components/charts/LockDistributionChart';
 import { WeeklyLockChart } from '../components/charts/WeeklyLockChart';
 import { StakeDailyChart } from '../components/charts/StakeDailyChart';
+import { LockBreakdownCard } from '../components/charts/LockBreakdownCard';
 import { Top100MonthlyChart } from '../components/charts/Top100MonthlyChart';
 import { MixpanelChart } from '../components/charts/MixpanelChart';
 import { LiveActivityFeed } from '../components/LiveActivityFeed';
@@ -879,6 +880,13 @@ export function Dashboard() {
                 </div>
               )}
             </ChartCard>
+          </div>
+
+          {/* Row 1.4: Exact lock-tier breakdown straight from on-chain positions
+              (locked vs withdrawable + month-end history), reconciled against
+              the staking contract's LINGO balance. */}
+          <div className="mb-5">
+            <LockBreakdownCard />
           </div>
 
           {/* Row 1.5: Locked LINGO by lock duration — month-end snapshots since

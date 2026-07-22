@@ -194,6 +194,30 @@ export function Admin() {
           </div>
         </div>
 
+        {/* Quick nav — every page in the app */}
+        <section className="glass-card rounded-2xl p-5 mb-5">
+          <h2 className="text-xs font-semibold text-soft-gray uppercase tracking-widest mb-3">Pages</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {[
+              { href: '/', label: 'Dashboard', desc: 'Staking analytics' },
+              { href: '/pnl', label: 'P&L', desc: 'Projections & actuals' },
+              { href: '/claims', label: 'Claims', desc: 'Vesting & claims' },
+              { href: '/supply', label: 'Supply', desc: 'Circulating supply' },
+              { href: '/data', label: 'Data', desc: 'Raw query data' },
+              { href: '/admin', label: 'Admin', desc: 'You are here' },
+            ].map(p => (
+              <a
+                key={p.href}
+                href={p.href}
+                className="group flex flex-col px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.07] hover:border-purple/40 transition-all"
+              >
+                <span className="text-sm font-medium text-lavender group-hover:text-white transition-colors">{p.label}</span>
+                <span className="text-[11px] text-purple-gray">{p.desc}</span>
+              </a>
+            ))}
+          </div>
+        </section>
+
         {/* Dune Refresh */}
         <section className="glass-card rounded-2xl p-6 mb-5">
           <div className="flex items-center gap-3 mb-4">
