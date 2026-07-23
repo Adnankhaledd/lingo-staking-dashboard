@@ -115,10 +115,11 @@ export function PnL() {
         headers: { 'Content-Type': 'application/json', 'X-Admin-Password': stored },
       }).then(res => {
         if (res.ok) setIsAuthenticated(true);
-        else sessionStorage.removeItem(SESSION_KEY);
+        else { sessionStorage.removeItem(SESSION_KEY); setPassword(''); }
       }).catch(() => {
-        // Offline or error — allow access with stored password
-        setIsAuthenticated(true);
+        // Can't verify (offline / server unreachable) — fail CLOSED. Granting
+        // access here would let any stored value through whenever the check
+        // fails, which is exactly what an attacker would arrange.
       });
     }
   }, []);

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { RefreshCw, ArrowLeft, Database, Trash2, CheckCircle, XCircle, Loader2, List, ExternalLink } from 'lucide-react';
 import lingoLogo from '../assets/logo-lingo.svg';
 import { clearDuneCache } from '../hooks/useDuneQuery';
@@ -19,18 +19,63 @@ interface RefreshResult {
 
 export function Admin() {
   const [password, setPassword] = useState(() => sessionStorage.getItem(SESSION_KEY) || '');
-  const [isAuthenticated, setIsAuthenticated] = useState(() => !!sessionStorage.getItem(SESSION_KEY));
+  // Start locked. A stored password only unlocks the page after the server
+  // confirms it (see the effect below) — never trust sessionStorage alone.
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isCheckingSession, setIsCheckingSession] = useState(() => !!sessionStorage.getItem(SESSION_KEY));
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingMixpanel, setIsRefreshingMixpanel] = useState(false);
   const [result, setResult] = useState<RefreshResult | null>(null);
   const [mixpanelResult, setMixpanelResult] = useState<RefreshResult | null>(null);
   const [cacheCleared, setCacheCleared] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  // Re-verify a stored session password against the server on mount.
+  useEffect(() => {
+    const stored = sessionStorage.getItem(SESSION_KEY);
+    if (!stored) return;
+    let cancelled = false;
+    fetch(`${API_BASE}/api/verify-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': stored },
+    })
+      .then(res => {
+        if (cancelled) return;
+        if (res.ok) setIsAuthenticated(true);
+        else { sessionStorage.removeItem(SESSION_KEY); setPassword(''); }
+      })
+      .catch(() => { /* offline — stay locked */ })
+      .finally(() => { if (!cancelled) setIsCheckingSession(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.trim()) {
-      sessionStorage.setItem(SESSION_KEY, password.trim());
-      setIsAuthenticated(true);
+    const pw = password.trim();
+    if (!pw || isLoggingIn) return;
+
+    // Verify against the server — never trust a client-side check alone.
+    setIsLoggingIn(true);
+    setLoginError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/verify-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
+      });
+      if (res.ok) {
+        sessionStorage.setItem(SESSION_KEY, pw);
+        setIsAuthenticated(true);
+      } else if (res.status === 401) {
+        setLoginError('Incorrect password.');
+        sessionStorage.removeItem(SESSION_KEY);
+      } else {
+        setLoginError(`Could not verify (server error ${res.status}). Try again.`);
+      }
+    } catch {
+      setLoginError('Could not reach the server. Check your connection and try again.');
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -136,20 +181,29 @@ export function Admin() {
           <input
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-lavender placeholder-purple-gray focus:outline-none focus:border-purple/50 transition-colors"
+            onChange={(e) => { setPassword(e.target.value); if (loginError) setLoginError(null); }}
+            disabled={isLoggingIn || isCheckingSession}
+            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-lavender placeholder-purple-gray focus:outline-none focus:border-purple/50 transition-colors disabled:opacity-60"
             placeholder="Enter admin password"
             autoFocus
           />
 
           <button
             type="submit"
-            className="w-full mt-4 bg-purple/20 hover:bg-purple/30 text-lavender font-medium py-3 rounded-xl transition-colors"
+            disabled={isLoggingIn || isCheckingSession || !password.trim()}
+            className="w-full mt-4 bg-purple/20 hover:bg-purple/30 text-lavender font-medium py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            Log In
+            {isCheckingSession ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Checking session…</>
+            ) : isLoggingIn ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Verifying…</>
+            ) : 'Log In'}
           </button>
 
-          {result?.error && (
+          {loginError && (
+            <p className="mt-3 text-sm text-red-400">{loginError}</p>
+          )}
+          {!loginError && result?.error && (
             <p className="mt-3 text-sm text-red-400">{result.error}</p>
           )}
 
