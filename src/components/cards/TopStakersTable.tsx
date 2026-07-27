@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, ExternalLink, Trophy, Medal, Award, Search, X, ArrowUp, ArrowDown, Minus, Sparkles } from 'lucide-react';
+import { Download, ExternalLink, Trophy, Medal, Award, Search, X, ArrowUp, ArrowDown, Minus, Sparkles, Clock, AlertTriangle } from 'lucide-react';
 import { formatNumber, formatCurrency, exportToCSV } from '../../utils/formatters';
 import { GlowButton } from '../ui/GlowButton';
 import type { TopStakerRow } from '../../hooks/useDuneQuery';
@@ -7,6 +7,23 @@ import type { TopStakerRow } from '../../hooks/useDuneQuery';
 interface TopStakersTableProps {
   data: TopStakerRow[];
   isLoading?: boolean;
+  /** When the Dune query was last executed — used to surface stale data. */
+  lastUpdated?: string | null;
+}
+
+// Flag the leaderboard as stale if the underlying Dune query hasn't run in
+// this many days (this exact silent-staleness is what froze it for 79 days).
+const STALE_DAYS = 4;
+
+function daysSince(iso: string): number {
+  return (Date.now() - new Date(iso).getTime()) / 86_400_000;
+}
+
+function formatUpdated(iso: string): string {
+  const d = daysSince(iso);
+  if (d < 1) return `${Math.round(d * 24)}h ago`;
+  if (d < 30) return `${Math.round(d)}d ago`;
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function truncateWallet(wallet: string): string {
@@ -158,8 +175,10 @@ function LockBreakdownBar({ staker }: { staker: TopStakerRow }) {
   );
 }
 
-export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
+export function TopStakersTable({ data, isLoading, lastUpdated }: TopStakersTableProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const staleDays = lastUpdated ? daysSince(lastUpdated) : null;
+  const isStale = staleDays != null && staleDays >= STALE_DAYS;
 
   const handleExport = () => {
     const exportData = data.map(staker => ({
@@ -191,7 +210,24 @@ export function TopStakersTable({ data, isLoading }: TopStakersTableProps) {
       {/* Header */}
       <div className="flex items-center justify-between p-6 border-b border-white/5 relative z-10">
         <div>
-          <h3 className="text-lg font-semibold text-lavender">Top Stakers Leaderboard</h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-lg font-semibold text-lavender">Top Stakers Leaderboard</h3>
+            {lastUpdated && (
+              <span
+                className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border ${
+                  isStale
+                    ? 'text-amber-soft bg-amber-soft/10 border-amber-soft/30'
+                    : 'text-green1 bg-green1/10 border-green1/25'
+                }`}
+                title={isStale
+                  ? `The Dune query hasn't run in ${Math.round(staleDays!)} days — re-run / schedule it on Dune to refresh.`
+                  : `Dune query last executed ${new Date(lastUpdated).toLocaleString()}`}
+              >
+                {isStale ? <AlertTriangle className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
+                {isStale ? `Stale · ${formatUpdated(lastUpdated)}` : `Updated ${formatUpdated(lastUpdated)}`}
+              </span>
+            )}
+          </div>
           <p className="text-sm text-soft-gray mt-1">
             Top 300 wallets by LINGO staked (USD value, 12-month lock)
             {data && data[0]?.previousSnapshotAt && (

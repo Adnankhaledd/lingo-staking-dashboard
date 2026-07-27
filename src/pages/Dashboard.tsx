@@ -118,6 +118,7 @@ export function Dashboard() {
   const {
     data: topStakers,
     isLoading: loadingTopStakers,
+    executedAt: topStakersExecutedAt,
   } = useDuneQuery<TopStakerRow>(DUNE_QUERIES.TOP_STAKERS, { limit: 300 });
 
   const {
@@ -1633,6 +1634,7 @@ export function Dashboard() {
           <TopStakersTable
             data={topStakers ?? []}
             isLoading={loadingTopStakers}
+            lastUpdated={topStakersExecutedAt}
           />
         </section>
 
