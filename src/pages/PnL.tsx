@@ -197,7 +197,7 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
   // Reward-wallet and APY-wallet monthly LINGO in/out — Alchemy ground truth
   // (exact, all LINGO moving through each wallet), not Dune.
   const { data: rewardMonthly, reconciliation: rewardRecon, isLoading: loadingRewards } = useWalletMonthlyLingo();
-  const { data: apyMonthly, isLoading: loadingApy } = useWalletMonthlyLingo(APY_WALLET);
+  const { data: apyMonthly, reconciliation: apyRecon, isLoading: loadingApy } = useWalletMonthlyLingo(APY_WALLET);
 
   const rewardWalletMonthly = useMemo(
     () => (rewardMonthly ?? []).map(r => ({ month: fmtMonthLabel(r.month), lingoOut: r.lingoSent, lingoIn: r.lingoIn, net: r.net, count: r.transfers })),
@@ -630,11 +630,13 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
             reconciliation={rewardRecon}
           />
           <MonthlyLingoSentTable
-            title="APY Wallet — LINGO Sent / Month"
-            subtitle="All LINGO out of the APY wallet (live, via Alchemy)"
+            title="APY Wallet — LINGO In vs Out / Month"
+            subtitle="All LINGO moving through the APY wallet (live, via Alchemy)"
             countLabel="Payouts"
             rows={apyWalletMonthly}
             isLoading={loadingApy}
+            showFlow
+            reconciliation={apyRecon}
           />
         </div>
 
