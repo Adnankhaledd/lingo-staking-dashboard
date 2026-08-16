@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'rea
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine,
+  AreaChart, Area, ReferenceDot,
 } from 'recharts';
 import {
   Lock, DollarSign, TrendingUp, TrendingDown, Minus,
@@ -419,6 +420,34 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
     });
   }, [projections, autoRevenueByMonth]);
 
+  // Burn trend: monthly net over time, using ACTUALS where recorded and
+  // projections for the rest — so it shows realized burn reduction plus the
+  // projected crossover into profit.
+  const burnTrend = useMemo(() => {
+    const months = generateMonthRange();
+    const base = months.map((m, i) => {
+      const a = actuals.find(x => x.month === m && ((x.actualRevenue ?? 0) > 0 || (x.actualExpenses ?? 0) > 0));
+      const net = a ? Math.round((a.actualRevenue ?? 0) - (a.actualExpenses ?? 0)) : (projChartData[i]?.net ?? 0);
+      return { month: m, label: monthLabel(m), net, isActual: !!a };
+    });
+    let crossover: string | null = null;
+    let lastActualLabel: string | null = null;
+    const rows = base.map((r, i) => {
+      if (r.isActual) lastActualLabel = r.label;
+      if (crossover === null && r.net >= 0) crossover = r.label;
+      return { ...r, momDelta: i > 0 ? r.net - base[i - 1].net : null };
+    });
+    const deltas = rows.map(r => r.momDelta).filter((d): d is number => d != null);
+    const avgMomImprovement = deltas.length ? Math.round(deltas.reduce((s, d) => s + d, 0) / deltas.length) : 0;
+    return {
+      rows,
+      crossover,
+      lastActualLabel,
+      avgMomImprovement,
+      latest: rows[rows.length - 1] ?? null,
+    };
+  }, [projChartData, actuals]);
+
   const isUp = projKpis.net > 0;
   const isDown = projKpis.net < 0;
 
@@ -610,6 +639,17 @@ function PnLDashboard({ onLogout }: { onLogout: () => void }) {
           </div>
         </div>
 
+        {/* Burn reduction trend — net climbing toward / through zero */}
+        <div className="mt-6">
+          <BurnTrendChart
+            rows={burnTrend.rows}
+            crossover={burnTrend.crossover}
+            lastActualLabel={burnTrend.lastActualLabel}
+            avgMomImprovement={burnTrend.avgMomImprovement}
+            latest={burnTrend.latest}
+          />
+        </div>
+
         {/* Interactive Monthly Projections */}
         <ProjectionsTable
           projections={projections} setProjections={setProjections}
@@ -656,6 +696,123 @@ function KPI({ icon, label, value, color, sub }: { icon: React.ReactNode; label:
       </div>
       <p className={`text-xl font-bold relative z-10 ${color ?? 'text-lavender'}`}>{value}</p>
       {sub && <p className="text-xs text-soft-gray/60 mt-1 relative z-10">{sub}</p>}
+    </div>
+  );
+}
+
+// ─── Burn reduction trend chart ─────────────────────────────────────
+
+interface BurnRow { month: string; label: string; net: number; isActual: boolean; momDelta: number | null }
+
+function BurnTrendChart({
+  rows, crossover, lastActualLabel, avgMomImprovement, latest,
+}: {
+  rows: BurnRow[];
+  crossover: string | null;
+  lastActualLabel: string | null;
+  avgMomImprovement: number;
+  latest: (BurnRow & { momDelta: number | null }) | null;
+}) {
+  // Split-at-zero gradient offset so the area is green above 0, red below.
+  const gradientOffset = () => {
+    const vals = rows.map(r => r.net);
+    const max = Math.max(0, ...vals);
+    const min = Math.min(0, ...vals);
+    if (max <= 0) return 0;
+    if (min >= 0) return 1;
+    return max / (max - min);
+  };
+  const off = gradientOffset();
+
+  const latestNet = latest?.net ?? 0;
+  const latestPositive = latestNet >= 0;
+
+  return (
+    <div className="flagship-card rounded-2xl p-6">
+      <div className="mb-4 relative z-10">
+        <h3 className="text-lg font-semibold text-lavender">Burn Trend &amp; Path to Profitability</h3>
+        <p className="text-sm text-soft-gray mt-1">
+          Monthly net P&amp;L — actuals where recorded, projections after &middot; the line crossing $0 is break-even
+        </p>
+      </div>
+
+      {/* Headline stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5 relative z-10">
+        <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
+          <span className="text-xs text-soft-gray">{latest ? latest.label : 'Latest'} Net</span>
+          <div className={`text-2xl font-bold mt-1 ${latestPositive ? 'text-green1' : 'text-red-400'}`}>
+            {latestPositive ? '+' : ''}{formatCurrency(latestNet)}
+          </div>
+          <div className="text-[11px] text-purple-gray mt-0.5">{latestPositive ? 'profitable' : 'monthly burn'}</div>
+        </div>
+        <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
+          <span className="text-xs text-soft-gray">Avg MoM change</span>
+          <div className={`text-2xl font-bold mt-1 ${avgMomImprovement >= 0 ? 'text-green1' : 'text-red-400'}`}>
+            {avgMomImprovement > 0 ? '+' : ''}{formatCurrency(avgMomImprovement)}
+          </div>
+          <div className="text-[11px] text-purple-gray mt-0.5">{avgMomImprovement >= 0 ? 'burn shrinking / month' : 'burn growing / month'}</div>
+        </div>
+        <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
+          <span className="text-xs text-soft-gray">Break-even</span>
+          <div className={`text-2xl font-bold mt-1 ${crossover ? 'text-green1' : 'text-soft-gray'}`}>
+            {crossover ?? 'Not in window'}
+          </div>
+          <div className="text-[11px] text-purple-gray mt-0.5">{crossover ? 'first profitable month' : 'no crossover projected yet'}</div>
+        </div>
+      </div>
+
+      {/* Area chart crossing zero */}
+      <div className="h-[300px] relative z-10">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={rows} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id="burnSplit" x1="0" y1="0" x2="0" y2="1">
+                <stop offset={off} stopColor="#5EB851" stopOpacity={0.5} />
+                <stop offset={off} stopColor="#E85757" stopOpacity={0.5} />
+              </linearGradient>
+              <linearGradient id="burnStroke" x1="0" y1="0" x2="0" y2="1">
+                <stop offset={off} stopColor="#5EB851" stopOpacity={1} />
+                <stop offset={off} stopColor="#E85757" stopOpacity={1} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+            <XAxis dataKey="label" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} dy={6} />
+            <YAxis tickFormatter={(v) => formatCurrency(Number(v))} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 11 }} axisLine={false} tickLine={false} width={72} />
+            <Tooltip
+              cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeDasharray: '3 3' }}
+              content={({ active, payload }) => {
+                if (!active || !payload || !payload.length) return null;
+                const r = payload[0].payload as BurnRow;
+                return (
+                  <div className="custom-tooltip">
+                    <p className="text-soft-gray text-xs mb-1">{r.label} · {r.isActual ? 'actual' : 'projected'}</p>
+                    <p className={`text-lg font-semibold ${r.net >= 0 ? 'text-green1' : 'text-red-400'}`}>
+                      {r.net >= 0 ? '+' : ''}{formatCurrency(r.net)}
+                    </p>
+                    {r.momDelta != null && (
+                      <p className={`text-xs ${r.momDelta >= 0 ? 'text-green1' : 'text-red-400'}`}>
+                        {r.momDelta >= 0 ? '▲ ' : '▼ '}{formatCurrency(Math.abs(r.momDelta))} vs prior month
+                      </p>
+                    )}
+                  </div>
+                );
+              }}
+            />
+            <ReferenceLine y={0} stroke="rgba(255,255,255,0.35)" strokeWidth={1.5} />
+            {/* Divider between recorded actuals and projections */}
+            {lastActualLabel && (
+              <ReferenceLine x={lastActualLabel} stroke="rgba(196,181,212,0.3)" strokeDasharray="4 4"
+                label={{ value: 'actual → projected', position: 'insideTopRight', fill: 'rgba(196,181,212,0.6)', fontSize: 10 }} />
+            )}
+            <Area type="monotone" dataKey="net" stroke="url(#burnStroke)" strokeWidth={2.5} fill="url(#burnSplit)" dot={{ r: 2.5 }} activeDot={{ r: 4 }} animationDuration={800} />
+            {/* Mark the break-even month */}
+            {crossover && (
+              <ReferenceDot x={crossover} y={rows.find(r => r.label === crossover)?.net ?? 0} r={5} fill="#5EB851" stroke="#fff" strokeWidth={1.5}
+                label={{ value: '🎯 break-even', position: 'top', fill: '#5EB851', fontSize: 11, fontWeight: 700 }} />
+            )}
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
