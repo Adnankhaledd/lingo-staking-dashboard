@@ -17,6 +17,7 @@ import { ClaimsBySourceChart } from '../components/charts/ClaimsBySourceChart';
 import { ClaimsSummaryChart } from '../components/charts/ClaimsSummaryChart';
 import { DecubateWeeklyClaimsChart } from '../components/charts/DecubateWeeklyClaimsChart';
 import { VestingClaimsChart } from '../components/charts/VestingClaimsChart';
+import { VestingLargeClaimsTable } from '../components/charts/VestingLargeClaimsTable';
 import { CombinedClaimsChart } from '../components/charts/CombinedClaimsChart';
 import { DecubateClaimFeedTable } from '../components/cards/DecubateClaimFeedTable';
 import { ClaimsByTypeTable } from '../components/cards/ClaimsByTypeTable';
@@ -344,6 +345,9 @@ export function Claims() {
 
         {/* Live vesting claims (Alchemy, mint-aware) — weekly/monthly */}
         <VestingClaimsChart />
+
+        {/* Recent large vesting claims — selectable timeframe + threshold */}
+        <VestingLargeClaimsTable />
 
         {/* Charts — full width, one per row */}
         <ClaimsSummaryChart

@@ -29,7 +29,7 @@ const DEFAULT_FROM_BLOCK = 20_000_000; // no activity before this
 const MAX_REQUESTS = 220;
 const LOG_PAGE_LIMIT = 9500;
 
-interface RawLog { data: string; blockNumber: string }
+interface RawLog { data: string; blockNumber: string; blockTimestamp?: string; transactionHash?: string }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<{ ok: true; result: T } | { ok: false; error: string }> {
   try {
@@ -142,14 +142,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ address, bucket, asOfBlock: head, totalClaims: 0, totalLingoClaimed: 0, buckets: [] });
     }
 
-    // NOTE: spread (Math.min(...arr)) overflows the call stack at ~100k+ logs.
-    let minBlock = Infinity, maxBlock = -Infinity;
-    for (const l of logs) {
-      const b = parseInt(l.blockNumber, 16);
-      if (b < minBlock) minBlock = b;
-      if (b > maxBlock) maxBlock = b;
+    // Alchemy returns a real blockTimestamp on each log; use it for exact
+    // bucketing. Fall back to interpolation only if any log lacks it.
+    const needsInterp = logs.some(l => !l.blockTimestamp);
+    let blockToTs: (b: number) => number = () => 0;
+    if (needsInterp) {
+      // NOTE: spread (Math.min(...arr)) overflows the call stack at ~100k+ logs.
+      let minBlock = Infinity, maxBlock = -Infinity;
+      for (const l of logs) {
+        const b = parseInt(l.blockNumber, 16);
+        if (b < minBlock) minBlock = b;
+        if (b > maxBlock) maxBlock = b;
+      }
+      blockToTs = await buildBlockToTs(minBlock, maxBlock, head, headTs);
     }
-    const blockToTs = await buildBlockToTs(minBlock, maxBlock, head, headTs);
 
     const weiByBucket = new Map<string, bigint>();
     const countByBucket = new Map<string, number>();
@@ -158,7 +164,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const d = log.data.slice(2);
       if (d.length < 128) continue;
       const amountWei = BigInt('0x' + d.slice(64, 128));
-      const ts = blockToTs(parseInt(log.blockNumber, 16));
+      const ts = log.blockTimestamp ? parseInt(log.blockTimestamp, 16) : blockToTs(parseInt(log.blockNumber, 16));
       const key = bucket === 'week' ? weekKey(ts) : monthKey(ts);
       weiByBucket.set(key, (weiByBucket.get(key) ?? 0n) + amountWei);
       countByBucket.set(key, (countByBucket.get(key) ?? 0) + 1);
