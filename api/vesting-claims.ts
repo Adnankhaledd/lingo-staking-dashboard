@@ -142,8 +142,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ address, bucket, asOfBlock: head, totalClaims: 0, totalLingoClaimed: 0, buckets: [] });
     }
 
-    const claimBlocks = logs.map(l => parseInt(l.blockNumber, 16));
-    const blockToTs = await buildBlockToTs(Math.min(...claimBlocks), Math.max(...claimBlocks), head, headTs);
+    // NOTE: spread (Math.min(...arr)) overflows the call stack at ~100k+ logs.
+    let minBlock = Infinity, maxBlock = -Infinity;
+    for (const l of logs) {
+      const b = parseInt(l.blockNumber, 16);
+      if (b < minBlock) minBlock = b;
+      if (b > maxBlock) maxBlock = b;
+    }
+    const blockToTs = await buildBlockToTs(minBlock, maxBlock, head, headTs);
 
     const weiByBucket = new Map<string, bigint>();
     const countByBucket = new Map<string, number>();
