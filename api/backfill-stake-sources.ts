@@ -3,7 +3,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 /**
  * /api/backfill-stake-sources — one-off historical provenance run.
  *
- * Scans past Staked events (>= MIN_AMOUNT LINGO), classifies where each
+ * Scans past Staked events (>= MIN_USD worth of LINGO at the live price),
+ * classifies where each
  * staker's LINGO came from, and returns either a JSON summary or a CSV.
  * Optionally posts a single aggregate summary to Slack (no per-stake spam).
  *
@@ -30,7 +31,15 @@ const STAKING_CONTRACT = (process.env.STAKING_CONTRACT_ADDRESS || '').toLowerCas
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 
-const MIN_AMOUNT = 10_000;
+// USD-denominated floor — must mirror api/discord-alerts.ts so the backfill
+// classifies exactly the stakes the alerts fire on. (api/ can't share modules.)
+const MIN_USD = 100;
+const FALLBACK_MIN_LINGO = 10_000;
+const MIN_LINGO_FLOOR = 1_000;
+const MIN_LINGO_CEIL = 1_000_000;
+const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
+const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/by-address`;
+const HIST_PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/historical`;
 const LINGO_DECIMALS = 18;
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
 const BLOCKS_PER_DAY = 43_200; // Base ~2s/block
@@ -53,7 +62,95 @@ function parseAmount(hex: string): number {
   return Number(raw / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
 }
 
-interface RawLog { topics: string[]; data: string; transactionHash: string; blockNumber: string; logIndex?: string }
+/** Live LINGO/USD from the Alchemy Prices API. null on any failure. */
+async function getLingoPriceUsd(): Promise<number | null> {
+  try {
+    const res = await fetch(PRICES_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addresses: [{ network: 'base-mainnet', address: LINGO_TOKEN }] }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const prices = json?.data?.[0]?.prices;
+    if (!Array.isArray(prices)) return null;
+    const usd = prices.find((p: { currency?: string }) => p?.currency === 'usd');
+    const price = Number(usd?.value);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  } catch {
+    return null;
+  }
+}
+
+/** LINGO worth MIN_USD at `priceUsd`, clamped so a bad price can't distort the scan. */
+function thresholdFor(priceUsd: number | null): number {
+  if (priceUsd == null) return FALLBACK_MIN_LINGO;
+  return Math.min(MIN_LINGO_CEIL, Math.max(MIN_LINGO_FLOOR, MIN_USD / priceUsd));
+}
+
+/**
+ * Daily LINGO/USD series over a window. This backfill almost always scans the
+ * PAST (monthly-stake-report runs on the previous calendar month; /stake-report
+ * accepts "may", "2026-05", ...), so pricing it at today's rate would be wrong:
+ * LINGO moved ~33% in one recent week. Each stake is valued at its own day.
+ */
+async function getHistoricalPrices(startISO: string, endISO: string): Promise<Array<[number, number]>> {
+  try {
+    const res = await fetch(HIST_PRICES_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        network: 'base-mainnet', address: LINGO_TOKEN,
+        startTime: startISO, endTime: endISO, interval: '1d',
+      }),
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    if (!Array.isArray(json?.data)) return [];
+    const out: Array<[number, number]> = [];
+    for (const d of json.data) {
+      const v = Number(d?.value);
+      const t = Date.parse(d?.timestamp ?? '');
+      if (Number.isFinite(v) && v > 0 && Number.isFinite(t)) out.push([Math.floor(t / 1000), v]);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Step-function lookup: the most recent daily close at or before `ts`. */
+function makePriceLookup(points: Array<[number, number]>): ((ts: number) => number) | null {
+  if (!points.length) return null;
+  const pts = [...points].sort((a, b) => a[0] - b[0]);
+  return (ts: number) => {
+    for (let i = pts.length - 1; i >= 0; i--) if (pts[i][0] <= ts) return pts[i][1];
+    return pts[0][1];
+  };
+}
+
+/**
+ * Whether a stake clears the bar. Prefers per-stake historical USD; degrades to
+ * a flat LINGO floor when the series or the log's timestamp is unavailable.
+ */
+function makeQualifier(priceAt: ((ts: number) => number) | null, flatMinLingo: number) {
+  return (log: RawLog): boolean => {
+    const amount = parseAmount(log.data.slice(2, 66));
+    if (priceAt && log.blockTimestamp) {
+      const ts = parseInt(log.blockTimestamp, 16);
+      if (Number.isFinite(ts) && ts > 0) return amount * priceAt(ts) >= MIN_USD;
+    }
+    return amount >= flatMinLingo;
+  };
+}
+
+async function blockTime(block: number): Promise<number | null> {
+  const r = await rpc<{ timestamp: string }>('eth_getBlockByNumber', ['0x' + block.toString(16), false]);
+  const t = r?.timestamp ? parseInt(r.timestamp, 16) : NaN;
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+
+interface RawLog { topics: string[]; data: string; transactionHash: string; blockNumber: string; logIndex?: string; blockTimestamp?: string }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
   const res = await fetch(ALCHEMY_URL, {
@@ -94,7 +191,7 @@ function mkRow(log: RawLog): StakeRow {
  *  When the cap is hit, the limit-hitting block is fully drained before
  *  returning so the exclusive cursor (block-1) on the next page can't skip any
  *  same-block stakes. */
-async function scanStakes(fromBlock: number, toBlock: number, limit: number): Promise<{ rows: StakeRow[]; oldestScanned: number; hasMore: boolean }> {
+async function scanStakes(fromBlock: number, toBlock: number, limit: number, qualifies: (log: RawLog) => boolean): Promise<{ rows: StakeRow[]; oldestScanned: number; hasMore: boolean }> {
   const rows: StakeRow[] = [];
   let hi = toBlock;
   let oldestScanned = toBlock;
@@ -118,7 +215,7 @@ async function scanStakes(fromBlock: number, toBlock: number, limit: number): Pr
       for (let i = 0; i < logs.length; i++) {
         const log = logs[i];
         if (log.data.length < 130) continue;
-        if (parseAmount(log.data.slice(2, 66)) < MIN_AMOUNT) continue;
+        if (!qualifies(log)) continue;
         rows.push(mkRow(log));
         if (rows.length >= limit) {
           // Drain the rest of THIS block so cursor = block-1 is safe.
@@ -127,7 +224,7 @@ async function scanStakes(fromBlock: number, toBlock: number, limit: number): Pr
             const l2 = logs[j];
             if (parseInt(l2.blockNumber, 16) !== B) break; // sorted desc → same-block are contiguous
             if (l2.data.length < 130) continue;
-            if (parseAmount(l2.data.slice(2, 66)) < MIN_AMOUNT) continue;
+            if (!qualifies(l2)) continue;
             rows.push(mkRow(l2));
           }
           return { rows, oldestScanned: B, hasMore: B > fromBlock };
@@ -184,6 +281,7 @@ const SOURCE_LABELS: Record<string, string> = {
 async function postSlackSummary(
   classified: Array<{ source: string; amount: number }>,
   range: { fromBlock: number; toBlock: number; processed: number; hasMore: boolean },
+  pricingBasis: string,
 ): Promise<boolean> {
   const bySource = new Map<string, { count: number; lingo: number }>();
   for (const r of classified) {
@@ -198,7 +296,7 @@ async function postSlackSummary(
   );
 
   const blocks = [
-    { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — backfill (${classified.length} stakes ≥${MIN_AMOUNT.toLocaleString()} LINGO)`, emoji: true } },
+    { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — backfill (${classified.length} stakes ≥ ${pricingBasis})`, emoji: true } },
     { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || '_No stakes in range_' } },
     { type: 'context', elements: [{ type: 'mrkdwn', text: `Blocks ${range.fromBlock.toLocaleString()}–${range.toBlock.toLocaleString()}${range.hasMore ? ' · more remain (paged)' : ''}` }] },
   ];
@@ -434,11 +532,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const toBlock = q.beforeBlock ? parseInt(q.beforeBlock, 10) : (q.toBlock ? parseInt(q.toBlock, 10) : latest);
     const fromBlock = q.fromBlock ? parseInt(q.fromBlock, 10) : Math.max(0, toBlock - days * BLOCKS_PER_DAY);
 
-    const { rows, oldestScanned, hasMore } = await scanStakes(fromBlock, toBlock, limit);
+    // Value each stake at the price on ITS OWN day — this scan is usually
+    // historical. Degrade to a flat live-price floor, then to a fixed one.
+    const [startTs, endTs, livePrice] = await Promise.all([
+      blockTime(fromBlock),
+      blockTime(toBlock),
+      getLingoPriceUsd(),
+    ]);
+    const flatMinLingo = thresholdFor(livePrice);
+    const pricePoints = (startTs && endTs)
+      ? await getHistoricalPrices(new Date(startTs * 1000).toISOString(), new Date(endTs * 1000).toISOString())
+      : [];
+    const priceAt = makePriceLookup(pricePoints);
+    // Say which basis was actually used — never imply a $100 bar we didn't apply.
+    const pricingBasis = priceAt
+      ? `$${MIN_USD} (each stake at its own daily price)`
+      : livePrice != null
+        ? `$${MIN_USD} \u2248 ${Math.round(flatMinLingo).toLocaleString()} LINGO (live price, flat)`
+        : `${FALLBACK_MIN_LINGO.toLocaleString()} LINGO (price unavailable)`;
+
+    const { rows, oldestScanned, hasMore } = await scanStakes(
+      fromBlock, toBlock, limit, makeQualifier(priceAt, flatMinLingo),
+    );
     const classified = await classifyAll(rows);
 
     if (wantSlack && SLACK_WEBHOOK_URL) {
-      await postSlackSummary(classified, { fromBlock, toBlock, processed: classified.length, hasMore }).catch(() => {});
+      await postSlackSummary(classified, { fromBlock, toBlock, processed: classified.length, hasMore }, pricingBasis).catch(() => {});
     }
 
     if (format === 'csv') {

@@ -20,12 +20,27 @@ async function fetchBlobJson<T = unknown>(pathname: string): Promise<T | null> {
   } catch { return null; }
 }
 
+export const config = { maxDuration: 60 };
+
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const STAKING_CONTRACT = (process.env.STAKING_CONTRACT_ADDRESS || '').toLowerCase();
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
-const MIN_AMOUNT = 10_000;
+// Alert floor is denominated in USD and converted to LINGO at the live price
+// on every run, so the bar stays at $100 no matter where LINGO trades.
+const MIN_USD = 100;
+const FALLBACK_MIN_LINGO = 10_000;  // only when no live AND no cached price
+// Clamp BOUNDS the blast radius of a bad price; it does not eliminate it.
+// At a sane ~$0.014 the floor is ~7.1k LINGO, so 1k..1M pins the effective
+// threshold to roughly $14..$14k instead of 0..infinity.
+const MIN_LINGO_FLOOR = 1_000;
+const MIN_LINGO_CEIL = 1_000_000;
+// A cached price older than this is worse than no price at all — LINGO moved
+// 33% in a week recently, so a stale quote silently misplaces the bar.
+const MAX_PRICE_AGE_MS = 24 * 60 * 60 * 1000;
+const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
+const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/by-address`;
 const BLOB_KEY = 'discord-last-block.json';
 const LINGO_DECIMALS = 18;
 const SEEN_TX_LIMIT = 500; // rolling window of tx hashes for dedupe
@@ -74,6 +89,12 @@ function formatAmount(amount: number): string {
   return amount.toFixed(0);
 }
 
+function formatUsd(v: number): string {
+  return v >= 1000
+    ? Math.round(v).toLocaleString()
+    : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
@@ -83,10 +104,43 @@ function parseAmount(hex: string): number {
   return Number(raw / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
 }
 
+/** Live LINGO/USD from the Alchemy Prices API. null on any failure. */
+async function getLingoPriceUsd(): Promise<number | null> {
+  try {
+    const res = await fetch(PRICES_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addresses: [{ network: 'base-mainnet', address: LINGO_TOKEN }] }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const prices = json?.data?.[0]?.prices;
+    if (!Array.isArray(prices)) return null;
+    const usd = prices.find((p: { currency?: string }) => p?.currency === 'usd');
+    const price = Number(usd?.value);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * LINGO amount worth MIN_USD at `priceUsd`, clamped. The clamp is a safety
+ * rail, not a preference: a garbage price would otherwise either flood the
+ * channel (price too high -> threshold near zero) or mute it entirely.
+ */
+function thresholdFor(priceUsd: number | null): number {
+  if (priceUsd == null) return FALLBACK_MIN_LINGO;
+  const raw = MIN_USD / priceUsd;
+  return Math.min(MIN_LINGO_CEIL, Math.max(MIN_LINGO_FLOOR, raw));
+}
+
 interface DiscordState {
   lastBlock: number | null;
   seenTxHashes: string[];
   knownStakers: string[]; // wallets we've already classified (cache for "new vs returning")
+  lastPriceUsd: number | null; // last good LINGO price, rides out price-API blips
+  lastPriceAt: number | null;  // epoch ms of that price, so we can expire it
 }
 
 async function getDiscordState(): Promise<DiscordState> {
@@ -96,8 +150,10 @@ async function getDiscordState(): Promise<DiscordState> {
       lastBlock: unknown;
       seenTxHashes?: unknown;
       knownStakers?: unknown;
+      lastPriceUsd?: unknown;
+      lastPriceAt?: unknown;
     }>(BLOB_KEY);
-    if (!data) return { lastBlock: null, seenTxHashes: [], knownStakers: [] };
+    if (!data) return { lastBlock: null, seenTxHashes: [], knownStakers: [], lastPriceUsd: null, lastPriceAt: null };
 
     let lastBlock: number | null = null;
     const val = data.lastBlock;
@@ -114,9 +170,14 @@ async function getDiscordState(): Promise<DiscordState> {
       ? data.knownStakers.filter((w): w is string => typeof w === 'string')
       : [];
 
-    return { lastBlock, seenTxHashes, knownStakers };
+    const cachedPrice = Number(data.lastPriceUsd);
+    const lastPriceUsd = Number.isFinite(cachedPrice) && cachedPrice > 0 ? cachedPrice : null;
+    const cachedAt = Number(data.lastPriceAt);
+    const lastPriceAt = Number.isFinite(cachedAt) && cachedAt > 0 ? cachedAt : null;
+
+    return { lastBlock, seenTxHashes, knownStakers, lastPriceUsd, lastPriceAt };
   } catch {
-    return { lastBlock: null, seenTxHashes: [], knownStakers: [] };
+    return { lastBlock: null, seenTxHashes: [], knownStakers: [], lastPriceUsd: null, lastPriceAt: null };
   }
 }
 
@@ -128,6 +189,8 @@ async function saveDiscordState(state: DiscordState): Promise<void> {
     lastBlock: state.lastBlock,
     seenTxHashes: trimmedTx,
     knownStakers: trimmedStakers,
+    lastPriceUsd: state.lastPriceUsd,
+    lastPriceAt: state.lastPriceAt,
     updatedAt: new Date().toISOString(),
   }), {
     access: 'public',
@@ -226,7 +289,7 @@ async function getLatestBlock(): Promise<number> {
   return parseInt(data.result, 16);
 }
 
-async function getStakingEvents(fromBlock: number, toBlock: number): Promise<StakingEvent[]> {
+async function getStakingEvents(fromBlock: number, toBlock: number, minAmount: number): Promise<StakingEvent[]> {
   const stakesRes = await fetch(ALCHEMY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -251,7 +314,7 @@ async function getStakingEvents(fromBlock: number, toBlock: number): Promise<Sta
       const amount = parseAmount(log.data.slice(2, 66));
       const durationRaw = BigInt('0x' + log.data.slice(66));
 
-      if (amount >= MIN_AMOUNT) {
+      if (amount >= minAmount) {
         events.push({
           type: 'stake',
           wallet,
@@ -272,6 +335,7 @@ async function sendDiscordEmbed(
   event: StakingEvent,
   totalStaked: number,
   stakerType: 'new' | 'returning',
+  usdValue: number | null = null,
 ): Promise<void> {
   const color = DURATION_COLORS[event.lockDuration] ?? 0x5EB851;
   const emoji = event.lockDuration === 'Flexible' ? '\uD83D\uDD13' : '\uD83D\uDD12';
@@ -286,6 +350,10 @@ async function sendDiscordEmbed(
     { name: 'Lock Duration', value: event.lockDuration, inline: true },
     { name: 'Amount', value: `${event.amount.toLocaleString()} LINGO`, inline: true },
   ];
+
+  if (usdValue != null) {
+    fields.push({ name: 'USD Value', value: `$${formatUsd(usdValue)}`, inline: true });
+  }
 
   if (totalStaked > 0) {
     fields.push({ name: 'Total Staked', value: `${formatAmount(totalStaked)} LINGO`, inline: true });
@@ -319,6 +387,7 @@ async function sendSlackMessage(
   totalStaked: number,
   stakerType: 'new' | 'returning',
   provenance: Provenance,
+  usdValue: number | null = null,
 ): Promise<void> {
   const emoji = event.lockDuration === 'Flexible' ? '🔓' : '🔒';
   const stakerLabel = stakerType === 'new' ? '🆕 New Staker' : '🔁 Returning';
@@ -328,6 +397,9 @@ async function sendSlackMessage(
     { type: 'mrkdwn', text: `*Lock Duration:*\n${event.lockDuration}` },
     { type: 'mrkdwn', text: `*Amount:*\n${event.amount.toLocaleString()} LINGO` },
   ];
+  if (usdValue != null) {
+    fields.push({ type: 'mrkdwn', text: `*USD Value:*\n$${formatUsd(usdValue)}` });
+  }
   if (totalStaked > 0) {
     fields.push({ type: 'mrkdwn', text: `*Total Staked:*\n${formatAmount(totalStaked)} LINGO` });
   }
@@ -569,13 +641,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const [state, latestBlock] = await Promise.all([
+    const [state, latestBlock, livePrice] = await Promise.all([
       getDiscordState(),
       getLatestBlock(),
+      getLingoPriceUsd(),
     ]);
 
-    const fromBlock = state.lastBlock ? state.lastBlock + 1 : latestBlock - DEFAULT_LOOKBACK;
-    const events = await getStakingEvents(fromBlock, latestBlock);
+    // Prefer the live price; fall back to the last good one so a transient
+    // Prices-API blip doesn't move the bar — but only while it's fresh, since
+    // a stale quote silently misplaces the threshold. thresholdFor handles null.
+    const cacheAge = state.lastPriceAt != null ? Date.now() - state.lastPriceAt : Infinity;
+    const cachedPrice = cacheAge < MAX_PRICE_AGE_MS ? state.lastPriceUsd : null;
+    const priceUsd = livePrice ?? cachedPrice;
+    const minAmount = thresholdFor(priceUsd);
+
+    // Carry the freshest price we have into every save site below.
+    const priceState = livePrice != null
+      ? { lastPriceUsd: livePrice, lastPriceAt: Date.now() }
+      : { lastPriceUsd: state.lastPriceUsd, lastPriceAt: state.lastPriceAt };
+
+    // Cold start (no stored pointer: first deploy, or a Blob read that failed).
+    // Do NOT replay DEFAULT_LOOKBACK (~1 week) of history into a live channel —
+    // these alerts are meant to be live. Just claim the pointer and start clean.
+    if (!state.lastBlock) {
+      await saveDiscordState({
+        lastBlock: latestBlock,
+        seenTxHashes: state.seenTxHashes,
+        knownStakers: state.knownStakers,
+        ...priceState,
+      });
+      return res.status(200).json({
+        message: 'Cold start — pointer initialised, no backfill posted',
+        toBlock: latestBlock,
+        minUsd: MIN_USD,
+        minAmount: Math.round(minAmount),
+        priceUsd,
+      });
+    }
+
+    const fromBlock = state.lastBlock + 1;
+    const events = await getStakingEvents(fromBlock, latestBlock, minAmount);
 
     // Build Sets from previous state for O(1) lookups
     const seenSet = new Set(state.seenTxHashes);
@@ -586,9 +691,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lastBlock: latestBlock,
         seenTxHashes: state.seenTxHashes,
         knownStakers: state.knownStakers,
+        ...priceState,
       });
       return res.status(200).json({
-        message: 'No new activity above 10K',
+        message: `No new activity above $${MIN_USD}`,
+        minAmount: Math.round(minAmount),
+        priceUsd,
         fromBlock,
         toBlock: latestBlock,
       });
@@ -619,13 +727,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ]);
 
       // Discord stays exactly as before (only when configured).
+      const usdValue = priceUsd != null ? event.amount * priceUsd : null;
       if (DISCORD_WEBHOOK_URL) {
-        await sendDiscordEmbed(event, totalStaked, stakerType);
+        await sendDiscordEmbed(event, totalStaked, stakerType, usdValue);
       }
       // Slack adds the new Source section.
       if (SLACK_WEBHOOK_URL && provenance) {
         try {
-          await sendSlackMessage(event, totalStaked, stakerType, provenance);
+          await sendSlackMessage(event, totalStaked, stakerType, provenance, usdValue);
         } catch (slackErr) {
           console.warn('Slack post failed:', slackErr instanceof Error ? slackErr.message : slackErr);
         }
@@ -642,6 +751,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           lastBlock: state.lastBlock, // don't advance block pointer until all events processed
           seenTxHashes: Array.from(seenSet),
           knownStakers: Array.from(knownSet),
+          ...priceState,
         });
       } catch (saveErr) {
         console.warn('Failed to persist state mid-loop:', saveErr);
@@ -654,6 +764,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       lastBlock: latestBlock,
       seenTxHashes: Array.from(seenSet),
       knownStakers: Array.from(knownSet),
+      ...priceState,
     });
 
     return res.status(200).json({
@@ -663,6 +774,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       posted,
       newStakers,
       skipped,
+      minUsd: MIN_USD,
+      minAmount: Math.round(minAmount),
+      priceUsd,
     });
   } catch (error) {
     return res.status(500).json({
