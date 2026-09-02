@@ -48,9 +48,6 @@ const KNOWN_STAKERS_LIMIT = 50_000; // cached wallet classifications — bounds 
 
 // keccak256("Staked(address,uint256,uint256)")
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
-// ~7 days of blocks on Base (2 sec/block)
-const DEFAULT_LOOKBACK = 302_400;
-
 const KNOWN_DURATIONS: Record<string, string> = {
   '0': 'Flexible',
   '1296000': '1 Month',
@@ -661,8 +658,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : { lastPriceUsd: state.lastPriceUsd, lastPriceAt: state.lastPriceAt };
 
     // Cold start (no stored pointer: first deploy, or a Blob read that failed).
-    // Do NOT replay DEFAULT_LOOKBACK (~1 week) of history into a live channel —
-    // these alerts are meant to be live. Just claim the pointer and start clean.
+    // Do NOT replay a week of history into a live channel — these alerts are
+    // meant to be live. Just claim the pointer and start clean. (Normal
+    // catch-up after downtime still works: lastBlock persists across runs.)
     if (!state.lastBlock) {
       await saveDiscordState({
         lastBlock: latestBlock,
