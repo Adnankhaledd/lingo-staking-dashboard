@@ -24,7 +24,7 @@ const CRON_SECRET = process.env.CRON_SECRET || '';
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const SOURCE_ORDER = [
-  'bought', 'transferred_bought_upstream',
+  'bought', 'bought_cex', 'transferred_bought_upstream', 'bridged',
   'claimed_apy', 'claimed_vesting', 'claimed',
   'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown',
 ];
@@ -38,6 +38,8 @@ function fmtUsd(v: number): string {
 
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
+  bought_cex: '🏦 Bought on exchange',
+  bridged: '🌉 Bridged in',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
   claimed_apy: '📈 APY reward claim',
   claimed_vesting: '⏳ Vesting claim',
