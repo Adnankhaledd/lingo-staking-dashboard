@@ -50,6 +50,15 @@ const USAGE = [
 ].join('\n');
 
 const SOURCE_ORDER = ['bought', 'transferred_bought_upstream', 'claimed', 'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown'];
+
+/** Compact USD, e.g. $1.2M / $340K / $912. */
+function fmtUsd(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return '$0';
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${Math.round(v / 1_000)}K`;
+  return `$${Math.round(v)}`;
+}
+
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
@@ -235,7 +244,8 @@ async function postToUrl(url: string, payload: unknown): Promise<boolean> {
 // ─── Report building ────────────────────────────────────────────────────
 
 interface BackfillPage {
-  summary?: Record<string, { count: number; lingo: number }>;
+  summary?: Record<string, { count: number; lingo: number; usd?: number }>;
+  pricingBasis?: string;
   hasMore?: boolean;
   nextBeforeBlock?: number | null;
 }
@@ -243,9 +253,11 @@ interface BackfillPage {
 interface ReportResult {
   period: Period;
   range: { fromBlock: number; toBlock: number };
-  totals: Record<string, { count: number; lingo: number }>;
+  totals: Record<string, { count: number; lingo: number; usd: number }>;
   totalCount: number;
   totalLingo: number;
+  totalUsd: number;
+  pricingBasis: string;
   pages: number;
   partial: boolean;
 }
@@ -256,11 +268,13 @@ async function runReport(text: string): Promise<ReportResult> {
   const range = await resolveBlocks(period);
   if (!range) throw new Error('Could not resolve block range (RPC unavailable)');
 
-  const totals: Record<string, { count: number; lingo: number }> = {};
+  const totals: Record<string, { count: number; lingo: number; usd: number }> = {};
   let cursor = range.toBlock;
   let pages = 0;
   let totalCount = 0;
   let totalLingo = 0;
+  let totalUsd = 0;
+  let pricingBasis = '';
   let more = true;
   let partial = false;
   const startMs = Date.now();
@@ -286,20 +300,23 @@ async function runReport(text: string): Promise<ReportResult> {
     if (!r.ok) { partial = true; break; }
     let page: BackfillPage;
     try { page = (await r.json()) as BackfillPage; } catch { partial = true; break; }
+    if (page.pricingBasis) pricingBasis = page.pricingBasis;
     for (const [src, v] of Object.entries(page.summary ?? {})) {
-      const t = totals[src] ?? { count: 0, lingo: 0 };
+      const t = totals[src] ?? { count: 0, lingo: 0, usd: 0 };
       t.count += v.count;
       t.lingo += v.lingo;
+      t.usd += v.usd ?? 0;
       totals[src] = t;
       totalCount += v.count;
       totalLingo += v.lingo;
+      totalUsd += v.usd ?? 0;
     }
     more = !!(page.hasMore && page.nextBeforeBlock != null);
     if (more) cursor = page.nextBeforeBlock as number;
   }
   if (more) partial = true; // ran out of pages/time with blocks left unscanned
 
-  return { period, range, totals, totalCount, totalLingo, pages, partial };
+  return { period, range, totals, totalCount, totalLingo, totalUsd, pricingBasis, pages, partial };
 }
 
 function buildBlocks(rep: ReportResult, userId?: string): unknown[] {
@@ -308,11 +325,12 @@ function buildBlocks(rep: ReportResult, userId?: string): unknown[] {
     .filter(src => rep.totals[src])
     .map(src => {
       const v = rep.totals[src];
-      return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO`;
+      const usd = v.usd > 0 ? ` · ${fmtUsd(v.usd)}` : '';
+      return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO${usd}`;
     });
 
   const contextBits = [
-    `Total: *${rep.totalCount}* stakes · ${Math.round(rep.totalLingo).toLocaleString()} LINGO`,
+    `Total: *${rep.totalCount}* stakes · ${Math.round(rep.totalLingo).toLocaleString()} LINGO${rep.totalUsd > 0 ? ` · ${fmtUsd(rep.totalUsd)}` : ''}`,
     `blocks ${rep.range.fromBlock.toLocaleString()}–${rep.range.toBlock.toLocaleString()}`,
   ];
   if (userId) contextBits.push(`requested by <@${userId}>`);
@@ -320,8 +338,8 @@ function buildBlocks(rep: ReportResult, userId?: string): unknown[] {
 
   return [
     { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — ${rep.period.label}`, emoji: true } },
-    { type: 'section', text: { type: 'mrkdwn', text: 'Stakes ≥10,000 LINGO, by where the staked LINGO came from:' } },
-    { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || `_No stakes ≥10k LINGO in ${rep.period.label}_` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${rep.pricingBasis || '$100'}, by where the staked LINGO came from _(USD valued at each stake's own date)_:` } },
+    { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || `_No qualifying stakes in ${rep.period.label}_` } },
     { type: 'context', elements: [{ type: 'mrkdwn', text: contextBits.join(' · ') }] },
   ];
 }

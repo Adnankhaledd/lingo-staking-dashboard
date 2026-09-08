@@ -442,15 +442,21 @@ const PROV_CLAIM_TOPICS = new Set([
 ]);
 const PROV_KNOWN_WALLETS: Record<string, string> = {
   '0x0e0bc2919540119fc22a502842a74af4d81502b6': 'Treasury',
-  '0x9399da51c1a85e64cce4b30b554875d2b89b2445': 'Liquidity',
   '0x7e3e2d6b8b87ce617b7ccdd63d0f5449e4057513': 'Team Buybacks',
   '0x69892fc8e176d9750e7f0ca06fc9aede0fc97bcb': 'Team Buybacks',
   '0x61f8d3fc749ecda98d378bc2cc8459ba0f7dfd58': 'Team Multisig',
   '0x7c91baca69ad289ec5de46b0b36287770a1ea91e': 'Distribution',
 };
 // Reward-distribution hot wallet(s) — transfers from here are reward payouts.
+// DEX pools. LINGO leaving a pool is somebody BUYING it, not a project
+// transfer. The LINGO/WETH pool used to sit in PROV_KNOWN_WALLETS, so every
+// buy through it was reported as "From Liquidity" instead of a DEX buy.
+const PROV_DEX_POOLS: Record<string, string> = {
+  '0x9399da51c1a85e64cce4b30b554875d2b89b2445': 'the LINGO/WETH pool',
+};
 const PROV_REWARD_WALLETS = new Set([
-  '0x64967c0dd5605dd3efc6a9bb148b2687a532c15f', // community reward wallet
+  '0xffc781ddfa8d1358ce8c7dda7ced1e56e922aea6', // current reward wallet
+  '0x64967c0dd5605dd3efc6a9bb148b2687a532c15f', // previous reward wallet (still used)
 ]);
 // Claim/distribution contracts (verified on-chain). LINGO arriving from one of
 // these is a claim, not a buy. Value is the human label shown in the alert.
@@ -464,12 +470,16 @@ type ProvenanceSource =
   | 'bought' | 'claimed' | 'reward' | 'restaked' | 'transferred'
   | 'transferred_bought_upstream' | 'internal' | 'preheld' | 'unknown';
 
+interface ProvMixPart { source: ProvenanceSource; lingo: number; pct: number }
+
 interface Provenance {
   source: ProvenanceSource;
   label: string;
   emoji: string;
   detail: string;
   confidence: 'high' | 'medium' | 'low';
+  /** Full funding breakdown when the stake was funded from several sources. */
+  mix?: ProvMixPart[];
 }
 
 const PROV_LABELS: Record<ProvenanceSource, { label: string; emoji: string }> = {
@@ -573,10 +583,44 @@ interface ClassifyInput {
   amount: number;
 }
 
+const PROV_MAX_SENDERS = 6; // bound the RPC work spent classifying one stake
+
+/**
+ * Classify ONE funding source. Order matters: reward wallets and DEX pools are
+ * checked before the generic known-wallet map, because the LINGO/WETH pool used
+ * to live in that map and every buy through it read as a project transfer.
+ */
+async function provClassifySender(
+  from: string,
+  hash: string,
+  blockNum: number,
+  walletLc: string,
+): Promise<{ source: ProvenanceSource; detail: string }> {
+  if (from === STAKING_CONTRACT) return { source: 'restaked', detail: 'From the staking contract' };
+  if (PROV_DEX_POOLS[from]) return { source: 'bought', detail: `Bought from ${PROV_DEX_POOLS[from]}` };
+  if (PROV_REWARD_WALLETS.has(from)) return { source: 'reward', detail: 'From a reward wallet' };
+  if (PROV_CLAIM_CONTRACTS[from]) return { source: 'claimed', detail: PROV_CLAIM_CONTRACTS[from] };
+  if (PROV_KNOWN_WALLETS[from]) return { source: 'internal', detail: `From ${PROV_KNOWN_WALLETS[from]}` };
+  if ((await provGetCode(from)) !== '0x') {
+    const r = await provGetReceipt(hash);
+    if (r) {
+      const sig = provAnalyze(r, walletLc);
+      if (sig.hasSwap) return { source: 'bought', detail: 'Received from a DEX/pool' };
+      if (sig.hasClaim) return { source: 'claimed', detail: 'Claim event just before staking' };
+    }
+    return { source: 'claimed', detail: `From contract ${from.slice(0, 10)}… (unrecognized event)` };
+  }
+  if (Number.isFinite(blockNum) && await provBoughtUpstream(from, blockNum)) {
+    return { source: 'transferred_bought_upstream', detail: `Sent from ${from.slice(0, 10)}… which bought it on-chain` };
+  }
+  return { source: 'transferred', detail: `Wallet transfer from ${from.slice(0, 10)}…` };
+}
+
 async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
   try {
     const walletLc = input.wallet.toLowerCase();
-    // TIER A — same tx as the stake
+
+    // TIER A - same tx as the stake. A swap/claim here is decisive.
     const stakeReceipt = await provGetReceipt(input.stakeTxHash);
     if (stakeReceipt) {
       const a = provAnalyze(stakeReceipt, walletLc);
@@ -584,40 +628,65 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
       if (a.hasClaim) return provMk('claimed', 'high', 'Claim event in the stake tx');
       const principal = a.inbound.slice().sort((x, y) => (y.value > x.value ? 1 : y.value < x.value ? -1 : 0))[0];
       if (principal && provToLingo(principal.value) >= input.amount * 0.5) {
-        const from = principal.from;
-        const conf: Provenance['confidence'] = a.inbound.length > 1 ? 'medium' : 'high';
-        if (from === STAKING_CONTRACT) return provMk('restaked', conf, 'Came from the staking contract');
-        if (PROV_KNOWN_WALLETS[from]) return provMk('internal', conf, `From ${PROV_KNOWN_WALLETS[from]}`);
-        if (PROV_REWARD_WALLETS.has(from)) return provMk('reward', conf, 'From the reward wallet');
-        if (PROV_CLAIM_CONTRACTS[from]) return provMk('claimed', conf, PROV_CLAIM_CONTRACTS[from]);
-        if ((await provGetCode(from)) !== '0x') return provMk('claimed', 'low', `From contract ${from.slice(0, 10)}… in the stake tx (no claim event)`);
+        const c = await provClassifySender(principal.from, input.stakeTxHash, input.stakeBlock, walletLc);
+        return provMk(c.source, a.inbound.length > 1 ? 'medium' : 'high', c.detail);
       }
     }
-    // TIER B — most recent inbound LINGO in the ~24h before the stake (drop the stake tx itself)
+
+    // TIER B - every inbound LINGO in the ~24h before the stake, weighted BY
+    // VALUE rather than by recency. Taking only the latest transfer misread the
+    // two most common real patterns: a small reward landing right after a large
+    // unstake made the whole stake look like a reward payout, and "unstaked,
+    // then bought more" was reported as a pure re-stake with the buy invisible.
     const transfers = (await provInbound(walletLc, input.stakeBlock - PROV_WINDOW_BLOCKS, input.stakeBlock))
       .filter(t => t.hash.toLowerCase() !== input.stakeTxHash.toLowerCase());
     if (transfers.length === 0) return provMk('preheld', 'low', 'No inbound LINGO in the ~24h before staking');
-    const latest = transfers[0];
-    const from = latest.from.toLowerCase();
-    const multi = new Set(transfers.map(t => t.from.toLowerCase())).size > 1;
-    if (from === STAKING_CONTRACT) return provMk('restaked', multi ? 'medium' : 'high', 'Unstaked then re-staked');
-    if (PROV_KNOWN_WALLETS[from]) return provMk('internal', multi ? 'medium' : 'high', `From ${PROV_KNOWN_WALLETS[from]}`);
-    if (PROV_REWARD_WALLETS.has(from)) return provMk('reward', multi ? 'medium' : 'high', 'From the reward wallet');
-    if (PROV_CLAIM_CONTRACTS[from]) return provMk('claimed', multi ? 'medium' : 'high', PROV_CLAIM_CONTRACTS[from]);
-    if ((await provGetCode(from)) !== '0x') {
-      const r = await provGetReceipt(latest.hash);
-      if (r) {
-        const sig = provAnalyze(r, walletLc);
-        if (sig.hasSwap) return provMk('bought', multi ? 'medium' : 'high', 'Received from a DEX/pool just before staking');
-        if (sig.hasClaim) return provMk('claimed', multi ? 'medium' : 'high', 'Claim event just before staking');
-      }
-      return provMk('claimed', 'low', `From contract ${from.slice(0, 10)}… (unrecognized event)`);
+
+    // Group by sender, largest first, so the RPC budget goes where the value is.
+    const bySender = new Map<string, { lingo: number; hash: string; blockNum: number }>();
+    for (const t of transfers) {
+      const from = t.from?.toLowerCase();
+      if (!from) continue;
+      const v = typeof t.value === 'number' && Number.isFinite(t.value) ? t.value : 0;
+      const prev = bySender.get(from);
+      if (prev) prev.lingo += v;
+      else bySender.set(from, { lingo: v, hash: t.hash, blockNum: parseInt(t.blockNum, 16) });
     }
-    const blockNum = parseInt(latest.blockNum, 16);
-    if (Number.isFinite(blockNum) && await provBoughtUpstream(from, blockNum)) {
-      return provMk('transferred_bought_upstream', 'medium', `Sent from ${from.slice(0, 10)}… which bought it on-chain`);
+    const senders = [...bySender.entries()].sort((a, b) => b[1].lingo - a[1].lingo);
+    const examined = senders.slice(0, PROV_MAX_SENDERS);
+
+    const bySource = new Map<ProvenanceSource, { lingo: number; detail: string }>();
+    for (const [from, info] of examined) {
+      const c = await provClassifySender(from, info.hash, info.blockNum, walletLc);
+      const b = bySource.get(c.source);
+      if (b) b.lingo += info.lingo;
+      else bySource.set(c.source, { lingo: info.lingo, detail: c.detail });
     }
-    return provMk('transferred', 'low', `Wallet transfer from ${from.slice(0, 10)}…`);
+    if (bySource.size === 0) return provMk('unknown', 'low', 'No attributable inbound transfers');
+
+    const ranked = [...bySource.entries()].sort((a, b) => b[1].lingo - a[1].lingo);
+    const total = ranked.reduce((sum, [, v]) => sum + v.lingo, 0);
+    const [topSource, topInfo] = ranked[0];
+    const share = total > 0 ? topInfo.lingo / total : 1;
+    const mix: ProvMixPart[] = total > 0
+      ? ranked.map(([source, v]) => ({ source, lingo: v.lingo, pct: Math.round((v.lingo / total) * 100) }))
+      : [];
+
+    // Confidence now tracks how CONCENTRATED the funding was, not sender count.
+    const confidence: Provenance['confidence'] = share >= 0.9 ? 'high' : share >= 0.6 ? 'medium' : 'low';
+
+    // Only call it "mixed" when a second source is actually visible at 1%+ —
+    // a 100/0 rounding split should read as a plain single-source stake.
+    const parts = mix.filter(m => m.pct > 0);
+    let detail = topInfo.detail;
+    if (parts.length > 1) {
+      detail = 'Mixed funding \u2014 ' + parts
+        .map(m => `${m.pct}% ${PROV_LABELS[m.source].label.toLowerCase()}`).join(', ');
+    }
+    const skipped = senders.length - examined.length;
+    if (skipped > 0) detail += ` (+${skipped} smaller sender${skipped === 1 ? '' : 's'} not classified)`;
+
+    return { ...provMk(topSource, confidence, detail), mix };
   } catch {
     return provMk('unknown', 'low', 'Classification error');
   }

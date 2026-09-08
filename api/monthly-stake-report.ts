@@ -24,6 +24,14 @@ const CRON_SECRET = process.env.CRON_SECRET || '';
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const SOURCE_ORDER = ['bought', 'transferred_bought_upstream', 'claimed', 'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown'];
+/** Compact USD, e.g. $1.2M / $340K / $912. */
+function fmtUsd(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return '$0';
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${Math.round(v / 1_000)}K`;
+  return `$${Math.round(v)}`;
+}
+
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
@@ -65,7 +73,8 @@ async function blockRangeForMonth(prevStartSec: number, thisStartSec: number): P
 }
 
 interface BackfillPage {
-  summary?: Record<string, { count: number; lingo: number }>;
+  summary?: Record<string, { count: number; lingo: number; usd?: number }>;
+  pricingBasis?: string;
   hasMore?: boolean;
   nextBeforeBlock?: number | null;
 }
@@ -115,7 +124,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (ADMIN_PASSWORD) headers['X-Admin-Password'] = ADMIN_PASSWORD;
     if (CRON_SECRET) headers['Authorization'] = `Bearer ${CRON_SECRET}`;
 
-    const totals: Record<string, { count: number; lingo: number }> = {};
+    const totals: Record<string, { count: number; lingo: number; usd: number }> = {};
+    let totalUsd = 0;
+    let pricingBasis = '';
     let cursor = range.toBlock;
     let pages = 0;
     let totalCount = 0;
@@ -151,11 +162,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         partial = true;
         break;
       }
+      if (page.pricingBasis) pricingBasis = page.pricingBasis;
       for (const [src, v] of Object.entries(page.summary ?? {})) {
-        const t = totals[src] ?? { count: 0, lingo: 0 };
-        t.count += v.count; t.lingo += v.lingo;
+        const t = totals[src] ?? { count: 0, lingo: 0, usd: 0 };
+        t.count += v.count; t.lingo += v.lingo; t.usd += v.usd ?? 0;
         totals[src] = t;
-        totalCount += v.count; totalLingo += v.lingo;
+        totalCount += v.count; totalLingo += v.lingo; totalUsd += v.usd ?? 0;
       }
       more = !!(page.hasMore && page.nextBeforeBlock != null);
       if (more) cursor = page.nextBeforeBlock as number;
@@ -168,14 +180,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(src => totals[src])
       .map(src => {
         const v = totals[src];
-        return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO`;
+        const usd = v.usd > 0 ? ` · ${fmtUsd(v.usd)}` : '';
+        return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO${usd}`;
       });
 
     const blocks = [
       { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — ${monthLabel}`, emoji: true } },
-      { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥10,000 LINGO, by where the staked LINGO came from:` } },
-      { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || '_No stakes ≥10k LINGO last month_' } },
-      { type: 'context', elements: [{ type: 'mrkdwn', text: `Total: *${totalCount}* stakes · ${Math.round(totalLingo).toLocaleString()} LINGO${partial ? ' · ⚠️ partial — some pages failed or range too large' : ''}` }] },
+      { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${pricingBasis || '$100'}, by where the staked LINGO came from _(USD valued at each stake's own date)_:` } },
+      { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || '_No qualifying stakes last month_' } },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: `Total: *${totalCount}* stakes · ${Math.round(totalLingo).toLocaleString()} LINGO${totalUsd > 0 ? ` · ${fmtUsd(totalUsd)}` : ''}${partial ? ' · ⚠️ partial — some pages failed or range too large' : ''}` }] },
     ];
 
     const slackRes = await fetch(SLACK_WEBHOOK_URL, {
