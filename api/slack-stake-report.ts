@@ -49,7 +49,11 @@ const USAGE = [
   `Default period: last 7 days (max ${MAX_DAYS} days). Counts stakes ≥10,000 LINGO.`,
 ].join('\n');
 
-const SOURCE_ORDER = ['bought', 'transferred_bought_upstream', 'claimed', 'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown'];
+const SOURCE_ORDER = [
+  'bought', 'transferred_bought_upstream',
+  'claimed_apy', 'claimed_vesting', 'claimed',
+  'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown',
+];
 
 /** Compact USD, e.g. $1.2M / $340K / $912. */
 function fmtUsd(v: number): string {
@@ -62,7 +66,9 @@ function fmtUsd(v: number): string {
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
-  claimed: '🎁 Claimed',
+  claimed_apy: '📈 APY reward claim',
+  claimed_vesting: '⏳ Vesting claim',
+  claimed: '🎁 Claimed (other)',
   reward: '💸 Reward payout',
   restaked: '🔁 Unstaked & re-staked',
   transferred: '↔️ Transferred in',

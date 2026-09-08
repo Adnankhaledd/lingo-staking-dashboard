@@ -459,16 +459,18 @@ const PROV_REWARD_WALLETS = new Set([
   '0x64967c0dd5605dd3efc6a9bb148b2687a532c15f', // previous reward wallet (still used)
 ]);
 // Claim/distribution contracts (verified on-chain). LINGO arriving from one of
-// these is a claim, not a buy. Value is the human label shown in the alert.
-const PROV_CLAIM_CONTRACTS: Record<string, string> = {
-  '0x2f26621e931c32542579cf8860d7e8616df32e0e': 'APY reward claim', // Treasury-owned APY claim contract
-  '0xad11f733e401e16c72033c5decaf05dcc0e1beb8': 'Vesting claim',    // Vesting contract
+// these is a claim, not a buy. Each maps to its OWN source so the reports can
+// tell an APY claim apart from a vesting unlock instead of lumping both under
+// a single "claimed" bucket.
+const PROV_CLAIM_CONTRACTS: Record<string, { source: ProvenanceSource; label: string }> = {
+  '0x2f26621e931c32542579cf8860d7e8616df32e0e': { source: 'claimed_apy', label: 'APY reward claim' },
+  '0xad11f733e401e16c72033c5decaf05dcc0e1beb8': { source: 'claimed_vesting', label: 'Vesting claim' },
 };
 const PROV_WINDOW_BLOCKS = 43_200; // ~24h on Base
 
 type ProvenanceSource =
-  | 'bought' | 'claimed' | 'reward' | 'restaked' | 'transferred'
-  | 'transferred_bought_upstream' | 'internal' | 'preheld' | 'unknown';
+  | 'bought' | 'claimed' | 'claimed_apy' | 'claimed_vesting' | 'reward' | 'restaked'
+  | 'transferred' | 'transferred_bought_upstream' | 'internal' | 'preheld' | 'unknown';
 
 interface ProvMixPart { source: ProvenanceSource; lingo: number; pct: number }
 
@@ -484,7 +486,9 @@ interface Provenance {
 
 const PROV_LABELS: Record<ProvenanceSource, { label: string; emoji: string }> = {
   bought:                      { label: 'Bought on DEX',                 emoji: '🛒' },
-  claimed:                     { label: 'Claimed',                       emoji: '🎁' },
+  claimed:                     { label: 'Claimed (other)',               emoji: '🎁' },
+  claimed_apy:                 { label: 'APY reward claim',              emoji: '📈' },
+  claimed_vesting:             { label: 'Vesting claim',                 emoji: '⏳' },
   restaked:                    { label: 'Unstaked & re-staked',          emoji: '🔁' },
   transferred:                 { label: 'Transferred in',                emoji: '↔️' },
   transferred_bought_upstream: { label: 'Transferred (bought upstream)', emoji: '🛒' },
@@ -502,7 +506,7 @@ interface ProvReceiptLog { address: string; topics: string[]; data: string }
 interface ProvTxReceipt { transactionHash: string; logs: ProvReceiptLog[] }
 interface ProvAssetTransfer { from: string; to: string; hash: string; blockNum: string; value: number | null }
 interface ProvInboundLeg { from: string; value: bigint }
-interface ProvReceiptSignals { hasSwap: boolean; hasClaim: boolean; inbound: ProvInboundLeg[] }
+interface ProvReceiptSignals { hasSwap: boolean; hasClaim: boolean; claimFrom: string | null; inbound: ProvInboundLeg[] }
 
 async function provRpc<T>(method: string, params: unknown[]): Promise<T | null> {
   try {
@@ -546,11 +550,18 @@ async function provInbound(wallet: string, fromBlock: number, toBlock: number, m
 function provAnalyze(receipt: ProvTxReceipt, walletLc: string): ProvReceiptSignals {
   let hasSwap = false;
   let hasClaim = false;
+  let claimFrom: string | null = null;
   const inbound: ProvInboundLeg[] = [];
   for (const log of receipt.logs ?? []) {
     const topic0 = (log.topics?.[0] ?? '').toLowerCase();
+    const addr = log.address?.toLowerCase() ?? '';
     if (PROV_SWAP_TOPICS.has(topic0)) hasSwap = true;
-    if (PROV_CLAIM_TOPICS.has(topic0)) hasClaim = true;
+    if (PROV_CLAIM_TOPICS.has(topic0)) {
+      hasClaim = true;
+      // Remember WHICH contract emitted it, so an APY claim and a vesting
+      // unlock don't collapse into the same bucket.
+      if (!claimFrom && PROV_CLAIM_CONTRACTS[addr]) claimFrom = addr;
+    }
     if (log.address?.toLowerCase() === PROV_LINGO_TOKEN && topic0 === PROV_TRANSFER_TOPIC && log.topics.length >= 3) {
       const to = '0x' + log.topics[2].slice(26).toLowerCase();
       if (to === walletLc) {
@@ -561,7 +572,7 @@ function provAnalyze(receipt: ProvTxReceipt, walletLc: string): ProvReceiptSigna
       }
     }
   }
-  return { hasSwap, hasClaim, inbound };
+  return { hasSwap, hasClaim, claimFrom, inbound };
 }
 
 function provToLingo(weiValue: bigint): number {
@@ -599,14 +610,17 @@ async function provClassifySender(
   if (from === STAKING_CONTRACT) return { source: 'restaked', detail: 'From the staking contract' };
   if (PROV_DEX_POOLS[from]) return { source: 'bought', detail: `Bought from ${PROV_DEX_POOLS[from]}` };
   if (PROV_REWARD_WALLETS.has(from)) return { source: 'reward', detail: 'From a reward wallet' };
-  if (PROV_CLAIM_CONTRACTS[from]) return { source: 'claimed', detail: PROV_CLAIM_CONTRACTS[from] };
+  if (PROV_CLAIM_CONTRACTS[from]) return { source: PROV_CLAIM_CONTRACTS[from].source, detail: PROV_CLAIM_CONTRACTS[from].label };
   if (PROV_KNOWN_WALLETS[from]) return { source: 'internal', detail: `From ${PROV_KNOWN_WALLETS[from]}` };
   if ((await provGetCode(from)) !== '0x') {
     const r = await provGetReceipt(hash);
     if (r) {
       const sig = provAnalyze(r, walletLc);
       if (sig.hasSwap) return { source: 'bought', detail: 'Received from a DEX/pool' };
-      if (sig.hasClaim) return { source: 'claimed', detail: 'Claim event just before staking' };
+      if (sig.hasClaim) {
+        const cc = sig.claimFrom ? PROV_CLAIM_CONTRACTS[sig.claimFrom] : null;
+        return { source: cc?.source ?? 'claimed', detail: cc ? `${cc.label} just before staking` : 'Claim event just before staking' };
+      }
     }
     return { source: 'claimed', detail: `From contract ${from.slice(0, 10)}… (unrecognized event)` };
   }
@@ -625,7 +639,10 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
     if (stakeReceipt) {
       const a = provAnalyze(stakeReceipt, walletLc);
       if (a.hasSwap) return provMk('bought', 'high', 'Swap in the stake tx');
-      if (a.hasClaim) return provMk('claimed', 'high', 'Claim event in the stake tx');
+      if (a.hasClaim) {
+        const cc = a.claimFrom ? PROV_CLAIM_CONTRACTS[a.claimFrom] : null;
+        return provMk(cc?.source ?? 'claimed', 'high', cc ? `${cc.label} in the stake tx` : 'Claim event in the stake tx');
+      }
       const principal = a.inbound.slice().sort((x, y) => (y.value > x.value ? 1 : y.value < x.value ? -1 : 0))[0];
       if (principal && provToLingo(principal.value) >= input.amount * 0.5) {
         const c = await provClassifySender(principal.from, input.stakeTxHash, input.stakeBlock, walletLc);
