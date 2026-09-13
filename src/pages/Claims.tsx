@@ -18,6 +18,7 @@ import { ClaimsSummaryChart } from '../components/charts/ClaimsSummaryChart';
 import { DecubateWeeklyClaimsChart } from '../components/charts/DecubateWeeklyClaimsChart';
 import { VestingClaimsChart } from '../components/charts/VestingClaimsChart';
 import { VestingLargeClaimsTable } from '../components/charts/VestingLargeClaimsTable';
+import { ApyWalletFlowCard } from '../components/charts/ApyWalletFlowCard';
 import { CombinedClaimsChart } from '../components/charts/CombinedClaimsChart';
 import { DecubateClaimFeedTable } from '../components/cards/DecubateClaimFeedTable';
 import { ClaimsByTypeTable } from '../components/cards/ClaimsByTypeTable';
@@ -348,6 +349,9 @@ export function Claims() {
 
         {/* Recent large vesting claims — selectable timeframe + threshold */}
         <VestingLargeClaimsTable />
+
+        {/* APY claim wallet — treasury top-ups in vs APY claims paid out, per month */}
+        <ApyWalletFlowCard />
 
         {/* Charts — full width, one per row */}
         <ClaimsSummaryChart
