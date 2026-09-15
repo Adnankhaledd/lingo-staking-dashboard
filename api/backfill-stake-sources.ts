@@ -177,6 +177,8 @@ interface StakeRow {
   lockDuration: string;
   txHash: string;
   blockNumber: number;
+  /** Unix seconds of the stake's block, null if the log carried no timestamp. */
+  timestamp: number | null;
 }
 
 /** USD value of a stake at the time it happened (not at report time). */
@@ -197,6 +199,7 @@ function mkRow(log: RawLog, usdAt: (log: RawLog) => number | null): StakeRow {
     lockDuration: durationToLabel(BigInt('0x' + log.data.slice(66))),
     txHash: log.transactionHash,
     blockNumber: parseInt(log.blockNumber, 16),
+    timestamp: log.blockTimestamp ? parseInt(log.blockTimestamp, 16) || null : null,
   };
 }
 
