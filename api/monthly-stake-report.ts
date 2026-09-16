@@ -2,7 +2,9 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 /**
  * /api/monthly-stake-report — posts a Slack-only digest of the PREVIOUS calendar
- * month's stakes (≥10k LINGO) broken down by source (bought / claimed / etc.).
+ * month's stakes (≥ $10, valued at each stake's own daily price — the REPORTING
+ * floor from api/backfill-stake-sources.ts, deliberately below the $100 floor the
+ * Discord/Slack alerts ping at) broken down by source (bought / claimed / etc.).
  *
  * Runs via Vercel cron on the 1st of each month (see vercel.json). Reuses the
  * classifier in /api/backfill-stake-sources by calling it internally and paging
@@ -22,6 +24,10 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const CRON_SECRET = process.env.CRON_SECRET || '';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+// Mirrors MIN_USD in api/backfill-stake-sources.ts — only used for copy when a
+// page didn't report its own pricingBasis.
+const MIN_USD_REPORT = 10;
 
 const SOURCE_ORDER = [
   'bought', 'bought_cex', 'transferred_bought_upstream', 'bridged',
@@ -194,7 +200,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const blocks = [
       { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — ${monthLabel}`, emoji: true } },
-      { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${pricingBasis || '$10'}, by where the staked LINGO came from _(USD valued at each stake's own date)_:` } },
+      { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${pricingBasis || `$${MIN_USD_REPORT}`}, by where the staked LINGO came from _(USD valued at each stake's own date)_:` } },
       { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || '_No qualifying stakes last month_' } },
       { type: 'context', elements: [{ type: 'mrkdwn', text: `Total: *${totalCount}* stakes · ${Math.round(totalLingo).toLocaleString()} LINGO${totalUsd > 0 ? ` · ${fmtUsd(totalUsd)}` : ''}${partial ? ' · ⚠️ partial — some pages failed or range too large' : ''}` }] },
     ];

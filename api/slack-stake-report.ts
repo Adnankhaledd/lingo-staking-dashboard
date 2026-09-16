@@ -378,12 +378,22 @@ function buildBlocks(rep: ReportResult, userId?: string): unknown[] {
       return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO${usd}`;
     });
 
+  // Paging runs newest-first, so a scan cut short always drops the OLDER end.
+  // Printing the requested range would imply coverage we don't have, and the
+  // percentages beside it would silently describe only the recent tail.
+  const coveredFrom = rep.partial ? rep.coveredFromBlock : rep.range.fromBlock;
+  const coveredFromTs = rep.period.fromTs
+    + ((coveredFrom - rep.range.fromBlock) / Math.max(1, rep.range.toBlock - rep.range.fromBlock))
+      * (rep.period.toTs - rep.period.fromTs);
   const contextBits = [
     `Total: *${rep.totalCount}* stakes · ${Math.round(rep.totalLingo).toLocaleString()} LINGO${rep.totalUsd > 0 ? ` · ${fmtUsd(rep.totalUsd)}` : ''}`,
-    `blocks ${rep.range.fromBlock.toLocaleString()}–${rep.range.toBlock.toLocaleString()}`,
+    `blocks ${coveredFrom.toLocaleString()}–${rep.range.toBlock.toLocaleString()}`,
   ];
   if (userId) contextBits.push(`requested by <@${userId}>`);
-  if (rep.partial) contextBits.push('⚠️ partial — range too large, narrow the period');
+  if (rep.partial) {
+    const reached = new Date(coveredFromTs * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    contextBits.push(`⚠️ partial — nothing before ${reached} was scanned; narrow the period for full coverage`);
+  }
 
   return [
     { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — ${rep.period.label}`, emoji: true } },
