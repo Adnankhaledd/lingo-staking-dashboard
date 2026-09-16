@@ -589,10 +589,10 @@ const PROV_CEX_WALLETS: Record<string, string> = {
   '0xb7333d779c6ecdfc4507a53706b0e173bd086a18': 'Crypto.com',
 };
 // Reward-distribution hot wallet(s) — transfers from here are reward payouts.
-const PROV_REWARD_WALLETS = new Set([
-  '0xffc781ddfa8d1358ce8c7dda7ced1e56e922aea6', // current reward wallet
-  '0x64967c0dd5605dd3efc6a9bb148b2687a532c15f', // previous reward wallet (still used)
-]);
+const PROV_REWARD_WALLETS: Record<string, string> = {
+  '0xffc781ddfa8d1358ce8c7dda7ced1e56e922aea6': 'Current reward wallet',
+  '0x64967c0dd5605dd3efc6a9bb148b2687a532c15f': 'Previous reward wallet',
+};
 // Claim/distribution contracts (verified on-chain). LINGO arriving from one of
 // these is a claim, not a buy. Each maps to its OWN source so the reports can
 // tell an APY claim apart from a vesting unlock instead of lumping both under
@@ -623,6 +623,8 @@ interface Provenance {
   emoji: string;
   detail: string;
   confidence: 'high' | 'medium' | 'low';
+  /** Which specific wallet/venue inside the source — "Treasury", "KuCoin", … */
+  sub?: string;
   /** Full funding breakdown when the stake was funded from several sources. */
   mix?: ProvMixPart[];
 }
@@ -643,8 +645,8 @@ const PROV_LABELS: Record<ProvenanceSource, { label: string; emoji: string }> = 
   unknown:                     { label: 'Source unknown',                emoji: '❔' },
 };
 
-function provMk(source: ProvenanceSource, confidence: Provenance['confidence'], detail = ''): Provenance {
-  return { source, ...PROV_LABELS[source], detail, confidence };
+function provMk(source: ProvenanceSource, confidence: Provenance['confidence'], detail = '', sub?: string): Provenance {
+  return { source, ...PROV_LABELS[source], detail, confidence, ...(sub ? { sub } : {}) };
 }
 
 interface ProvReceiptLog { address: string; topics: string[]; data: string }
@@ -761,17 +763,17 @@ async function provClassifySender(
   hash: string,
   blockNum: number,
   walletLc: string,
-): Promise<{ source: ProvenanceSource; detail: string }> {
+): Promise<{ source: ProvenanceSource; detail: string; sub?: string }> {
   if (from === STAKING_CONTRACT) return { source: 'restaked', detail: 'From the staking contract' };
   // A mint (from 0x0) is the vesting contract paying a claimer directly.
-  if (from === PROV_ZERO_ADDRESS) return { source: 'claimed_vesting', detail: 'Minted by a vesting claim' };
-  if (PROV_DEX_POOLS[from]) return { source: 'bought', detail: `Bought from ${PROV_DEX_POOLS[from]}` };
-  if (PROV_ROUTERS[from]) return { source: 'bought', detail: `Swapped via ${PROV_ROUTERS[from]}` };
-  if (PROV_CEX_WALLETS[from]) return { source: 'bought_cex', detail: `Withdrawn from ${PROV_CEX_WALLETS[from]}` };
-  if (PROV_BRIDGES[from]) return { source: 'bridged', detail: `Bridged in via ${PROV_BRIDGES[from]}` };
-  if (PROV_REWARD_WALLETS.has(from)) return { source: 'reward', detail: 'From a reward wallet' };
-  if (PROV_CLAIM_CONTRACTS[from]) return { source: PROV_CLAIM_CONTRACTS[from].source, detail: PROV_CLAIM_CONTRACTS[from].label };
-  if (PROV_KNOWN_WALLETS[from]) return { source: 'internal', detail: `From ${PROV_KNOWN_WALLETS[from]}` };
+  if (from === PROV_ZERO_ADDRESS) return { source: 'claimed_vesting', detail: 'Minted by a vesting claim', sub: 'Vesting mint' };
+  if (PROV_DEX_POOLS[from]) return { source: 'bought', detail: `Bought from ${PROV_DEX_POOLS[from]}`, sub: PROV_DEX_POOLS[from] };
+  if (PROV_ROUTERS[from]) return { source: 'bought', detail: `Swapped via ${PROV_ROUTERS[from]}`, sub: PROV_ROUTERS[from] };
+  if (PROV_CEX_WALLETS[from]) return { source: 'bought_cex', detail: `Withdrawn from ${PROV_CEX_WALLETS[from]}`, sub: PROV_CEX_WALLETS[from] };
+  if (PROV_BRIDGES[from]) return { source: 'bridged', detail: `Bridged in via ${PROV_BRIDGES[from]}`, sub: PROV_BRIDGES[from] };
+  if (PROV_REWARD_WALLETS[from]) return { source: 'reward', detail: `From the ${PROV_REWARD_WALLETS[from].toLowerCase()}`, sub: PROV_REWARD_WALLETS[from] };
+  if (PROV_CLAIM_CONTRACTS[from]) return { source: PROV_CLAIM_CONTRACTS[from].source, detail: PROV_CLAIM_CONTRACTS[from].label, sub: PROV_CLAIM_CONTRACTS[from].label };
+  if (PROV_KNOWN_WALLETS[from]) return { source: 'internal', detail: `From ${PROV_KNOWN_WALLETS[from]}`, sub: PROV_KNOWN_WALLETS[from] };
 
   const code = await provGetCode(from);
   if (code !== '0x' && !provIsDelegatedEoa(code)) {
@@ -807,12 +809,12 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
       if (a.hasSwap) return provMk('bought', 'high', 'Swap in the stake tx');
       if (a.hasClaim) {
         const cc = a.claimFrom ? PROV_CLAIM_CONTRACTS[a.claimFrom] : null;
-        return provMk(cc?.source ?? 'claimed', 'high', cc ? `${cc.label} in the stake tx` : 'Claim event in the stake tx');
+        return provMk(cc?.source ?? 'claimed', 'high', cc ? `${cc.label} in the stake tx` : 'Claim event in the stake tx', cc?.label);
       }
       const principal = a.inbound.slice().sort((x, y) => (y.value > x.value ? 1 : y.value < x.value ? -1 : 0))[0];
       if (principal && provToLingo(principal.value) >= input.amount * 0.5) {
         const c = await provClassifySender(principal.from, input.stakeTxHash, input.stakeBlock, walletLc);
-        return provMk(c.source, a.inbound.length > 1 ? 'medium' : 'high', c.detail);
+        return provMk(c.source, a.inbound.length > 1 ? 'medium' : 'high', c.detail, c.sub);
       }
     }
 
@@ -839,12 +841,12 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
     const senders = [...bySender.entries()].sort((a, b) => b[1].lingo - a[1].lingo);
     const examined = senders.slice(0, PROV_MAX_SENDERS);
 
-    const bySource = new Map<ProvenanceSource, { lingo: number; detail: string }>();
+    const bySource = new Map<ProvenanceSource, { lingo: number; detail: string; sub?: string }>();
     for (const [from, info] of examined) {
       const c = await provClassifySender(from, info.hash, info.blockNum, walletLc);
       const b = bySource.get(c.source);
       if (b) b.lingo += info.lingo;
-      else bySource.set(c.source, { lingo: info.lingo, detail: c.detail });
+      else bySource.set(c.source, { lingo: info.lingo, detail: c.detail, sub: c.sub });
     }
     if (bySource.size === 0) return provMk('unknown', 'low', 'No attributable inbound transfers');
 
@@ -870,7 +872,7 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
     const skipped = senders.length - examined.length;
     if (skipped > 0) detail += ` (+${skipped} smaller sender${skipped === 1 ? '' : 's'} not classified)`;
 
-    return { ...provMk(topSource, confidence, detail), mix };
+    return { ...provMk(topSource, confidence, detail, topInfo.sub), mix };
   } catch {
     return provMk('unknown', 'low', 'Classification error');
   }

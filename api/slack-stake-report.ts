@@ -83,6 +83,18 @@ function fmtUsd(v: number): string {
   return `$${Math.round(v)}`;
 }
 
+
+type SubTotals = Record<string, Record<string, { count: number; lingo: number; usd: number }>>;
+
+/** "↳ Treasury 7 · Team Buybacks 3" — names the wallet/venue behind a source. */
+function subLine(subs: SubTotals, src: string): string {
+  const entries = Object.entries(subs[src] ?? {}).sort((a, b) => b[1].count - a[1].count);
+  if (!entries.length) return '';
+  const shown = entries.slice(0, 4).map(([name, v]) => `${name} ${v.count}`);
+  if (entries.length > 4) shown.push(`+${entries.length - 4} more`);
+  return `\n        ↳ _${shown.join(' · ')}_`;
+}
+
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   bought_cex: '🏦 Bought on exchange',
@@ -282,6 +294,7 @@ interface BackfillRow {
 
 interface BackfillPage {
   rows?: BackfillRow[];
+  subs?: SubTotals;
   summary?: Record<string, { count: number; lingo: number; usd?: number }>;
   pricingBasis?: string;
   hasMore?: boolean;
@@ -296,6 +309,7 @@ interface ReportResult {
   totalLingo: number;
   totalUsd: number;
   pricingBasis: string;
+  subs: SubTotals;
   pages: number;
   partial: boolean;
   rows: BackfillRow[];
@@ -320,6 +334,7 @@ async function fetchReport(period: Period): Promise<ReportResult> {
   let totalUsd = 0;
   let pricingBasis = '';
   const rows: BackfillRow[] = [];
+  const subs: SubTotals = {};
   let more = true;
   let partial = false;
   const startMs = Date.now();
@@ -347,6 +362,14 @@ async function fetchReport(period: Period): Promise<ReportResult> {
     try { page = (await r.json()) as BackfillPage; } catch { partial = true; break; }
     if (page.pricingBasis) pricingBasis = page.pricingBasis;
     if (Array.isArray(page.rows)) rows.push(...page.rows);
+    for (const [src, bucket] of Object.entries(page.subs ?? {})) {
+      const target = subs[src] ?? (subs[src] = {});
+      for (const [name, v] of Object.entries(bucket)) {
+        const t = target[name] ?? { count: 0, lingo: 0, usd: 0 };
+        t.count += v.count; t.lingo += v.lingo; t.usd += v.usd;
+        target[name] = t;
+      }
+    }
     for (const [src, v] of Object.entries(page.summary ?? {})) {
       const t = totals[src] ?? { count: 0, lingo: 0, usd: 0 };
       t.count += v.count;
@@ -363,7 +386,7 @@ async function fetchReport(period: Period): Promise<ReportResult> {
   if (more) partial = true; // ran out of pages/time with blocks left unscanned
 
   return {
-    period, range, totals, totalCount, totalLingo, totalUsd, pricingBasis, pages, partial, rows,
+    period, range, totals, totalCount, totalLingo, totalUsd, pricingBasis, subs, pages, partial, rows,
     coveredFromBlock: more ? cursor + 1 : range.fromBlock,
   };
 }
@@ -375,7 +398,7 @@ function buildBlocks(rep: ReportResult, userId?: string): unknown[] {
     .map(src => {
       const v = rep.totals[src];
       const usd = v.usd > 0 ? ` · ${fmtUsd(v.usd)}` : '';
-      return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO${usd}`;
+      return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO${usd}${subLine(rep.subs, src)}`;
     });
 
   // Paging runs newest-first, so a scan cut short always drops the OLDER end.

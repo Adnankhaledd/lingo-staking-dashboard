@@ -42,6 +42,18 @@ function fmtUsd(v: number): string {
   return `$${Math.round(v)}`;
 }
 
+
+type SubTotals = Record<string, Record<string, { count: number; lingo: number; usd: number }>>;
+
+/** "↳ Treasury 7 · Team Buybacks 3" — names the wallet/venue behind a source. */
+function subLine(subs: SubTotals, src: string): string {
+  const entries = Object.entries(subs[src] ?? {}).sort((a, b) => b[1].count - a[1].count);
+  if (!entries.length) return '';
+  const shown = entries.slice(0, 4).map(([name, v]) => `${name} ${v.count}`);
+  if (entries.length > 4) shown.push(`+${entries.length - 4} more`);
+  return `\n        ↳ _${shown.join(' · ')}_`;
+}
+
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   bought_cex: '🏦 Bought on exchange',
@@ -88,6 +100,7 @@ async function blockRangeForMonth(prevStartSec: number, thisStartSec: number): P
 
 interface BackfillPage {
   summary?: Record<string, { count: number; lingo: number; usd?: number }>;
+  subs?: SubTotals;
   pricingBasis?: string;
   hasMore?: boolean;
   nextBeforeBlock?: number | null;
@@ -139,6 +152,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (CRON_SECRET) headers['Authorization'] = `Bearer ${CRON_SECRET}`;
 
     const totals: Record<string, { count: number; lingo: number; usd: number }> = {};
+    const subs: SubTotals = {};
     let totalUsd = 0;
     let pricingBasis = '';
     let cursor = range.toBlock;
@@ -177,6 +191,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         break;
       }
       if (page.pricingBasis) pricingBasis = page.pricingBasis;
+      for (const [src, bucket] of Object.entries(page.subs ?? {})) {
+        const target = subs[src] ?? (subs[src] = {});
+        for (const [name, v] of Object.entries(bucket)) {
+          const t = target[name] ?? { count: 0, lingo: 0, usd: 0 };
+          t.count += v.count; t.lingo += v.lingo; t.usd += v.usd;
+          target[name] = t;
+        }
+      }
       for (const [src, v] of Object.entries(page.summary ?? {})) {
         const t = totals[src] ?? { count: 0, lingo: 0, usd: 0 };
         t.count += v.count; t.lingo += v.lingo; t.usd += v.usd ?? 0;
@@ -195,7 +217,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .map(src => {
         const v = totals[src];
         const usd = v.usd > 0 ? ` · ${fmtUsd(v.usd)}` : '';
-        return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO${usd}`;
+        return `${SOURCE_LABELS[src] ?? src}: *${v.count}* (${Math.round((v.count / denom) * 100)}%) · ${Math.round(v.lingo).toLocaleString()} LINGO${usd}${subLine(subs, src)}`;
       });
 
     const blocks = [
