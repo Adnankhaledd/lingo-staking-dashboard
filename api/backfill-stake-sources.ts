@@ -31,12 +31,19 @@ const STAKING_CONTRACT = (process.env.STAKING_CONTRACT_ADDRESS || '').toLowerCas
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 
-// USD-denominated floor — must mirror api/discord-alerts.ts so the backfill
-// classifies exactly the stakes the alerts fire on. (api/ can't share modules.)
-const MIN_USD = 100;
-const FALLBACK_MIN_LINGO = 10_000;
-const MIN_LINGO_FLOOR = 1_000;
-const MIN_LINGO_CEIL = 1_000_000;
+// USD-denominated floor for REPORTING, deliberately lower than the $100 alert
+// floor in api/discord-alerts.ts. A floor is noise control for a ping, but on a
+// report it biases the answer: every "% bought on DEX" would silently mean
+// "% among stakes over $100", and small stakes are exactly where retail buying
+// shows up. Alerts stay at $100; analysis sees down to $10.
+const MIN_USD = 10;
+const FALLBACK_MIN_LINGO = 1_000;
+// Clamps bound the blast radius of a bad price quote — at a sane ~$0.0137 the
+// floor is ~730 LINGO, so 100..100k pins the effective bar to roughly
+// $1.4..$1.4k instead of 0..infinity. They must stay BELOW the LINGO value of
+// MIN_USD, or they would silently override it.
+const MIN_LINGO_FLOOR = 100;
+const MIN_LINGO_CEIL = 100_000;
 const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
 const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/by-address`;
 const HIST_PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/historical`;
@@ -818,7 +825,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? await getHistoricalPrices(new Date(startTs * 1000).toISOString(), new Date(endTs * 1000).toISOString())
       : [];
     const priceAt = makePriceLookup(pricePoints);
-    // Say which basis was actually used — never imply a $100 bar we didn't apply.
+    // Say which basis was actually used — never imply a bar we didn't apply.
     const pricingBasis = priceAt
       ? `$${MIN_USD} (each stake at its own daily price)`
       : livePrice != null

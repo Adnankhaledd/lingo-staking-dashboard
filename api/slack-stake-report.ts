@@ -47,12 +47,15 @@ const SLACK_VERIFICATION_TOKEN = process.env.SLACK_VERIFICATION_TOKEN || '';
 const SELF_BASE = process.env.SELF_BASE_URL || 'https://lingo-staking-dashboard.vercel.app';
 
 const MAX_DAYS = 190; // hard cap on requested range — bounds compute
+// Mirrors MIN_USD in api/backfill-stake-sources.ts (the reporting floor, lower
+// than the $100 alert floor). Only used for copy when a page didn't say.
+const MIN_USD_REPORT = 10;
 const BUDGET_MS = 45_000; // paging budget — leaves headroom to post before maxDuration
 
 const USAGE = [
   '*Usage:* `/stake-report [period]`',
   'Examples: `last 2 days` · `48h` · `3 weeks` · `may` · `2026-05` · `2026-05-15` · `yesterday` · `today`',
-  `Default period: last 7 days (max ${MAX_DAYS} days). Counts stakes worth ≥$100 at the time.`,
+  `Default period: last 7 days (max ${MAX_DAYS} days). Counts stakes worth ≥$${MIN_USD_REPORT} at the time (alerts still ping at $100).`,
   'For a per-day breakdown of one type, see `/stake-breakdown help`.',
 ].join('\n');
 
@@ -384,7 +387,7 @@ function buildBlocks(rep: ReportResult, userId?: string): unknown[] {
 
   return [
     { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — ${rep.period.label}`, emoji: true } },
-    { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${rep.pricingBasis || '$100'}, by where the staked LINGO came from _(USD valued at each stake's own date)_:` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${rep.pricingBasis || `$${MIN_USD_REPORT}`}, by where the staked LINGO came from _(USD valued at each stake's own date)_:` } },
     { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || `_No qualifying stakes in ${rep.period.label}_` } },
     { type: 'context', elements: [{ type: 'mrkdwn', text: contextBits.join(' · ') }] },
   ];
@@ -685,7 +688,7 @@ function buildBreakdownBlocks(r: BreakdownResult, userId?: string): unknown[] {
 
   return [
     { type: 'header', text: { type: 'plain_text', text: `📊 ${spec.typeLabel} — ${spec.gran === 'day' ? 'daily' : 'weekly'} breakdown`, emoji: true } },
-    { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${rep.pricingBasis || '$100'} · *${spec.period.label}* · UTC ${unitWord}s _(USD at each stake's own date)_` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${rep.pricingBasis || `$${MIN_USD_REPORT}`} · *${spec.period.label}* · UTC ${unitWord}s _(USD at each stake's own date)_` } },
     ...sections,
     { type: 'context', elements: [{ type: 'mrkdwn', text: summary.join(' · ') }] },
     ...(notes.length ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: notes.join(' · ') }] }] : []),

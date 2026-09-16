@@ -194,7 +194,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const blocks = [
       { type: 'header', text: { type: 'plain_text', text: `📊 Stake Sources — ${monthLabel}`, emoji: true } },
-      { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${pricingBasis || '$100'}, by where the staked LINGO came from _(USD valued at each stake's own date)_:` } },
+      { type: 'section', text: { type: 'mrkdwn', text: `Stakes ≥ ${pricingBasis || '$10'}, by where the staked LINGO came from _(USD valued at each stake's own date)_:` } },
       { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') || '_No qualifying stakes last month_' } },
       { type: 'context', elements: [{ type: 'mrkdwn', text: `Total: *${totalCount}* stakes · ${Math.round(totalLingo).toLocaleString()} LINGO${totalUsd > 0 ? ` · ${fmtUsd(totalUsd)}` : ''}${partial ? ' · ⚠️ partial — some pages failed or range too large' : ''}` }] },
     ];
