@@ -39,6 +39,9 @@ const MIN_LINGO_CEIL = 1_000_000;
 // A cached price older than this is worse than no price at all — LINGO moved
 // 33% in a week recently, so a stale quote silently misplaces the bar.
 const MAX_PRICE_AGE_MS = 24 * 60 * 60 * 1000;
+// How often we bother asking for a fresh price. The cron runs every 2 minutes,
+// but LINGO cannot move enough in 15 to change which stakes clear a $100 bar.
+const PRICE_REFRESH_MS = 15 * 60 * 1000;
 const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
 const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/by-address`;
 const BLOB_KEY = 'discord-last-block.json';
@@ -199,7 +202,7 @@ async function saveDiscordState(state: DiscordState): Promise<void> {
 
 // getStakes(address) selector = 0x7ba6f458
 // Returns Position[] where Position = { uint256 amount, uint256 unlockBlock }
-async function getTotalStaked(wallet: string): Promise<number> {
+async function getTotalStaked(wallet: string): Promise<{ total: number; positions: number }> {
   try {
     // Pad wallet address to 32 bytes
     const paddedAddr = wallet.toLowerCase().replace('0x', '').padStart(64, '0');
@@ -212,11 +215,11 @@ async function getTotalStaked(wallet: string): Promise<number> {
       }),
     });
     const data = await res.json();
-    if (!data.result || data.result === '0x') return 0;
+    if (!data.result || data.result === '0x') return { total: 0, positions: 0 };
 
     const hex = data.result.slice(2); // remove 0x
     // ABI decode: offset (32 bytes) + length (32 bytes) + Position[] entries (each 64 bytes = amount + unlockBlock)
-    if (hex.length < 128) return 0;
+    if (hex.length < 128) return { total: 0, positions: 0 };
     const count = parseInt(hex.slice(64, 128), 16);
     let total = BigInt(0);
     for (let i = 0; i < count; i++) {
@@ -225,9 +228,9 @@ async function getTotalStaked(wallet: string): Promise<number> {
       const amount = BigInt('0x' + hex.slice(offset, offset + 64));
       total += amount;
     }
-    return Number(total / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100;
+    return { total: Number(total / BigInt(10 ** (LINGO_DECIMALS - 2))) / 100, positions: count };
   } catch {
-    return 0;
+    return { total: 0, positions: 0 };
   }
 }
 
@@ -264,9 +267,15 @@ async function classifyStaker(
   wallet: string,
   blockNumber: number,
   knownSet: Set<string>,
+  openPositions = 0,
 ): Promise<'new' | 'returning'> {
   const w = wallet.toLowerCase();
   if (knownSet.has(w)) return 'returning';
+  // The stake we're about to post is itself one open position, so more than
+  // one means they already had LINGO staked — no need for the full-history
+  // log scan below. (One position still needs it: they may have staked and
+  // fully exited before, which only the logs can tell us.)
+  if (openPositions > 1) return 'returning';
   try {
     const hasPrior = await hasStakedBefore(w, blockNumber);
     return hasPrior ? 'returning' : 'new';
@@ -893,16 +902,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const [state, latestBlock, livePrice] = await Promise.all([
+    const [state, latestBlock] = await Promise.all([
       getDiscordState(),
       getLatestBlock(),
-      getLingoPriceUsd(),
     ]);
 
-    // Prefer the live price; fall back to the last good one so a transient
-    // Prices-API blip doesn't move the bar — but only while it's fresh, since
-    // a stale quote silently misplaces the threshold. thresholdFor handles null.
+    // Refresh the price only once it has aged out, instead of on every run.
     const cacheAge = state.lastPriceAt != null ? Date.now() - state.lastPriceAt : Infinity;
+    const livePrice = cacheAge > PRICE_REFRESH_MS ? await getLingoPriceUsd() : null;
+    // Fall back to the last good price so a transient Prices-API blip doesn't
+    // move the bar — but only while it's fresh, since a stale quote silently
+    // misplaces the threshold. thresholdFor handles null.
     const cachedPrice = cacheAge < MAX_PRICE_AGE_MS ? state.lastPriceUsd : null;
     const priceUsd = livePrice ?? cachedPrice;
     const minAmount = thresholdFor(priceUsd);
@@ -971,9 +981,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Fetch total staked, classify the wallet, and (only if Slack is on)
       // classify token provenance — all in parallel. Provenance is best-effort:
       // classifyProvenance never throws, so it can't break the Discord post.
-      const [totalStaked, stakerType, provenance] = await Promise.all([
-        getTotalStaked(wallet),
-        classifyStaker(wallet, event.blockNumber, knownSet),
+      const { total: totalStaked, positions } = await getTotalStaked(wallet);
+      const [stakerType, provenance] = await Promise.all([
+        classifyStaker(wallet, event.blockNumber, knownSet, positions),
         SLACK_WEBHOOK_URL
           ? classifyProvenance({ wallet, stakeTxHash: event.txHash, stakeBlock: event.blockNumber, amount: event.amount })
           : Promise.resolve(null),

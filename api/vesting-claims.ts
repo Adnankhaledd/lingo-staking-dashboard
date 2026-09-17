@@ -16,8 +16,18 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
  * timestamps across the range (fixed 2s/block drifts too much over months).
  *
  * Params: ?bucket=week|month (default week), ?address=, ?topic=, ?fromBlock=.
- * Cached 15 min.
+ *
+ * Rescanning all history cost up to 220 eth_getLogs per CDN cache miss — by
+ * far the heaviest endpoint here. The per-bucket totals are now kept in Vercel
+ * Blob with the last block scanned, so a run only reads blocks added since
+ * then: typically ONE eth_getLogs. Only the default contract/topic/range is
+ * cached; an overridden ?address=/?topic=/?fromBlock= still scans fresh.
+ *
+ * The stored cursor stops REORG_MARGIN blocks behind the head, so the tip is
+ * rescanned next time rather than being frozen into the cache by a reorg.
  */
+
+import { put, list } from '@vercel/blob';
 
 export const config = { maxDuration: 60 };
 
@@ -28,6 +38,39 @@ const DEFAULT_TOPIC = '0xc7798891864187665ac6dd119286e44ec13f014527aeeb2b8eb3fd4
 const DEFAULT_FROM_BLOCK = 20_000_000; // no activity before this
 const MAX_REQUESTS = 220;
 const LOG_PAGE_LIMIT = 9500;
+const CACHE_KEY = 'vesting-claims-cache.json';
+const REORG_MARGIN = 100; // ~3 min on Base — never cache the very tip
+
+/** period -> [wei as a decimal string, claim count] */
+type CacheBuckets = Record<string, [string, number]>;
+interface ClaimsCache {
+  address: string;
+  topic: string;
+  fromBlock: number;
+  asOfBlock: number;
+  weekly: CacheBuckets;
+  monthly: CacheBuckets;
+  updatedAt: string;
+}
+
+// Inline blob read — direct URL fetch with a list() fallback.
+async function fetchBlobJson<T>(pathname: string): Promise<T | null> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN || '';
+  const match = token.match(/^vercel_blob_rw_([^_]+)_/);
+  if (match) {
+    try {
+      const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${pathname}?t=${Date.now()}`);
+      if (res.ok) return (await res.json()) as T;
+    } catch { /* fall through */ }
+  }
+  try {
+    const { blobs } = await list({ prefix: pathname });
+    if (blobs.length === 0) return null;
+    const res = await fetch(`${blobs[blobs.length - 1].url}?t=${Date.now()}`);
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch { return null; }
+}
 
 interface RawLog { data: string; blockNumber: string; blockTimestamp?: string; transactionHash?: string }
 
@@ -132,21 +175,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const headRes = await rpc<string>('eth_blockNumber', []);
     if (!headRes.ok) return res.status(200).json({ error: `head: ${headRes.error}` });
     const head = parseInt(headRes.result, 16);
-    const headBlk = await rpc<{ timestamp: string }>('eth_getBlockByNumber', [headRes.result, false]);
-    const headTs = headBlk.ok ? parseInt(headBlk.result.timestamp, 16) : Math.floor(Date.now() / 1000);
+    const safeHead = Math.max(fromBlock, head - REORG_MARGIN);
 
-    const logs = await getAllLogs(address, topic, fromBlock, head, budget);
-    if (!logs) return res.status(200).json({ error: 'Request budget exhausted — pass ?fromBlock= to narrow' });
+    // Only the default contract/topic/range shares the cache.
+    const cacheable = address === DEFAULT_ADDRESS && topic === DEFAULT_TOPIC && fromBlock === DEFAULT_FROM_BLOCK;
+    const cached = cacheable ? await fetchBlobJson<ClaimsCache>(CACHE_KEY) : null;
+    const usable = !!cached
+      && cached.address === address && cached.topic === topic && cached.fromBlock === fromBlock
+      && typeof cached.asOfBlock === 'number' && cached.asOfBlock >= fromBlock - 1 && cached.asOfBlock <= head;
 
-    if (logs.length === 0) {
-      return res.status(200).json({ address, bucket, asOfBlock: head, totalClaims: 0, totalLingoClaimed: 0, buckets: [] });
+    const weekly = new Map<string, [bigint, number]>();
+    const monthly = new Map<string, [bigint, number]>();
+    if (usable && cached) {
+      for (const [k, v] of Object.entries(cached.weekly ?? {})) weekly.set(k, [BigInt(v[0]), v[1]]);
+      for (const [k, v] of Object.entries(cached.monthly ?? {})) monthly.set(k, [BigInt(v[0]), v[1]]);
     }
 
-    // Alchemy returns a real blockTimestamp on each log; use it for exact
-    // bucketing. Fall back to interpolation only if any log lacks it.
+    const scanFrom = usable && cached ? cached.asOfBlock + 1 : fromBlock;
+    const didScan = scanFrom <= safeHead;
+    let logs: RawLog[] = [];
+    if (didScan) {
+      const got = await getAllLogs(address, topic, scanFrom, safeHead, budget);
+      if (!got) return res.status(200).json({ error: 'Request budget exhausted — pass ?fromBlock= to narrow' });
+      logs = got;
+    }
+
+    // Only pay for a head-block timestamp when some log lacks its own.
     const needsInterp = logs.some(l => !l.blockTimestamp);
     let blockToTs: (b: number) => number = () => 0;
     if (needsInterp) {
+      const headBlk = await rpc<{ timestamp: string }>('eth_getBlockByNumber', [headRes.result, false]);
+      const headTs = headBlk.ok ? parseInt(headBlk.result.timestamp, 16) : Math.floor(Date.now() / 1000);
       // NOTE: spread (Math.min(...arr)) overflows the call stack at ~100k+ logs.
       let minBlock = Infinity, maxBlock = -Infinity;
       for (const l of logs) {
@@ -157,32 +216,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       blockToTs = await buildBlockToTs(minBlock, maxBlock, head, headTs);
     }
 
-    const weiByBucket = new Map<string, bigint>();
-    const countByBucket = new Map<string, number>();
-    let totalWei = 0n;
     for (const log of logs) {
       const d = log.data.slice(2);
       if (d.length < 128) continue;
       const amountWei = BigInt('0x' + d.slice(64, 128));
       const ts = log.blockTimestamp ? parseInt(log.blockTimestamp, 16) : blockToTs(parseInt(log.blockNumber, 16));
-      const key = bucket === 'week' ? weekKey(ts) : monthKey(ts);
-      weiByBucket.set(key, (weiByBucket.get(key) ?? 0n) + amountWei);
-      countByBucket.set(key, (countByBucket.get(key) ?? 0) + 1);
-      totalWei += amountWei;
+      for (const [map, key] of [[weekly, weekKey(ts)], [monthly, monthKey(ts)]] as const) {
+        const cur = map.get(key) ?? [0n, 0];
+        map.set(key, [cur[0] + amountWei, cur[1] + 1]);
+      }
     }
 
-    const buckets = [...weiByBucket.keys()].sort().map(k => ({
+    const asOfBlock = didScan ? safeHead : (usable && cached ? cached.asOfBlock : fromBlock - 1);
+
+    if (cacheable && (logs.length > 0 || !usable)) {
+      const ser = (m: Map<string, [bigint, number]>): CacheBuckets =>
+        Object.fromEntries([...m].map(([k, v]) => [k, [v[0].toString(), v[1]] as [string, number]]));
+      try {
+        await put(CACHE_KEY, JSON.stringify({
+          address, topic, fromBlock, asOfBlock,
+          weekly: ser(weekly), monthly: ser(monthly),
+          updatedAt: new Date().toISOString(),
+        }), { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json' });
+      } catch (err) {
+        console.warn('vesting-claims cache write failed:', err instanceof Error ? err.message : err);
+      }
+    }
+
+    let totalWei = 0n;
+    let totalClaims = 0;
+    for (const v of monthly.values()) { totalWei += v[0]; totalClaims += v[1]; }
+
+    const src = bucket === 'week' ? weekly : monthly;
+    const buckets = [...src.keys()].sort().map(k => ({
       period: k,
-      lingoClaimed: Math.round(toLingo(weiByBucket.get(k)!)),
-      claims: countByBucket.get(k) ?? 0,
+      lingoClaimed: Math.round(toLingo(src.get(k)![0])),
+      claims: src.get(k)![1],
     }));
 
     return res.status(200).json({
       address,
       bucket,
-      asOfBlock: head,
+      asOfBlock,
+      cached: usable,
+      newLogs: logs.length,
       requestsUsed: MAX_REQUESTS - budget.left,
-      totalClaims: logs.length,
+      totalClaims,
       totalLingoClaimed: Math.round(toLingo(totalWei)),
       buckets,
     });
