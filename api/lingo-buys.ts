@@ -24,6 +24,11 @@ import { put, list } from '@vercel/blob';
  *
  * GET ?dryRun=1 (cron or admin auth): rebuild the totals from history and
  * render the message for the most recent buy — no post, no state written.
+ *
+ * GET ?test=1 (cron or admin auth): post a clearly labelled TEST alert, built
+ * from the most recent genuine USDC transfer (project wallets included), so the
+ * channel can be checked without sending USDC. Never touches the totals.
+ * Limited to one per TEST_COOLDOWN_MS, since it posts on demand.
  */
 
 export const config = { maxDuration: 60 };
@@ -66,6 +71,8 @@ const MIN_USDC = 1;             // below this is dust / poisoning, not a buy
 // were excluded; a new key makes the next run re-seed cleanly from START_BLOCK.
 const STATE_KEY = 'lingo-buys-state-v2.json';
 const SEEN_LIMIT = 1000;        // rolling dedupe window of txHash:logIndex keys
+const TEST_KEY = 'lingo-buys-test.json';
+const TEST_COOLDOWN_MS = 5 * 60 * 1000;
 const LOG_PAGE_LIMIT = 9500;
 const MAX_REQUESTS = 60;
 
@@ -91,25 +98,30 @@ interface RawLog {
  * start, which reseeds the totals and silently absorbs any buys that had
  * not been posted yet — a missed alert with no trace.
  */
-async function readState(): Promise<{ state: BuysState | null; error: boolean }> {
+async function readBlob<T>(key: string): Promise<{ data: T | null; error: boolean }> {
   const token = process.env.BLOB_READ_WRITE_TOKEN || '';
   const match = token.match(/^vercel_blob_rw_([^_]+)_/);
   if (match) {
     try {
-      const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${STATE_KEY}?t=${Date.now()}`);
-      if (res.ok) return { state: (await res.json()) as BuysState, error: false };
-      if (res.status === 404) return { state: null, error: false };
+      const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${key}?t=${Date.now()}`);
+      if (res.ok) return { data: (await res.json()) as T, error: false };
+      if (res.status === 404) return { data: null, error: false };
     } catch { /* fall through to list() */ }
   }
   try {
-    const { blobs } = await list({ prefix: STATE_KEY });
-    if (blobs.length === 0) return { state: null, error: false };
+    const { blobs } = await list({ prefix: key });
+    if (blobs.length === 0) return { data: null, error: false };
     const res = await fetch(`${blobs[blobs.length - 1].url}?t=${Date.now()}`);
-    if (!res.ok) return { state: null, error: true };
-    return { state: (await res.json()) as BuysState, error: false };
+    if (!res.ok) return { data: null, error: true };
+    return { data: (await res.json()) as T, error: false };
   } catch {
-    return { state: null, error: true };
+    return { data: null, error: true };
   }
+}
+
+async function readState(): Promise<{ state: BuysState | null; error: boolean }> {
+  const { data, error } = await readBlob<BuysState>(STATE_KEY);
+  return { state: data, error };
 }
 
 async function saveState(state: BuysState): Promise<void> {
@@ -155,7 +167,7 @@ async function getLogs(filter: Record<string, unknown>, from: number, to: number
 }
 
 /** Genuine USDC transfers INTO the buy wallet, oldest first. */
-async function getBuys(from: number, to: number, budget: { left: number }): Promise<Buy[] | null> {
+async function getBuys(from: number, to: number, budget: { left: number }, includeProject = false): Promise<Buy[] | null> {
   const padded = '0x' + BUY_WALLET.slice(2).padStart(64, '0');
   const logs = await getLogs({
     // Server-side filter on the EMITTING contract: a lookalike token's
@@ -184,7 +196,7 @@ async function getBuys(from: number, to: number, budget: { left: number }): Prom
       ts = tsCache.get(block)!;
     }
     const from = '0x' + log.topics[1].slice(26).toLowerCase();
-    if (PROJECT_SENDERS.has(from)) continue; // the project topping up, not a buy
+    if (!includeProject && PROJECT_SENDERS.has(from)) continue; // the project topping up, not a buy
     const logIndex = parseInt(log.logIndex, 16);
     buys.push({
       key: `${log.transactionHash}:${logIndex}`,
@@ -286,6 +298,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!ALCHEMY_API_KEY) return res.status(200).json({ error: 'ALCHEMY_API_KEY not set' });
 
   const dryRun = req.query.dryRun === '1';
+  const testMode = req.query.test === '1';
   if (!dryRun && !SLACK_URL) {
     return res.status(200).json({ message: 'Not configured — set LINGO_BUYS_SLACK_WEBHOOK_URL' });
   }
@@ -295,6 +308,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!headHex) return res.status(200).json({ error: 'RPC unavailable' });
     const head = parseInt(headHex, 16);
     const budget = { left: MAX_REQUESTS };
+
+    // ── Test post: labelled, rate-limited, never counted ──
+    if (testMode) {
+      const last = await readBlob<{ at: number }>(TEST_KEY);
+      if (last.error) return res.status(503).json({ error: 'Could not check the test cooldown — try again' });
+      const since = last.data ? Date.now() - last.data.at : Infinity;
+      if (since < TEST_COOLDOWN_MS) {
+        return res.status(429).json({ error: `A test was posted recently — try again in ${Math.ceil((TEST_COOLDOWN_MS - since) / 1000)}s` });
+      }
+      // Use the latest real transfer (project wallets included) so the test
+      // looks exactly like a live alert; fall back to a sample if none.
+      const recent = await getBuys(Math.max(START_BLOCK, head - 302_400), head, budget, true);
+      const sample: Buy = recent?.length ? recent[recent.length - 1] : {
+        key: 'test', txHash: '0x' + '0'.repeat(64), from: BUY_WALLET, token: 'USDC',
+        micro: 100_000_000, ts: Math.floor(Date.now() / 1000), block: head, logIndex: 0,
+      };
+      const { state } = await readState();
+      // Totals shown are what they WOULD be — the stored state is not written.
+      const hypothetical = withBuy(state ?? emptyState(head), sample);
+      const real = buildMessage(sample, hypothetical, await getLingoPriceUsd());
+      const blocks = real.blocks.map(b => {
+        if (b.type === 'header') return { type: 'header', text: { type: 'plain_text', text: '🧪 TEST — this is how a buy alert will look', emoji: true } };
+        if (b.type === 'context') return { type: 'context', elements: [{ type: 'mrkdwn', text: '*Test message only* — not a new buy, and NOT counted in the totals.' }] };
+        return b;
+      });
+      const ok = await postSlack({ text: `TEST — ${real.text}`, blocks });
+      if (ok) await put(TEST_KEY, JSON.stringify({ at: Date.now() }), { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json' });
+      return res.status(ok ? 200 : 502).json({ test: true, posted: ok, sampleTx: sample.txHash });
+    }
 
     // ── Dry run: full history, rendered, nothing written or posted ──
     if (dryRun) {
