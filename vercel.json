@@ -32,6 +32,10 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/lingo-buys",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/monthly-stake-report",
       "schedule": "0 1 1 * *"
     },
