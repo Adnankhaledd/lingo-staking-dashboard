@@ -43,10 +43,11 @@ const USDC_CONTRACTS: Record<string, string> = {
 };
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
-// Count from go-live. This is deliberately AFTER the wallet's Nov-2025 USDC
-// inflows — a Treasury test and the operator's own bridge-ins — which were
-// funding, not user buys, and would otherwise distort the totals.
-const START_BLOCK = 0x2700000;
+// Count from go-live: the block right after the team's two test sends on
+// 2026-09-18 ($1 at 0x3118912, $2 at 0x3119a60). That also skips everything
+// earlier — the Nov-2025 Treasury test and the operator's own bridge-ins —
+// which was funding, not user buys, and would otherwise distort the totals.
+const START_BLOCK = 0x3119a61;
 // USDC arriving from these is the project funding the wallet, not a buy.
 const PROJECT_SENDERS = new Set([
   '0x0e0bc2919540119fc22a502842a74af4d81502b6', // Treasury
@@ -61,7 +62,9 @@ const PROJECT_SENDERS = new Set([
 ]);
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const MIN_USDC = 1;             // below this is dust / poisoning, not a buy
-const STATE_KEY = 'lingo-buys-state.json';
+// v2: v1 had already seeded the two test sends into its totals before they
+// were excluded; a new key makes the next run re-seed cleanly from START_BLOCK.
+const STATE_KEY = 'lingo-buys-state-v2.json';
 const SEEN_LIMIT = 1000;        // rolling dedupe window of txHash:logIndex keys
 const LOG_PAGE_LIMIT = 9500;
 const MAX_REQUESTS = 60;
