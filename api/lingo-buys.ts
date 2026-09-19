@@ -43,7 +43,23 @@ const USDC_CONTRACTS: Record<string, string> = {
 };
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
-const START_BLOCK = 0x2700000;  // before the wallet's first activity (Jan 2026)
+// Count from go-live. This is deliberately AFTER the wallet's Nov-2025 USDC
+// inflows — a Treasury test and the operator's own bridge-ins — which were
+// funding, not user buys, and would otherwise distort the totals.
+const START_BLOCK = 0x2700000;
+// USDC arriving from these is the project funding the wallet, not a buy.
+const PROJECT_SENDERS = new Set([
+  '0x0e0bc2919540119fc22a502842a74af4d81502b6', // Treasury
+  '0x0fe275fdfde7eb75a15c0ae8971450dd6f06e7f8', // Project Safe
+  '0x61f8d3fc749ecda98d378bc2cc8459ba0f7dfd58', // Team Multisig
+  '0x7e3e2d6b8b87ce617b7ccdd63d0f5449e4057513', // Team Buybacks
+  '0x69892fc8e176d9750e7f0ca06fc9aede0fc97bcb', // Team Buybacks
+  '0xc588e4415ab61aa8a9496efbe9d715de75550e2a', // Deployer
+  '0xe8313a4b7a6aaea9e92a8d4acbb08034cb39bf2f', // Team wallet
+  '0xffc781ddfa8d1358ce8c7dda7ced1e56e922aea6', // Reward wallet
+  '0x64967c0dd5605dd3efc6a9bb148b2687a532c15f', // Previous reward wallet
+]);
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const MIN_USDC = 1;             // below this is dust / poisoning, not a buy
 const STATE_KEY = 'lingo-buys-state.json';
 const SEEN_LIMIT = 1000;        // rolling dedupe window of txHash:logIndex keys
@@ -66,22 +82,31 @@ interface RawLog {
 
 // ─── Blob state ──────────────────────────────────────────────────────────
 
-async function fetchBlobJson<T>(pathname: string): Promise<T | null> {
+/**
+ * Read state, telling "there is none yet" apart from "we couldn't read it".
+ * Collapsing both to null would turn a transient Blob error into a cold
+ * start, which reseeds the totals and silently absorbs any buys that had
+ * not been posted yet — a missed alert with no trace.
+ */
+async function readState(): Promise<{ state: BuysState | null; error: boolean }> {
   const token = process.env.BLOB_READ_WRITE_TOKEN || '';
   const match = token.match(/^vercel_blob_rw_([^_]+)_/);
   if (match) {
     try {
-      const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${pathname}?t=${Date.now()}`);
-      if (res.ok) return (await res.json()) as T;
-    } catch { /* fall through */ }
+      const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${STATE_KEY}?t=${Date.now()}`);
+      if (res.ok) return { state: (await res.json()) as BuysState, error: false };
+      if (res.status === 404) return { state: null, error: false };
+    } catch { /* fall through to list() */ }
   }
   try {
-    const { blobs } = await list({ prefix: pathname });
-    if (blobs.length === 0) return null;
+    const { blobs } = await list({ prefix: STATE_KEY });
+    if (blobs.length === 0) return { state: null, error: false };
     const res = await fetch(`${blobs[blobs.length - 1].url}?t=${Date.now()}`);
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch { return null; }
+    if (!res.ok) return { state: null, error: true };
+    return { state: (await res.json()) as BuysState, error: false };
+  } catch {
+    return { state: null, error: true };
+  }
 }
 
 async function saveState(state: BuysState): Promise<void> {
@@ -155,11 +180,13 @@ async function getBuys(from: number, to: number, budget: { left: number }): Prom
       }
       ts = tsCache.get(block)!;
     }
+    const from = '0x' + log.topics[1].slice(26).toLowerCase();
+    if (PROJECT_SENDERS.has(from)) continue; // the project topping up, not a buy
     const logIndex = parseInt(log.logIndex, 16);
     buys.push({
       key: `${log.transactionHash}:${logIndex}`,
       txHash: log.transactionHash,
-      from: '0x' + log.topics[1].slice(26).toLowerCase(),
+      from,
       token, micro, ts, block, logIndex,
     });
   }
@@ -229,7 +256,9 @@ function buildMessage(b: Buy, st: BuysState, priceUsd: number | null) {
     blocks: [
       { type: 'header', text: { type: 'plain_text', text: `🟢 New LINGO buy — ${usd(b.micro)}`, emoji: true } },
       // Full address on its own line: poisoning relies on truncated addresses.
-      { type: 'section', text: { type: 'mrkdwn', text: `*Buyer:* <https://basescan.org/address/${b.from}|\`${b.from}\`>` } },
+      { type: 'section', text: { type: 'mrkdwn', text: b.from === ZERO_ADDRESS
+        ? '*Buyer:* not visible — USDC was minted straight to the wallet (Circle CCTP bridge)'
+        : `*Buyer:* <https://basescan.org/address/${b.from}|\`${b.from}\`>` } },
       { type: 'section', fields },
       { type: 'context', elements: [{ type: 'mrkdwn', text: 'Genuine USDC only — lookalike tokens are ignored. Always compare the FULL buyer address.' }] },
     ],
@@ -280,7 +309,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const state = await fetchBlobJson<BuysState>(STATE_KEY);
+    const { state, error: readError } = await readState();
+    if (readError) {
+      return res.status(503).json({ error: 'State unreadable — skipped this run rather than risk absorbing unposted buys' });
+    }
 
     // ── Cold start: seed totals from history, post nothing ──
     if (!state || typeof state.lastBlock !== 'number') {
@@ -299,27 +331,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let st: BuysState = { ...state, lastBlock: state.lastBlock };
     let posted = 0;
-    let failed = false;
+    let failed: string | null = null;
     const price = buys.length ? await getLingoPriceUsd() : null;
     for (const b of buys) {
       const next = withBuy(st, b);
       // Commit the buy to the totals only once it has actually been posted,
       // so a failed post is retried next run instead of being counted twice.
-      if (!(await postSlack(buildMessage(b, next, price)))) { failed = true; break; }
+      if (!(await postSlack(buildMessage(b, next, price)))) { failed = 'Slack post failed'; break; }
       st = next;
       posted++;
+      // Persist after EVERY post, keeping the old block pointer. Saving once
+      // at the end meant a failed save (or a killed run) re-posted every buy
+      // already announced, every 2 minutes until the save went through.
+      try {
+        await saveState(st);
+      } catch {
+        failed = 'state save failed after posting';
+        break;
+      }
     }
-    // Hold the block pointer back if a post failed; the seen-set stops the
-    // already-posted buys from being sent again on the retry.
-    st.lastBlock = failed ? state.lastBlock : head;
-    await saveState(st);
+    // Only advance the pointer once the whole batch is posted and saved; the
+    // seen-set keeps already-posted buys from repeating on the retry.
+    if (!failed) {
+      st.lastBlock = head;
+      try { await saveState(st); } catch { failed = 'state save failed'; }
+    }
 
-    return res.status(200).json({
+    // A non-2xx makes a broken webhook visible in Vercel's cron logs instead
+    // of stalling silently behind a 200.
+    return res.status(failed ? 502 : 200).json({
       posted,
       pending: buys.length - posted,
       fromBlock: state.lastBlock + 1,
       toBlock: head,
-      ...(failed ? { warning: 'Slack post failed — will retry next run' } : {}),
+      ...(failed ? { error: `${failed} — will retry next run` } : {}),
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
