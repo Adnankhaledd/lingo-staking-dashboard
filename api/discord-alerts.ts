@@ -597,6 +597,12 @@ const PROV_CEX_WALLETS: Record<string, string> = {
   '0xae45a8240147e6179ec7c9f92c5a18f9a97b3fca': 'Crypto.com',
   '0xb7333d779c6ecdfc4507a53706b0e173bd086a18': 'Crypto.com',
 };
+// Wallets that buy LINGO for a user and stake it FOR them. The LINGO goes
+// straight from here to the staking contract, so the staker never receives it
+// — without this the stake looks like it came out of thin air ("pre-held").
+const PROV_ONBEHALF_WALLETS: Record<string, string> = {
+  '0x53a78a339262e374950c491884b0954323b616ef': 'Lingo direct buy',
+};
 // Reward-distribution hot wallet(s) — transfers from here are reward payouts.
 const PROV_REWARD_WALLETS: Record<string, string> = {
   '0xffc781ddfa8d1358ce8c7dda7ced1e56e922aea6': 'Current reward wallet',
@@ -620,7 +626,7 @@ const PROV_DUST_LINGO = 1;
 const PROV_WINDOW_BLOCKS = 43_200; // ~24h on Base
 
 type ProvenanceSource =
-  | 'bought' | 'bought_cex' | 'bridged'
+  | 'bought' | 'bought_cex' | 'bought_direct' | 'bridged'
   | 'claimed' | 'claimed_apy' | 'claimed_vesting' | 'reward' | 'restaked'
   | 'transferred' | 'transferred_bought_upstream' | 'internal' | 'preheld' | 'unknown';
 
@@ -641,6 +647,7 @@ interface Provenance {
 const PROV_LABELS: Record<ProvenanceSource, { label: string; emoji: string }> = {
   bought:                      { label: 'Bought on DEX',                 emoji: '🛒' },
   bought_cex:                  { label: 'Bought on exchange',            emoji: '🏦' },
+  bought_direct:               { label: 'Direct buy (staked for user)',  emoji: '🤝' },
   bridged:                     { label: 'Bridged in',                    emoji: '🌉' },
   claimed:                     { label: 'Claimed (other)',               emoji: '🎁' },
   claimed_apy:                 { label: 'APY reward claim',              emoji: '📈' },
@@ -662,7 +669,7 @@ interface ProvReceiptLog { address: string; topics: string[]; data: string }
 interface ProvTxReceipt { transactionHash: string; logs: ProvReceiptLog[] }
 interface ProvAssetTransfer { from: string; to: string; hash: string; blockNum: string; value: number | null }
 interface ProvInboundLeg { from: string; value: bigint }
-interface ProvReceiptSignals { hasSwap: boolean; hasClaim: boolean; claimFrom: string | null; inbound: ProvInboundLeg[] }
+interface ProvReceiptSignals { hasSwap: boolean; hasClaim: boolean; claimFrom: string | null; stakeFundedBy: string | null; inbound: ProvInboundLeg[] }
 
 async function provRpc<T>(method: string, params: unknown[]): Promise<T | null> {
   try {
@@ -707,6 +714,9 @@ function provAnalyze(receipt: ProvTxReceipt, walletLc: string): ProvReceiptSigna
   let hasSwap = false;
   let hasClaim = false;
   let claimFrom: string | null = null;
+  // Who paid the staking contract in this tx — the tell for a stake made on
+  // someone's behalf, where the LINGO never touches the staker's wallet.
+  let stakeFundedBy: string | null = null;
   const inbound: ProvInboundLeg[] = [];
   for (const log of receipt.logs ?? []) {
     const topic0 = (log.topics?.[0] ?? '').toLowerCase();
@@ -720,6 +730,7 @@ function provAnalyze(receipt: ProvTxReceipt, walletLc: string): ProvReceiptSigna
     }
     if (log.address?.toLowerCase() === PROV_LINGO_TOKEN && topic0 === PROV_TRANSFER_TOPIC && log.topics.length >= 3) {
       const to = '0x' + log.topics[2].slice(26).toLowerCase();
+      if (!stakeFundedBy && to === STAKING_CONTRACT) stakeFundedBy = '0x' + log.topics[1].slice(26).toLowerCase();
       if (to === walletLc) {
         const from = '0x' + log.topics[1].slice(26).toLowerCase();
         let value = 0n;
@@ -728,7 +739,7 @@ function provAnalyze(receipt: ProvTxReceipt, walletLc: string): ProvReceiptSigna
       }
     }
   }
-  return { hasSwap, hasClaim, claimFrom, inbound };
+  return { hasSwap, hasClaim, claimFrom, stakeFundedBy, inbound };
 }
 
 function provToLingo(weiValue: bigint): number {
@@ -779,6 +790,7 @@ async function provClassifySender(
   if (PROV_DEX_POOLS[from]) return { source: 'bought', detail: `Bought from ${PROV_DEX_POOLS[from]}`, sub: PROV_DEX_POOLS[from] };
   if (PROV_ROUTERS[from]) return { source: 'bought', detail: `Swapped via ${PROV_ROUTERS[from]}`, sub: PROV_ROUTERS[from] };
   if (PROV_CEX_WALLETS[from]) return { source: 'bought_cex', detail: `Withdrawn from ${PROV_CEX_WALLETS[from]}`, sub: PROV_CEX_WALLETS[from] };
+  if (PROV_ONBEHALF_WALLETS[from]) return { source: 'bought_direct', detail: `Sent by ${PROV_ONBEHALF_WALLETS[from]} for the user`, sub: 'Direct buy' };
   if (PROV_BRIDGES[from]) return { source: 'bridged', detail: `Bridged in via ${PROV_BRIDGES[from]}`, sub: PROV_BRIDGES[from] };
   if (PROV_REWARD_WALLETS[from]) return { source: 'reward', detail: `From the ${PROV_REWARD_WALLETS[from].toLowerCase()}`, sub: PROV_REWARD_WALLETS[from] };
   if (PROV_CLAIM_CONTRACTS[from]) return { source: PROV_CLAIM_CONTRACTS[from].source, detail: PROV_CLAIM_CONTRACTS[from].label, sub: PROV_CLAIM_CONTRACTS[from].label };
@@ -815,6 +827,10 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
     const stakeReceipt = await provGetReceipt(input.stakeTxHash);
     if (stakeReceipt) {
       const a = provAnalyze(stakeReceipt, walletLc);
+      // Checked first: someone else funded this stake for the user, which is
+      // definitive regardless of what else the tx did.
+      const onBehalf = a.stakeFundedBy ? PROV_ONBEHALF_WALLETS[a.stakeFundedBy] : null;
+      if (onBehalf) return provMk('bought_direct', 'high', `Bought via ${onBehalf} and staked for the user`, 'Direct buy');
       if (a.hasSwap) return provMk('bought', 'high', 'Swap in the stake tx');
       if (a.hasClaim) {
         const cc = a.claimFrom ? PROV_CLAIM_CONTRACTS[a.claimFrom] : null;

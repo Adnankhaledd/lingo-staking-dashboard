@@ -30,7 +30,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 const MIN_USD_REPORT = 10;
 
 const SOURCE_ORDER = [
-  'bought', 'bought_cex', 'transferred_bought_upstream', 'bridged',
+  'bought', 'bought_cex', 'bought_direct', 'transferred_bought_upstream', 'bridged',
   'claimed_apy', 'claimed_vesting', 'claimed',
   'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown',
 ];
@@ -57,6 +57,7 @@ function subLine(subs: SubTotals, src: string): string {
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   bought_cex: '🏦 Bought on exchange',
+  bought_direct: '🤝 Direct buy (staked for user)',
   bridged: '🌉 Bridged in',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
   claimed_apy: '📈 APY reward claim',

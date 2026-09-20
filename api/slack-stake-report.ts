@@ -70,7 +70,7 @@ const BREAKDOWN_USAGE = [
 ].join('\n');
 
 const SOURCE_ORDER = [
-  'bought', 'bought_cex', 'transferred_bought_upstream', 'bridged',
+  'bought', 'bought_cex', 'bought_direct', 'transferred_bought_upstream', 'bridged',
   'claimed_apy', 'claimed_vesting', 'claimed',
   'reward', 'restaked', 'transferred', 'internal', 'preheld', 'unknown',
 ];
@@ -98,6 +98,7 @@ function subLine(subs: SubTotals, src: string): string {
 const SOURCE_LABELS: Record<string, string> = {
   bought: '🛒 Bought on DEX',
   bought_cex: '🏦 Bought on exchange',
+  bought_direct: '🤝 Direct buy (staked for user)',
   bridged: '🌉 Bridged in',
   transferred_bought_upstream: '🛒 Transferred (bought upstream)',
   claimed_apy: '📈 APY reward claim',
@@ -437,7 +438,8 @@ const TYPE_ALIASES: Array<{ words: string[]; sources: string[]; label: string; g
   { words: ['dex'], sources: ['bought'], label: 'DEX buys' },
   { words: ['cex', 'exchange', 'exchanges'], sources: ['bought_cex'], label: 'Exchange buys' },
   { words: ['upstream'], sources: ['transferred_bought_upstream'], label: 'Bought upstream' },
-  { words: ['buys', 'buy', 'bought', 'purchases', 'purchase'], sources: ['bought', 'bought_cex', 'transferred_bought_upstream'], label: 'All buys', generic: true },
+  { words: ['direct', 'behalf', 'onbehalf'], sources: ['bought_direct'], label: 'Direct buys' },
+  { words: ['buys', 'buy', 'bought', 'purchases', 'purchase'], sources: ['bought', 'bought_cex', 'bought_direct', 'transferred_bought_upstream'], label: 'All buys', generic: true },
   { words: ['bridge', 'bridged', 'bridges'], sources: ['bridged'], label: 'Bridged in' },
   { words: ['apy'], sources: ['claimed_apy'], label: 'APY claims' },
   { words: ['vesting'], sources: ['claimed_vesting'], label: 'Vesting claims' },
@@ -578,7 +580,7 @@ const MAIN_SHARE = 0.5;
 
 /** Short, unique tags for the all-sources split — several source emoji collide. */
 const SOURCE_TAGS: Record<string, string> = {
-  bought: 'DEX', bought_cex: 'CEX', transferred_bought_upstream: 'upstream buy', bridged: 'bridge',
+  bought: 'DEX', bought_cex: 'CEX', bought_direct: 'direct', transferred_bought_upstream: 'upstream buy', bridged: 'bridge',
   claimed_apy: 'APY', claimed_vesting: 'vesting', claimed: 'claim', reward: 'reward',
   restaked: 'restake', transferred: 'transfer', internal: 'project', preheld: 'pre-held', unknown: 'unknown',
 };
