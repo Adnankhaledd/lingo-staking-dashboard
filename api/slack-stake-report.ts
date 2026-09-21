@@ -8,7 +8,7 @@ import { timingSafeEqual } from 'node:crypto';
  *   api.slack.com/apps → your app → Slash Commands → Create New Command:
  *     Command:      /stake-report
  *     Request URL:  https://lingo-staking-dashboard.vercel.app/api/slack-stake-report
- *     Usage hint:   [last 2 days | 48h | 3 weeks | may | 2026-05]
+ *     Usage hint:   [last 2 days | 48h | may | 2026-05 | aug 14 to sep 14]
  *   Reinstall the app to the workspace if prompted.
  *   Optional hardening: set SLACK_VERIFICATION_TOKEN (app → Basic Information →
  *   Verification Token) in Vercel env so forged payloads are rejected.
@@ -54,7 +54,7 @@ const BUDGET_MS = 45_000; // paging budget — leaves headroom to post before ma
 
 const USAGE = [
   '*Usage:* `/stake-report [period]`',
-  'Examples: `last 2 days` · `48h` · `3 weeks` · `may` · `2026-05` · `2026-05-15` · `yesterday` · `today`',
+  'Examples: `last 2 days` · `48h` · `3 weeks` · `may` · `2026-05` · `2026-05-15` · `aug 14 to sep 14` · `yesterday` · `today`',
   `Default period: last 7 days (max ${MAX_DAYS} days). Counts stakes worth ≥$${MIN_USD_REPORT} at the time (alerts still ping at $100).`,
   'For a per-day breakdown of one type, see `/stake-breakdown help`.',
 ].join('\n');
@@ -64,7 +64,7 @@ const MAX_DAILY_BUCKETS = 62; // beyond this a daily list is unreadable in Slack
 const BREAKDOWN_USAGE = [
   '*Usage:* `/stake-breakdown [type] [daily|weekly] [period]`',
   'Types: `dex` · `cex` · `buys` (all purchases) · `bridge` · `apy` · `vesting` · `claims` (all claims) · `reward` · `restake` · `transfer` · `internal` · `preheld` · `unknown` — combine them (`dex cex`), or leave out for every source.',
-  'Examples: `dex last 7 days` · `apy weekly last 2 months` · `buys may` · `restake 48h` · `dex 2026-08`',
+  'Examples: `dex last 7 days` · `daily aug 14 to sep 14` · `apy weekly last 2 months` · `buys may` · `restake 48h`',
   `Daily by default; switches to weekly past ${MAX_DAILY_BUCKETS} days. A stake funded from several sources counts toward each type by its share of the funding.`,
   'Same output via `/stake-report dex daily last 7 days`.',
 ].join('\n');
@@ -136,6 +136,78 @@ function monthLabel(i: number): string {
 }
 
 /** Parse a free-text period ("last 2 days", "48h", "may", "2026-05", …). */
+// ─── Date ranges: "aug 14 to sep 14" ─────────────────────────────────────
+
+const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+// One calendar date: ISO "2026-08-14", "aug 14[, 2026]" or "14 aug[ 2026]".
+// The trailing lookahead stops "may 2025" being read as May 20.
+const DATE_TOKEN = new RegExp(
+  '\\b(?:(\\d{4})-(\\d{1,2})-(\\d{1,2})'
+  + `|(${MONTH_ABBR.join('|')})[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?`
+  + `|(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTH_ABBR.join('|')})[a-z]*\\.?(?:,?\\s+(\\d{4}))?`
+  + ')(?![a-z0-9])', 'g');
+
+interface DateParts { y: number | null; mo: number; d: number }
+
+function dateParts(m: RegExpMatchArray): DateParts {
+  if (m[1]) return { y: +m[1], mo: +m[2] - 1, d: +m[3] };
+  if (m[4]) return { y: m[6] ? +m[6] : null, mo: MONTH_ABBR.indexOf(m[4]), d: +m[5] };
+  return { y: m[9] ? +m[9] : null, mo: MONTH_ABBR.indexOf(m[8]), d: +m[7] };
+}
+
+/** UTC midnight of a date, or null for an impossible one (Feb 30 would roll over). */
+function utcDay(y: number, mo: number, d: number): number | null {
+  const t = new Date(Date.UTC(y, mo, d));
+  return t.getUTCMonth() === mo && t.getUTCDate() === d ? t.getTime() / 1000 : null;
+}
+
+/**
+ * "aug 14 to sep 14", "2026-08-14 - 2026-09-14", "between 14 aug and 14 sep".
+ * Both ends are inclusive UTC days. With no year, the most recent past
+ * occurrence is used; "dec 20 to jan 5" crosses into the next year, while a
+ * range typed back-to-front ("sep 14 to aug 14") is simply swapped.
+ */
+function parseRange(text: string, nowSec: number): Period | null {
+  const hits = [...text.matchAll(DATE_TOKEN)];
+  if (hits.length < 2) return null;
+  const [ma, mb] = hits;
+  const between = text.slice(ma.index! + ma[0].length, mb.index!);
+  if (!/\b(to|until|till|through|thru|and)\b|[-–—]/.test(between)) return null;
+  const a = dateParts(ma);
+  const b = dateParts(mb);
+  if (a.mo < 0 || b.mo < 0) return null;
+
+  let ya = a.y ?? b.y ?? new Date(nowSec * 1000).getUTCFullYear();
+  if (a.y == null && b.y == null && (utcDay(ya, a.mo, a.d) ?? 0) > nowSec) ya -= 1;
+  const yb = b.y ?? ya;
+  let start = utcDay(ya, a.mo, a.d);
+  let end = utcDay(yb, b.mo, b.d);
+  if (start == null || end == null) return null;
+
+  if (end < start) {
+    const wrapped = b.y == null ? utcDay(yb + 1, b.mo, b.d) : null;
+    if (wrapped != null && wrapped <= nowSec) end = wrapped;  // crosses New Year
+    else [start, end] = [end, start];                        // typed back-to-front
+  }
+  if (start >= nowSec) return null;
+
+  let toTs = end + 86_400; // the end day is included
+  let note = '';
+  if (toTs > nowSec) { toTs = nowSec; note = ' (to date)'; }
+  if (toTs - start > MAX_DAYS * 86_400) { toTs = start + MAX_DAYS * 86_400; note = ` (capped at ${MAX_DAYS} days)`; }
+
+  // Label the days actually covered, so a capped range never overstates itself.
+  const lastDay = toTs - 1;
+  const year = (ts: number) => new Date(ts * 1000).getUTCFullYear();
+  const fmt = (ts: number, withYear: boolean) => new Date(ts * 1000).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', timeZone: 'UTC', ...(withYear ? { year: 'numeric' as const } : {}),
+  });
+  const label = year(start) === year(lastDay)
+    ? `${fmt(start, false)} – ${fmt(lastDay, false)}, ${year(start)}${note}`
+    : `${fmt(start, true)} – ${fmt(lastDay, true)}${note}`;
+  return { fromTs: start, toTs, label };
+}
+
 function parsePeriod(raw: string, nowSec: number): Period {
   const text = (raw || '')
     .toLowerCase()
@@ -144,6 +216,12 @@ function parsePeriod(raw: string, nowSec: number): Period {
       (_, t: string, o: string | undefined) => String(TENS[t] + (o ? parseInt(WORD_NUMS[o], 10) : 0)))
     .replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g, m => WORD_NUMS[m])
     .trim();
+
+  // A range goes FIRST: every branch below would otherwise latch onto one end
+  // of it — the ISO branch onto the first date, the month-name branch onto
+  // "august" as a whole month.
+  const range = parseRange(text, nowSec);
+  if (range) return range;
 
   // Full ISO date: "2026-05-15" → that single UTC day
   const ymd = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
