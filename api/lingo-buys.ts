@@ -18,8 +18,12 @@ import { put, list } from '@vercel/blob';
  * or symbol, and amounts under MIN_USDC are ignored. The alert prints the FULL
  * sender address, because poisoning works by being identical once truncated.
  *
- * Setup: set LINGO_BUYS_SLACK_WEBHOOK_URL to an Incoming Webhook for
- * #lingo-buys. Until then the job does nothing. The first configured run seeds
+ * Destinations: Slack (LINGO_BUYS_SLACK_WEBHOOK_URL) and/or Telegram
+ * (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID). Both get the same buy. Delivery is
+ * tracked PER CHANNEL: if one is down the buy is still counted and announced
+ * on the other, and the retry only re-sends to the channel that missed it.
+ * Adding a channel later does not replay history into it. Until at least one
+ * is configured the job does nothing. The first configured run seeds
  * the totals from history and posts nothing, so there is no backlog spam.
  *
  * GET ?dryRun=1 (cron or admin auth): rebuild the totals from history and
@@ -37,6 +41,8 @@ const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/by-address`;
 const SLACK_URL = process.env.LINGO_BUYS_SLACK_WEBHOOK_URL || '';
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const CRON_SECRET = process.env.CRON_SECRET || '';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 
@@ -80,6 +86,9 @@ interface Agg { micro: number; count: number } // micro = USDC in 6-decimal unit
 interface BuysState {
   lastBlock: number;
   seen: string[];
+  /** key → channels that already have it. Missing = delivered everywhere
+   *  (state written before multi-channel, or by a single-channel run). */
+  delivered?: Record<string, string[]>;
   days: Record<string, Agg>;
   months: Record<string, Agg>;
   total: Agg;
@@ -125,7 +134,10 @@ async function readState(): Promise<{ state: BuysState | null; error: boolean }>
 }
 
 async function saveState(state: BuysState): Promise<void> {
-  await put(STATE_KEY, JSON.stringify({ ...state, seen: state.seen.slice(-SEEN_LIMIT), updatedAt: new Date().toISOString() }), {
+  const seen = state.seen.slice(-SEEN_LIMIT);
+  const keep = new Set(seen);
+  const delivered = Object.fromEntries(Object.entries(state.delivered ?? {}).filter(([k]) => keep.has(k)));
+  await put(STATE_KEY, JSON.stringify({ ...state, seen, delivered, updatedAt: new Date().toISOString() }), {
     access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json',
   });
 }
@@ -287,6 +299,87 @@ async function postSlack(payload: unknown): Promise<boolean> {
   } catch { return false; }
 }
 
+const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Same content as the Slack card, in Telegram HTML. */
+function buildTelegramText(b: Buy, st: BuysState, priceUsd: number | null, test = false): string {
+  const day = st.days[dayKey(b.ts)] ?? { micro: 0, count: 0 };
+  const month = st.months[monthKey(b.ts)] ?? { micro: 0, count: 0 };
+  const avg = st.total.count ? st.total.micro / st.total.count : 0;
+  const lingo = priceUsd ? (b.micro / 1e6) / priceUsd : null;
+  const plural = (n: number) => `${n} buy${n === 1 ? '' : 's'}`;
+  const when = new Date(b.ts * 1000).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
+  });
+  const buyer = b.from === ZERO_ADDRESS
+    ? 'not visible — USDC was minted straight to the wallet (Circle CCTP bridge)'
+    : `<a href="https://basescan.org/address/${esc(b.from)}"><code>${esc(b.from)}</code></a>`;
+
+  return [
+    test ? '🧪 <b>TEST — this is how a buy alert will look</b>' : `🟢 <b>New LINGO buy — ${esc(usd(b.micro))}</b>`,
+    '',
+    `<b>Buyer:</b> ${buyer}`,
+    `<b>Amount:</b> ${esc(usd(b.micro))} ${esc(b.token)}${lingo ? ` (≈ ${Math.round(lingo).toLocaleString()} LINGO @ $${priceUsd!.toFixed(5)})` : ''}`,
+    `<b>When:</b> ${esc(when)} UTC · <a href="https://basescan.org/tx/${esc(b.txHash)}">transaction</a>`,
+    '',
+    `<b>Today (UTC):</b> ${esc(usd(day.micro))} · ${plural(day.count)}`,
+    `<b>This month:</b> ${esc(usd(month.micro))} · ${plural(month.count)}`,
+    `<b>Average buy:</b> ${esc(usd(avg))} · across ${plural(st.total.count)}`,
+    `<b>All-time:</b> ${esc(usd(st.total.micro))}`,
+    '',
+    test
+      ? '<i>Test message only — not a new buy, and NOT counted in the totals.</i>'
+      : '<i>Genuine USDC only — lookalike tokens are ignored. Always compare the FULL buyer address.</i>',
+  ].join('\n');
+}
+
+async function postTelegram(text: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+    // Telegram can answer 200 with {ok:false}, so the body decides.
+    const body = await res.json().catch(() => null);
+    return res.ok && !!body?.ok;
+  } catch { return false; }
+}
+
+interface Destination {
+  id: string;
+  send: (b: Buy, st: BuysState, price: number | null) => Promise<boolean>;
+  sendTest: (b: Buy, st: BuysState, price: number | null) => Promise<boolean>;
+}
+
+/** Every channel currently configured. */
+function destinations(): Destination[] {
+  const out: Destination[] = [];
+  if (SLACK_URL) {
+    out.push({
+      id: 'slack',
+      send: (b, st, price) => postSlack(buildMessage(b, st, price)),
+      sendTest: (b, st, price) => {
+        const real = buildMessage(b, st, price);
+        const blocks = real.blocks.map(blk => {
+          if (blk.type === 'header') return { type: 'header', text: { type: 'plain_text', text: '🧪 TEST — this is how a buy alert will look', emoji: true } };
+          if (blk.type === 'context') return { type: 'context', elements: [{ type: 'mrkdwn', text: '*Test message only* — not a new buy, and NOT counted in the totals.' }] };
+          return blk;
+        });
+        return postSlack({ text: `TEST — ${real.text}`, blocks });
+      },
+    });
+  }
+  if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+    out.push({
+      id: 'telegram',
+      send: (b, st, price) => postTelegram(buildTelegramText(b, st, price)),
+      sendTest: (b, st, price) => postTelegram(buildTelegramText(b, st, price, true)),
+    });
+  }
+  return out;
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -299,8 +392,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const dryRun = req.query.dryRun === '1';
   const testMode = req.query.test === '1';
-  if (!dryRun && !SLACK_URL) {
-    return res.status(200).json({ message: 'Not configured — set LINGO_BUYS_SLACK_WEBHOOK_URL' });
+  const dests = destinations();
+  if (!dryRun && !dests.length) {
+    return res.status(200).json({ message: 'Not configured — set LINGO_BUYS_SLACK_WEBHOOK_URL and/or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID' });
   }
 
   try {
@@ -327,15 +421,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { state } = await readState();
       // Totals shown are what they WOULD be — the stored state is not written.
       const hypothetical = withBuy(state ?? emptyState(head), sample);
-      const real = buildMessage(sample, hypothetical, await getLingoPriceUsd());
-      const blocks = real.blocks.map(b => {
-        if (b.type === 'header') return { type: 'header', text: { type: 'plain_text', text: '🧪 TEST — this is how a buy alert will look', emoji: true } };
-        if (b.type === 'context') return { type: 'context', elements: [{ type: 'mrkdwn', text: '*Test message only* — not a new buy, and NOT counted in the totals.' }] };
-        return b;
-      });
-      const ok = await postSlack({ text: `TEST — ${real.text}`, blocks });
+      const price = await getLingoPriceUsd();
+      const results: Record<string, boolean> = {};
+      for (const d of dests) results[d.id] = await d.sendTest(sample, hypothetical, price);
+      const ok = Object.values(results).some(Boolean);
       if (ok) await put(TEST_KEY, JSON.stringify({ at: Date.now() }), { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json' });
-      return res.status(ok ? 200 : 502).json({ test: true, posted: ok, sampleTx: sample.txHash });
+      return res.status(ok ? 200 : 502).json({ test: true, posted: results, sampleTx: sample.txHash });
     }
 
     // ── Dry run: full history, rendered, nothing written or posted ──
@@ -370,20 +461,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const seen = new Set(state.seen);
+    const destIds = dests.map(d => d.id);
     const fresh = await getBuys(state.lastBlock + 1, head, budget);
     if (!fresh) return res.status(200).json({ error: 'Log budget exhausted' });
+
+    // Already counted, but a channel still owes it — retry just that channel.
+    const retries = fresh.filter(b => seen.has(b.key)
+      && (state.delivered?.[b.key] ?? destIds).length < destIds.length);
     const buys = fresh.filter(b => !seen.has(b.key));
 
-    let st: BuysState = { ...state, lastBlock: state.lastBlock };
+    let st: BuysState = { ...state, lastBlock: state.lastBlock, delivered: { ...(state.delivered ?? {}) } };
     let posted = 0;
     let failed: string | null = null;
-    const price = buys.length ? await getLingoPriceUsd() : null;
+    // A buy that reached some channels but not all must stay inside the scan
+    // window, or the pointer moves past it and the retry never happens.
+    let incomplete = false;
+    const price = (buys.length || retries.length) ? await getLingoPriceUsd() : null;
+
+    for (const b of retries) {
+      const done = new Set(st.delivered?.[b.key] ?? []);
+      for (const d of dests) {
+        if (done.has(d.id)) continue;
+        if (await d.send(b, st, price)) done.add(d.id);
+      }
+      st.delivered = { ...st.delivered, [b.key]: [...done] };
+      if (done.size < destIds.length) incomplete = true;
+      try { await saveState(st); } catch { failed = 'state save failed'; break; }
+    }
+
     for (const b of buys) {
+      if (failed) break;
       const next = withBuy(st, b);
-      // Commit the buy to the totals only once it has actually been posted,
-      // so a failed post is retried next run instead of being counted twice.
-      if (!(await postSlack(buildMessage(b, next, price)))) { failed = 'Slack post failed'; break; }
+      // Send everywhere, then commit if ANY channel took it: the buy is
+      // announced and counted once, and whoever missed it is retried above.
+      const done: string[] = [];
+      for (const d of dests) {
+        if (await d.send(b, next, price)) done.push(d.id);
+      }
+      if (!done.length) { failed = `no channel accepted the post (${destIds.join(', ')})`; break; }
       st = next;
+      st.delivered = { ...st.delivered, [b.key]: done };
+      if (done.length < destIds.length) incomplete = true;
       posted++;
       // Persist after EVERY post, keeping the old block pointer. Saving once
       // at the end meant a failed save (or a killed run) re-posted every buy
@@ -397,19 +515,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     // Only advance the pointer once the whole batch is posted and saved; the
     // seen-set keeps already-posted buys from repeating on the retry.
-    if (!failed) {
+    if (!failed && !incomplete) {
       st.lastBlock = head;
       try { await saveState(st); } catch { failed = 'state save failed'; }
     }
 
     // A non-2xx makes a broken webhook visible in Vercel's cron logs instead
     // of stalling silently behind a 200.
-    return res.status(failed ? 502 : 200).json({
+    return res.status(failed || incomplete ? 502 : 200).json({
       posted,
+      channels: destIds,
+      retried: retries.length,
       pending: buys.length - posted,
       fromBlock: state.lastBlock + 1,
       toBlock: head,
-      ...(failed ? { error: `${failed} — will retry next run` } : {}),
+      ...(failed ? { error: `${failed} — will retry next run` }
+        : incomplete ? { error: 'a channel did not accept every buy — retrying the missing one next run' } : {}),
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
