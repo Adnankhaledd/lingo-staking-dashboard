@@ -29,6 +29,12 @@ import { put, list } from '@vercel/blob';
  * GET ?dryRun=1 (cron or admin auth): rebuild the totals from history and
  * render the message for the most recent buy — no post, no state written.
  *
+ * GET ?replay=1&channel=telegram (cron or admin auth): re-send earlier buys to
+ * one channel — for a channel added after the fact. Each message is marked as a
+ * backfill and shows the totals as they stood at that buy. Totals and delivery
+ * state are NOT touched, so nothing is double-counted. Bounded by `limit`
+ * (default 25) and paced to stay under Telegram's per-group rate limit.
+ *
  * GET ?test=1 (cron or admin auth): post a clearly labelled TEST alert, built
  * from the most recent genuine USDC transfer (project wallets included), so the
  * channel can be checked without sending USDC. Never touches the totals.
@@ -302,7 +308,7 @@ async function postSlack(payload: unknown): Promise<boolean> {
 const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** Same content as the Slack card, in Telegram HTML. */
-function buildTelegramText(b: Buy, st: BuysState, priceUsd: number | null, test = false): string {
+function buildTelegramText(b: Buy, st: BuysState, priceUsd: number | null, test = false, backfill = false): string {
   const day = st.days[dayKey(b.ts)] ?? { micro: 0, count: 0 };
   const month = st.months[monthKey(b.ts)] ?? { micro: 0, count: 0 };
   const avg = st.total.count ? st.total.micro / st.total.count : 0;
@@ -329,7 +335,9 @@ function buildTelegramText(b: Buy, st: BuysState, priceUsd: number | null, test 
     '',
     test
       ? '<i>Test message only — not a new buy, and NOT counted in the totals.</i>'
-      : '<i>Genuine USDC only — lookalike tokens are ignored. Always compare the FULL buyer address.</i>',
+      : backfill
+        ? '<i>Backfill of an earlier buy — already counted, shown with the totals as they stood then.</i>'
+        : '<i>Genuine USDC only — lookalike tokens are ignored. Always compare the FULL buyer address.</i>',
   ].join('\n');
 }
 
@@ -350,6 +358,7 @@ interface Destination {
   id: string;
   send: (b: Buy, st: BuysState, price: number | null) => Promise<boolean>;
   sendTest: (b: Buy, st: BuysState, price: number | null) => Promise<boolean>;
+  sendBackfill: (b: Buy, st: BuysState, price: number | null) => Promise<boolean>;
 }
 
 /** Every channel currently configured. */
@@ -368,6 +377,13 @@ function destinations(): Destination[] {
         });
         return postSlack({ text: `TEST — ${real.text}`, blocks });
       },
+      sendBackfill: (b, st, price) => {
+        const real = buildMessage(b, st, price);
+        const blocks = real.blocks.map(blk => blk.type === 'context'
+          ? { type: 'context', elements: [{ type: 'mrkdwn', text: '_Backfill of an earlier buy — already counted._' }] }
+          : blk);
+        return postSlack({ text: real.text, blocks });
+      },
     });
   }
   if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
@@ -375,6 +391,7 @@ function destinations(): Destination[] {
       id: 'telegram',
       send: (b, st, price) => postTelegram(buildTelegramText(b, st, price)),
       sendTest: (b, st, price) => postTelegram(buildTelegramText(b, st, price, true)),
+      sendBackfill: (b, st, price) => postTelegram(buildTelegramText(b, st, price, false, true)),
     });
   }
   return out;
@@ -402,6 +419,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!headHex) return res.status(200).json({ error: 'RPC unavailable' });
     const head = parseInt(headHex, 16);
     const budget = { left: MAX_REQUESTS };
+
+    // ── Replay earlier buys into one channel; never re-counted ──
+    if (req.query.replay === '1') {
+      const want = String(req.query.channel ?? 'telegram').toLowerCase();
+      const targets = want === 'all' ? dests : dests.filter(d => d.id === want);
+      if (!targets.length) return res.status(400).json({ error: `No such channel configured: ${want}`, channels: dests.map(d => d.id) });
+      const cap = Math.min(30, Math.max(1, Number(req.query.limit) || 25));
+      const sinceTs = req.query.since ? Math.floor(Date.parse(String(req.query.since)) / 1000) : 0;
+
+      const all = await getBuys(START_BLOCK, head, budget);
+      if (!all) return res.status(200).json({ error: 'Log budget exhausted' });
+      const price = await getLingoPriceUsd();
+
+      // Walk from the start so each message shows the totals as they stood at
+      // that buy — the same numbers the live alert would have carried.
+      let st = emptyState(head);
+      const sent: Array<{ tx: string; usd: number; ok: boolean }> = [];
+      let skipped = 0;
+      for (const b of all) {
+        st = withBuy(st, b);
+        if (Number.isFinite(sinceTs) && b.ts < sinceTs) { skipped++; continue; }
+        if (sent.length >= cap) { skipped++; continue; }
+        let ok = true;
+        for (const d of targets) ok = (await d.sendBackfill(b, st, price)) && ok;
+        sent.push({ tx: b.txHash, usd: b.micro / 1e6, ok });
+        if (!ok) break;
+        // Telegram allows ~20 messages a minute to one group.
+        await new Promise(r => setTimeout(r, 1_200));
+      }
+      return res.status(sent.every(x => x.ok) ? 200 : 502).json({
+        replay: true,
+        channels: targets.map(d => d.id),
+        totalBuys: all.length,
+        sent: sent.length,
+        skipped,
+        stateTouched: false,
+        results: sent,
+      });
+    }
 
     // ── Test post: labelled, rate-limited, never counted ──
     if (testMode) {
