@@ -504,8 +504,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const want = String(req.query.channel ?? 'telegram').toLowerCase();
       const targets = want === 'all' ? dests : dests.filter(d => d.id === want);
       if (!targets.length) return res.status(400).json({ error: `No such channel configured: ${want}`, channels: dests.map(d => d.id) });
-      const cap = Math.min(30, Math.max(1, Number(req.query.limit) || 25));
-      const sinceTs = req.query.since ? Math.floor(Date.parse(String(req.query.since)) / 1000) : 0;
+      // `Number(x) || 25` turned limit=0 into 25 — the opposite of "send none".
+      const rawLimit = req.query.limit === undefined ? 25 : Number(req.query.limit);
+      if (!Number.isFinite(rawLimit) || rawLimit < 0) return res.status(400).json({ error: `Bad limit: ${req.query.limit}` });
+      const cap = Math.min(30, Math.floor(rawLimit));
+      // An unparseable `since` used to yield NaN, and the NaN-guard on the
+      // filter below then disabled it entirely — a typo replayed from the
+      // OLDEST buy instead of erroring. Reject it instead.
+      let sinceTs = 0;
+      if (req.query.since !== undefined) {
+        const parsed = Date.parse(String(req.query.since));
+        if (!Number.isFinite(parsed)) return res.status(400).json({ error: `Unparseable since: ${req.query.since}` });
+        sinceTs = Math.floor(parsed / 1000);
+      }
 
       const all = await getBuys(START_BLOCK, head, budget);
       if (!all) return res.status(200).json({ error: 'Log budget exhausted' });
@@ -518,7 +529,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let skipped = 0;
       for (const b of all) {
         st = withBuy(st, b);
-        if (Number.isFinite(sinceTs) && b.ts < sinceTs) { skipped++; continue; }
+        if (b.ts < sinceTs) { skipped++; continue; }
         if (sent.length >= cap) { skipped++; continue; }
         let ok = true;
         for (const d of targets) ok = (await d.sendBackfill(b, st, price)) && ok;

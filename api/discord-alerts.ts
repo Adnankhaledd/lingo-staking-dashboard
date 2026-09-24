@@ -1,23 +1,29 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { put, list } from '@vercel/blob';
+import { put, list, del } from '@vercel/blob';
 
-// Inline blob helper — direct URL fetch with list() fallback
-async function fetchBlobJson<T = unknown>(pathname: string): Promise<T | null> {
+/**
+ * Inline blob helper, used only to adopt the legacy single-file state once.
+ * `error` separates "there is none" from "we could not read it" — collapsing
+ * them made a transient Blob failure look like a cold start, which claims the
+ * block pointer and silently skips every alert in between.
+ */
+async function fetchBlobJson<T = unknown>(pathname: string): Promise<{ data: T | null; error: boolean }> {
   const token = process.env.BLOB_READ_WRITE_TOKEN || '';
   const match = token.match(/^vercel_blob_rw_([^_]+)_/);
   if (match) {
     try {
       const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${pathname}?t=${Date.now()}`);
-      if (res.ok) return (await res.json()) as T;
-    } catch { /* fall through */ }
+      if (res.ok) return { data: (await res.json()) as T, error: false };
+      if (res.status === 404) return { data: null, error: false };
+    } catch { /* fall through to list() */ }
   }
   try {
     const { blobs } = await list({ prefix: pathname });
-    if (blobs.length === 0) return null;
+    if (blobs.length === 0) return { data: null, error: false };
     const res = await fetch(`${blobs[blobs.length - 1].url}?t=${Date.now()}`);
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch { return null; }
+    if (!res.ok) return { data: null, error: true };
+    return { data: (await res.json()) as T, error: false };
+  } catch { return { data: null, error: true }; }
 }
 
 export const config = { maxDuration: 60 };
@@ -44,7 +50,17 @@ const MAX_PRICE_AGE_MS = 24 * 60 * 60 * 1000;
 const PRICE_REFRESH_MS = 15 * 60 * 1000;
 const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
 const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/by-address`;
-const BLOB_KEY = 'discord-last-block.json';
+// A FOLDER of numbered, write-once state files, not one file rewritten in
+// place. Vercel Blob serves public blobs from a CDN with a long max-age and
+// does NOT vary that cache on a `?t=` query string, so an overwritten blob can
+// be served stale for longer than the 2-minute cron period. That is what made
+// api/lingo-buys.ts announce the same buy twice on 2026-09-24; this job had the
+// identical pattern. Immutable files are always safe to cache, and writing the
+// next number with allowOverwrite:false is a compare-and-swap that stops two
+// overlapping runs from both alerting on the same stake.
+const STATE_PREFIX = 'discord-alerts-state-v2/';
+const LEGACY_BLOB_KEY = 'discord-last-block.json'; // adopted once, then unused
+const STATE_KEEP = 5;              // older numbered states are pruned
 const LINGO_DECIMALS = 18;
 const SEEN_TX_LIMIT = 500; // rolling window of tx hashes for dedupe
 const KNOWN_STAKERS_LIMIT = 50_000; // cached wallet classifications — bounds blob size
@@ -143,17 +159,81 @@ interface DiscordState {
   lastPriceAt: number | null;  // epoch ms of that price, so we can expire it
 }
 
-async function getDiscordState(): Promise<DiscordState> {
+/** Zero-padded so lexicographic order matches numeric order. */
+const seqName = (n: number) => `${STATE_PREFIX}${String(n).padStart(12, '0')}.json`;
+
+/** Every numbered state file currently stored, oldest first. */
+async function listStates(): Promise<Array<{ url: string; seq: number }>> {
+  const out: Array<{ url: string; seq: number }> = [];
+  let cursor: string | undefined;
+  // Paginate: with zero-padded names the FIRST page holds the OLDEST entries,
+  // so taking the max of one page could miss the newest.
+  do {
+    const page = await list({ prefix: STATE_PREFIX, cursor });
+    for (const b of page.blobs) {
+      const m = b.pathname.match(/(\d+)\.json$/);
+      if (m) out.push({ url: b.url, seq: parseInt(m[1], 10) });
+    }
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  return out.sort((a, b) => a.seq - b.seq);
+}
+
+/** Drop superseded state files. Best effort — never fails the run. */
+async function pruneStates(keepFrom: number): Promise<void> {
   try {
-    // Direct URL fetch — zero Blob SDK operations
-    const data = await fetchBlobJson<{
+    const stale = (await listStates()).filter(s => s.seq <= keepFrom - STATE_KEEP);
+    if (stale.length) await del(stale.map(s => s.url));
+  } catch { /* a leftover file costs nothing; the newest still wins */ }
+}
+
+const emptyDiscordState = (): DiscordState =>
+  ({ lastBlock: null, seenTxHashes: [], knownStakers: [], lastPriceUsd: null, lastPriceAt: null });
+
+/**
+ * Read the newest state. `seq` is the number it was stored under; the next
+ * write must be seq + 1. `error` means the read failed and the caller must
+ * skip the run — treating it as "no state" would cold-start, claim the
+ * pointer, and silently drop every stake in between.
+ */
+async function getDiscordState(): Promise<{ state: DiscordState; seq: number; error: boolean }> {
+  let states: Array<{ url: string; seq: number }>;
+  try {
+    states = await listStates();
+  } catch {
+    return { state: emptyDiscordState(), seq: -1, error: true };
+  }
+
+  const newest = states[states.length - 1];
+  let raw: Record<string, unknown> | null = null;
+  let seq = 0;
+
+  if (newest) {
+    seq = newest.seq;
+    try {
+      // Numbered files are never rewritten, so a cached copy is always correct.
+      const res = await fetch(newest.url);
+      if (!res.ok) return { state: emptyDiscordState(), seq, error: true };
+      raw = (await res.json()) as Record<string, unknown>;
+    } catch {
+      return { state: emptyDiscordState(), seq, error: true };
+    }
+  } else {
+    // One-time migration off the single rewritten file.
+    const legacy = await fetchBlobJson<Record<string, unknown>>(LEGACY_BLOB_KEY);
+    if (legacy.error) return { state: emptyDiscordState(), seq: -1, error: true };
+    raw = legacy.data;
+  }
+
+  try {
+    const data = raw as {
       lastBlock: unknown;
       seenTxHashes?: unknown;
       knownStakers?: unknown;
       lastPriceUsd?: unknown;
       lastPriceAt?: unknown;
-    }>(BLOB_KEY);
-    if (!data) return { lastBlock: null, seenTxHashes: [], knownStakers: [], lastPriceUsd: null, lastPriceAt: null };
+    } | null;
+    if (!data) return { state: emptyDiscordState(), seq, error: false };
 
     let lastBlock: number | null = null;
     const val = data.lastBlock;
@@ -175,17 +255,24 @@ async function getDiscordState(): Promise<DiscordState> {
     const cachedAt = Number(data.lastPriceAt);
     const lastPriceAt = Number.isFinite(cachedAt) && cachedAt > 0 ? cachedAt : null;
 
-    return { lastBlock, seenTxHashes, knownStakers, lastPriceUsd, lastPriceAt };
+    return { state: { lastBlock, seenTxHashes, knownStakers, lastPriceUsd, lastPriceAt }, seq, error: false };
   } catch {
-    return { lastBlock: null, seenTxHashes: [], knownStakers: [], lastPriceUsd: null, lastPriceAt: null };
+    // Unparseable content is a read failure, not an empty store.
+    return { state: emptyDiscordState(), seq, error: true };
   }
 }
 
-async function saveDiscordState(state: DiscordState): Promise<void> {
+/**
+ * Write the next numbered state and return its number. THROWS if that number
+ * already exists — another run claimed it first, and this one must stop rather
+ * than alert on stakes it no longer owns.
+ */
+async function saveDiscordState(state: DiscordState, seq: number): Promise<number> {
+  const next = seq + 1;
   // Trim rolling windows to keep blob size bounded
   const trimmedTx = state.seenTxHashes.slice(-SEEN_TX_LIMIT);
   const trimmedStakers = state.knownStakers.slice(-KNOWN_STAKERS_LIMIT);
-  await put(BLOB_KEY, JSON.stringify({
+  await put(seqName(next), JSON.stringify({
     lastBlock: state.lastBlock,
     seenTxHashes: trimmedTx,
     knownStakers: trimmedStakers,
@@ -195,9 +282,10 @@ async function saveDiscordState(state: DiscordState): Promise<void> {
   }), {
     access: 'public',
     addRandomSuffix: false,
-    allowOverwrite: true,
+    allowOverwrite: false,
     contentType: 'application/json',
   });
+  return next;
 }
 
 // getStakes(address) selector = 0x7ba6f458
@@ -918,10 +1006,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const [state, latestBlock] = await Promise.all([
+    const [stateRead, latestBlock] = await Promise.all([
       getDiscordState(),
       getLatestBlock(),
     ]);
+    if (stateRead.error) {
+      // Skipping is the safe failure: cold-starting here would claim the
+      // pointer and silently swallow every stake since the last good run.
+      return res.status(503).json({ error: 'State unreadable — skipped this run rather than skip past unposted stakes' });
+    }
+    const state = stateRead.state;
+    let seq = stateRead.seq;
 
     // Refresh the price only once it has aged out, instead of on every run.
     const cacheAge = state.lastPriceAt != null ? Date.now() - state.lastPriceAt : Infinity;
@@ -943,12 +1038,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // meant to be live. Just claim the pointer and start clean. (Normal
     // catch-up after downtime still works: lastBlock persists across runs.)
     if (!state.lastBlock) {
-      await saveDiscordState({
-        lastBlock: latestBlock,
-        seenTxHashes: state.seenTxHashes,
-        knownStakers: state.knownStakers,
-        ...priceState,
-      });
+      try {
+        seq = await saveDiscordState({
+          lastBlock: latestBlock,
+          seenTxHashes: state.seenTxHashes,
+          knownStakers: state.knownStakers,
+          ...priceState,
+        }, seq);
+      } catch {
+        return res.status(502).json({ error: 'Another run initialised the pointer first — nothing posted' });
+      }
       return res.status(200).json({
         message: 'Cold start — pointer initialised, no backfill posted',
         toBlock: latestBlock,
@@ -966,12 +1065,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const knownSet = new Set(state.knownStakers.map(w => w.toLowerCase()));
 
     if (events.length === 0) {
-      await saveDiscordState({
-        lastBlock: latestBlock,
-        seenTxHashes: state.seenTxHashes,
-        knownStakers: state.knownStakers,
-        ...priceState,
-      });
+      try {
+        seq = await saveDiscordState({
+          lastBlock: latestBlock,
+          seenTxHashes: state.seenTxHashes,
+          knownStakers: state.knownStakers,
+          ...priceState,
+        }, seq);
+      } catch {
+        return res.status(502).json({ error: 'Another run advanced the pointer first — nothing posted' });
+      }
+      await pruneStates(seq);
       return res.status(200).json({
         message: `No new activity above $${MIN_USD}`,
         minAmount: Math.round(minAmount),
@@ -984,6 +1088,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let posted = 0;
     let skipped = 0;
     let newStakers = 0;
+    // A lost claim means another run owns the rest of this batch.
+    let claimFailed = false;
 
     for (const event of events) {
       // Dedupe: if we've already posted this tx hash, skip it
@@ -993,6 +1099,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const wallet = event.wallet.toLowerCase();
+
+      // CLAIM FIRST, ALERT SECOND. The old order — alert, then record — meant
+      // any lost write re-announced a stake that had already gone out. Claiming
+      // first turns that failure into a missed alert at worst, which is the
+      // quieter way to be wrong. A throw here means another run already took
+      // this number, so this one stops rather than alerting on stakes it no
+      // longer owns.
+      const claimedSeen = new Set(seenSet).add(event.txHash);
+      try {
+        seq = await saveDiscordState({
+          lastBlock: state.lastBlock, // pointer stays put until every event is handled
+          seenTxHashes: Array.from(claimedSeen),
+          knownStakers: Array.from(knownSet),
+          ...priceState,
+        }, seq);
+      } catch {
+        claimFailed = true;
+        break;
+      }
+      seenSet.add(event.txHash);
 
       // Fetch total staked, classify the wallet, and (only if Slack is on)
       // classify token provenance — all in parallel. Provenance is best-effort:
@@ -1019,34 +1145,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // Mark as seen and remember we've classified this wallet
-      seenSet.add(event.txHash);
+      // Already claimed above; just remember we've classified this wallet.
       knownSet.add(wallet);
       posted++;
       if (stakerType === 'new') newStakers++;
 
       try {
-        await saveDiscordState({
+        seq = await saveDiscordState({
           lastBlock: state.lastBlock, // don't advance block pointer until all events processed
           seenTxHashes: Array.from(seenSet),
           knownStakers: Array.from(knownSet),
           ...priceState,
-        });
+        }, seq);
       } catch (saveErr) {
-        console.warn('Failed to persist state mid-loop:', saveErr);
-        // continue — worst case, duplicate happens once; better than crashing the loop
+        // The claim is already durable, so the stake cannot be re-announced;
+        // only the wallet classification cache is lost. Keep going.
+        console.warn('Failed to persist staker cache mid-loop:', saveErr);
       }
     }
 
-    // Final save: advance the lastBlock pointer now that all events are handled
-    await saveDiscordState({
-      lastBlock: latestBlock,
-      seenTxHashes: Array.from(seenSet),
-      knownStakers: Array.from(knownSet),
-      ...priceState,
-    });
+    // Final save: advance the lastBlock pointer now that all events are handled.
+    // Held back if a claim failed, so the events left unprocessed stay in the
+    // scan window and the next run picks them up.
+    if (!claimFailed) {
+      try {
+        seq = await saveDiscordState({
+          lastBlock: latestBlock,
+          seenTxHashes: Array.from(seenSet),
+          knownStakers: Array.from(knownSet),
+          ...priceState,
+        }, seq);
+      } catch (saveErr) {
+        console.warn('Failed to advance the block pointer:', saveErr);
+      }
+    }
+    await pruneStates(seq);
 
-    return res.status(200).json({
+    return res.status(claimFailed ? 502 : 200).json({
       message: `Posted ${posted} stakes (${newStakers} new, ${posted - newStakers} returning, skipped ${skipped} duplicates)`,
       fromBlock,
       toBlock: latestBlock,
