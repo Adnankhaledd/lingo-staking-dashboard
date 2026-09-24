@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { put, list } from '@vercel/blob';
+import { put, list, del } from '@vercel/blob';
 
 /**
  * /api/lingo-buys — watches the buy-and-stake wallet for incoming USDC and
@@ -79,14 +79,24 @@ const PROJECT_SENDERS = new Set([
 ]);
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const MIN_USDC = 1;             // below this is dust / poisoning, not a buy
-// v2: v1 had already seeded the two test sends into its totals before they
-// were excluded; a new key makes the next run re-seed cleanly from START_BLOCK.
-const STATE_KEY = 'lingo-buys-state-v2.json';
+// v3 is a FOLDER of numbered, write-once state files, not one file rewritten in
+// place. Vercel Blob serves public blobs from a CDN with a ~30-day max-age, and
+// a `?t=` query string does not vary that cache, so an overwritten blob can
+// still be served stale — measured at 141s, longer than the 2-minute cron
+// period. On 2026-09-24 a run read a state that did not yet contain the buy the
+// previous run had just announced, and announced it again on every channel.
+// Numbered files are immutable, so a cached copy is always the right answer.
+// Writing the next number with allowOverwrite:false is also a compare-and-swap:
+// if two runs overlap, the second one's claim fails and it posts nothing.
+const STATE_PREFIX = 'lingo-buys-state-v3/';
+const LEGACY_STATE_KEY = 'lingo-buys-state-v2.json'; // adopted once, then unused
+const STATE_KEEP = 5;           // older numbered states are pruned
 const SEEN_LIMIT = 1000;        // rolling dedupe window of txHash:logIndex keys
 const TEST_KEY = 'lingo-buys-test.json';
 const TEST_COOLDOWN_MS = 5 * 60 * 1000;
 const LOG_PAGE_LIMIT = 9500;
 const MAX_REQUESTS = 60;
+const SEND_TIMEOUT_MS = 10_000; // a channel gets this long to accept a message
 
 interface Agg { micro: number; count: number } // micro = USDC in 6-decimal units (exact)
 interface BuysState {
@@ -134,18 +144,83 @@ async function readBlob<T>(key: string): Promise<{ data: T | null; error: boolea
   }
 }
 
-async function readState(): Promise<{ state: BuysState | null; error: boolean }> {
-  const { data, error } = await readBlob<BuysState>(STATE_KEY);
-  return { state: data, error };
+/** Zero-padded so lexicographic order matches numeric order. */
+const seqName = (n: number) => `${STATE_PREFIX}${String(n).padStart(12, '0')}.json`;
+const seqOf = (pathname: string) => {
+  const m = pathname.match(/(\d+)\.json$/);
+  return m ? parseInt(m[1], 10) : -1;
+};
+
+/** Every numbered state file currently stored, oldest first. */
+async function listStates(): Promise<Array<{ url: string; pathname: string; seq: number }>> {
+  const out: Array<{ url: string; pathname: string; seq: number }> = [];
+  let cursor: string | undefined;
+  // Paginate: a page is capped, and with zero-padded names the FIRST page holds
+  // the OLDEST entries, so taking the max of one page could miss the newest.
+  do {
+    const page = await list({ prefix: STATE_PREFIX, cursor });
+    for (const b of page.blobs) {
+      const seq = seqOf(b.pathname);
+      if (seq >= 0) out.push({ url: b.url, pathname: b.pathname, seq });
+    }
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  return out.sort((a, b) => a.seq - b.seq);
 }
 
-async function saveState(state: BuysState): Promise<void> {
+/**
+ * Read the newest state. `seq` is the number it was stored under; the next
+ * write must be seq + 1. Numbered files are never rewritten, so this read is
+ * not exposed to the CDN staleness that made a run re-announce a buy.
+ */
+async function readState(): Promise<{ state: BuysState | null; seq: number; error: boolean }> {
+  let states: Array<{ url: string; seq: number }>;
+  try {
+    states = await listStates();
+  } catch {
+    return { state: null, seq: -1, error: true };
+  }
+
+  const newest = states[states.length - 1];
+  if (!newest) {
+    // One-time migration off the single rewritten v2 file, so the totals and
+    // the dedupe window carry over instead of cold-starting.
+    const legacy = await readBlob<BuysState>(LEGACY_STATE_KEY);
+    if (legacy.error) return { state: null, seq: -1, error: true };
+    return { state: legacy.data, seq: 0, error: false };
+  }
+
+  try {
+    const res = await fetch(newest.url);
+    if (!res.ok) return { state: null, seq: newest.seq, error: true };
+    return { state: (await res.json()) as BuysState, seq: newest.seq, error: false };
+  } catch {
+    return { state: null, seq: newest.seq, error: true };
+  }
+}
+
+/**
+ * Write the next numbered state and return its number. THROWS if that number
+ * already exists — which means another run claimed it first, and this run must
+ * post nothing. Callers treat a throw as "stop", never as "carry on".
+ */
+async function saveState(state: BuysState, seq: number): Promise<number> {
+  const next = seq + 1;
   const seen = state.seen.slice(-SEEN_LIMIT);
   const keep = new Set(seen);
   const delivered = Object.fromEntries(Object.entries(state.delivered ?? {}).filter(([k]) => keep.has(k)));
-  await put(STATE_KEY, JSON.stringify({ ...state, seen, delivered, updatedAt: new Date().toISOString() }), {
-    access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json',
+  await put(seqName(next), JSON.stringify({ ...state, seen, delivered, updatedAt: new Date().toISOString() }), {
+    access: 'public', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json',
   });
+  return next;
+}
+
+/** Drop superseded state files. Best effort — never fails the run. */
+async function pruneStates(keepFrom: number): Promise<void> {
+  try {
+    const stale = (await listStates()).filter(s => s.seq <= keepFrom - STATE_KEEP);
+    if (stale.length) await del(stale.map(s => s.url));
+  } catch { /* a leftover file costs nothing; the newest still wins */ }
 }
 
 // ─── Chain ───────────────────────────────────────────────────────────────
@@ -300,7 +375,10 @@ function buildMessage(b: Buy, st: BuysState, priceUsd: number | null) {
 
 async function postSlack(payload: unknown): Promise<boolean> {
   try {
-    const res = await fetch(SLACK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    // Bounded: without this a hung POST runs to undici's 300s default, the
+    // 60s maxDuration kills the instance mid-run, and the buy is left posted
+    // but unrecorded — which is exactly how a duplicate gets made.
+    const res = await fetch(SLACK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
     return res.ok;
   } catch { return false; }
 }
@@ -347,6 +425,7 @@ async function postTelegram(text: string): Promise<boolean> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
     // Telegram can answer 200 with {ok:false}, so the body decides.
     const body = await res.json().catch(() => null);
@@ -501,10 +580,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const { state, error: readError } = await readState();
+    const { state, seq: readSeq, error: readError } = await readState();
     if (readError) {
       return res.status(503).json({ error: 'State unreadable — skipped this run rather than risk absorbing unposted buys' });
     }
+    let seq = readSeq;
 
     // ── Cold start: seed totals from history, post nothing ──
     if (!state || typeof state.lastBlock !== 'number') {
@@ -512,7 +592,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!buys) return res.status(200).json({ error: 'Log budget exhausted on cold start' });
       let st = emptyState(head);
       for (const b of buys) st = withBuy(st, b);
-      await saveState(st);
+      try {
+        seq = await saveState(st, seq);
+      } catch {
+        return res.status(502).json({ error: 'Another run seeded first — nothing posted' });
+      }
       return res.status(200).json({ message: `Cold start — seeded ${buys.length} historical buys, posted nothing`, lastBlock: head });
     }
 
@@ -534,47 +618,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let incomplete = false;
     const price = (buys.length || retries.length) ? await getLingoPriceUsd() : null;
 
-    for (const b of retries) {
-      const done = new Set(st.delivered?.[b.key] ?? []);
+    // Record each channel the moment it accepts, so a write that fails after a
+    // successful send costs at most a repeat on that ONE channel — not on all
+    // of them, and not the whole buy.
+    const sendAndRecord = async (b: Buy, done: Set<string>): Promise<boolean> => {
       for (const d of dests) {
         if (done.has(d.id)) continue;
-        if (await d.send(b, st, price)) done.add(d.id);
+        if (!(await d.send(b, st, price))) continue;
+        done.add(d.id);
+        st = { ...st, delivered: { ...st.delivered, [b.key]: [...done] } };
+        try {
+          seq = await saveState(st, seq);
+        } catch {
+          failed = 'state save failed after posting';
+          return false;
+        }
       }
-      st.delivered = { ...st.delivered, [b.key]: [...done] };
+      return true;
+    };
+
+    for (const b of retries) {
+      const done = new Set(st.delivered?.[b.key] ?? []);
+      const ok = await sendAndRecord(b, done);
       if (done.size < destIds.length) incomplete = true;
-      try { await saveState(st); } catch { failed = 'state save failed'; break; }
+      if (!ok) break;
     }
 
     for (const b of buys) {
       if (failed) break;
-      const next = withBuy(st, b);
-      // Send everywhere, then commit if ANY channel took it: the buy is
-      // announced and counted once, and whoever missed it is retried above.
-      const done: string[] = [];
-      for (const d of dests) {
-        if (await d.send(b, next, price)) done.push(d.id);
-      }
-      if (!done.length) { failed = `no channel accepted the post (${destIds.join(', ')})`; break; }
-      st = next;
-      st.delivered = { ...st.delivered, [b.key]: done };
-      if (done.length < destIds.length) incomplete = true;
-      posted++;
-      // Persist after EVERY post, keeping the old block pointer. Saving once
-      // at the end meant a failed save (or a killed run) re-posted every buy
-      // already announced, every 2 minutes until the save went through.
+      // CLAIM FIRST, POST SECOND. The old order — post, then record — meant any
+      // lost write re-announced a buy that had already gone out. Claiming first
+      // turns that failure into a two-minute delay instead: the buy is in
+      // `seen` with an empty `delivered`, which the retry pass above picks up
+      // and sends. saveState throwing here means another run already took this
+      // number, so this run must post nothing at all.
+      const claimed: BuysState = { ...withBuy(st, b), delivered: { ...st.delivered, [b.key]: [] } };
       try {
-        await saveState(st);
+        seq = await saveState(claimed, seq);
       } catch {
-        failed = 'state save failed after posting';
+        failed = 'could not claim the buy before posting — another run may hold it';
         break;
       }
+      st = claimed;
+
+      const done = new Set<string>();
+      const ok = await sendAndRecord(b, done);
+      if (done.size) posted++;
+      if (done.size < destIds.length) incomplete = true;
+      if (!ok) break;
+      if (!done.size) { failed = `no channel accepted the post (${destIds.join(', ')})`; break; }
     }
     // Only advance the pointer once the whole batch is posted and saved; the
     // seen-set keeps already-posted buys from repeating on the retry.
     if (!failed && !incomplete) {
       st.lastBlock = head;
-      try { await saveState(st); } catch { failed = 'state save failed'; }
+      try { seq = await saveState(st, seq); } catch { failed = 'state save failed'; }
     }
+    await pruneStates(seq);
 
     // A non-2xx makes a broken webhook visible in Vercel's cron logs instead
     // of stalling silently behind a 200.
