@@ -13,8 +13,14 @@
     {
       "source": "/api/(.*)",
       "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET, OPTIONS" }
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, OPTIONS"
+        }
       ]
     }
   ],
@@ -42,6 +48,10 @@
     {
       "path": "/api/slack-goal",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/staking-metrics?rebuild=1",
+      "schedule": "10 0 * * *"
     }
   ]
 }
