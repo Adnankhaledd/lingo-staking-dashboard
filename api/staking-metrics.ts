@@ -44,6 +44,10 @@ const CLOSE_TOPIC = '0x7fc4727e062e336010f2c282598ef5f14facb3de68cf8195c2f23e145
 // what to post, so a read that lags an overwrite by a minute only shows
 // yesterday's numbers briefly. cacheControlMaxAge caps how long that can last.
 const SNAPSHOT_KEY = 'staking-metrics-v1.json';
+// Bump when the snapshot shape changes: a stored snapshot of another version
+// is treated as missing, so the next request rebuilds instead of serving a
+// shape the page no longer reads.
+const SNAPSHOT_VERSION = 2;
 const MAX_REQUESTS = 160;
 const LOG_PAGE_LIMIT = 9500;
 const BLOCK_SECONDS = 2;            // Base block time — fixed by the protocol
@@ -129,7 +133,8 @@ export interface MonthlyRow {
   newWalletTiers: Record<Tier, number>;    // new wallets by first-month stake value
   lockedByBucket: Record<Bucket, number>;  // month-end, still time-locked
   totalByBucket: Record<Bucket, number>;   // month-end, locked + unlocked
-  tiers: Record<Tier, number>;             // active stakers by month-end value
+  tiers: Record<Tier, number>;             // active stakers, valued at that month-end's price
+  tiersNow: Record<Tier, number>;          // same balances, valued at today's price
 }
 
 export interface CohortRow {
@@ -144,7 +149,7 @@ export interface CohortRow {
 }
 
 export interface Snapshot {
-  version: 1;
+  version: number;
   generatedAt: string;
   asOfBlock: number;
   asOfTs: number;
@@ -264,7 +269,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   let dayStaked = 0n, dayUnstaked = 0n;
   const monthEnds: Array<{ month: string; partial: boolean; atTs: number; price: number | null;
     total: bigint; locked: bigint; byLabel: Map<string, { locked: bigint; total: bigint; positions: number }>;
-    active: number; tiers: Record<Tier, number>; cohortActive: Map<string, number> }> = [];
+    active: number; tiers: Record<Tier, number>; tiersNow: Record<Tier, number>; cohortActive: Map<string, number> }> = [];
 
   /** Everything that depends on the state at one instant: lock status, tiers, cohort survival. */
   const snapshotAt = (month: string, atTs: number, partial: boolean) => {
@@ -281,13 +286,16 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       if (p.duration !== '0' && p.unlockTs > atTs) { e.locked += amt; locked += amt; }
     }
     const tiers = zeroTiers();
+    const tiersNow = zeroTiers();
     const cohortActive = new Map<string, number>();
     for (const [user, bal] of balance) {
-      if (price != null) tiers[tierOf(toLingo(bal) * price)]++;
+      const lingo = toLingo(bal);
+      if (price != null) tiers[tierOf(lingo * price)]++;
+      if (currentPrice != null) tiersNow[tierOf(lingo * currentPrice)]++;
       const c = firstStake.get(user)!.month;
       cohortActive.set(c, (cohortActive.get(c) ?? 0) + 1);
     }
-    monthEnds.push({ month, partial, atTs, price, total: totalOpen, locked, byLabel, active: balance.size, tiers, cohortActive });
+    monthEnds.push({ month, partial, atTs, price, total: totalOpen, locked, byLabel, active: balance.size, tiers, tiersNow, cohortActive });
   };
 
   const closeDay = (day: number) => {
@@ -406,6 +414,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       lockedByBucket: Object.fromEntries(BUCKETS.map(b => [b, round(lockedByBucket[b])])) as Record<Bucket, number>,
       totalByBucket: Object.fromEntries(BUCKETS.map(b => [b, round(totalByBucket[b])])) as Record<Bucket, number>,
       tiers: e?.tiers ?? zeroTiers(),
+      tiersNow: e?.tiersNow ?? zeroTiers(),
     };
   });
 
@@ -495,7 +504,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   });
 
   return {
-    version: 1,
+    version: SNAPSHOT_VERSION,
     generatedAt: new Date(headTs * 1000).toISOString(),
     asOfBlock: head,
     asOfTs: headTs,
@@ -748,13 +757,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Serving nothing beats rebuilding on every request during a Blob outage.
       return res.status(503).json({ error: 'Snapshot unreadable — try again shortly' });
     }
-    const ageMs = stored.data ? Date.now() - Date.parse(stored.data.generatedAt) : Infinity;
+    const current = stored.data?.version === SNAPSHOT_VERSION ? stored.data : null;
+    const ageMs = current ? Date.now() - Date.parse(current.generatedAt) : Infinity;
     const tooSoon = ageMs < REBUILD_MIN_AGE_MS;
-    const needRebuild = !stored.data || ageMs > STALE_AFTER_MS || (wantsRebuild && !tooSoon);
+    const needRebuild = !current || ageMs > STALE_AFTER_MS || (wantsRebuild && !tooSoon);
 
-    if (!needRebuild && stored.data) {
+    if (!needRebuild && current) {
       res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
-      return res.status(200).json({ ...stored.data, served: 'stored', ...(wantsRebuild ? { rebuildSkipped: `last rebuild ${Math.round(ageMs / 60000)} min ago` } : {}) });
+      return res.status(200).json({ ...current, served: 'stored', ...(wantsRebuild ? { rebuildSkipped: `last rebuild ${Math.round(ageMs / 60000)} min ago` } : {}) });
     }
 
     const t0 = Date.now();
