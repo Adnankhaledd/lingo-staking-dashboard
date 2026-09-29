@@ -90,7 +90,11 @@ const SECTIONS: SectionNavItem[] = [
   { id: 'top-stakers',  label: 'Top Stakers' },
 ];
 
-export function Dashboard() {
+/**
+ * `archived`: shown at /old after the on-chain dashboard replaced this one.
+ * Its Dune queries are no longer refreshed, so it says so up front.
+ */
+export function Dashboard({ archived = false }: { archived?: boolean } = {}) {
   // Fetch data from Dune Analytics
   const {
     data: totalStakedData,
@@ -511,6 +515,13 @@ export function Dashboard() {
 
       {/* Main Content */}
       <main className="relative w-full max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
+        {archived && (
+          <div className="flagship-card px-5 py-3 mb-8 text-sm text-amber-soft">
+            Archived dashboard — its Dune data stopped updating in August 2026 and is kept only for reference.
+            The live, on-chain dashboard is at <a href="/" className="underline text-lavender">the home page</a>.
+          </div>
+        )}
+
         {/* ═══════════════════════════════════════════════════════════════
             HERO + OVERVIEW
         ═══════════════════════════════════════════════════════════════ */}

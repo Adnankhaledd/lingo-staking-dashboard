@@ -7,8 +7,10 @@ function App() {
   if (path === '/pnl') return <PnL />;
   if (path === '/data') return <Data />;
   if (path === '/supply') return <Supply />;
-  if (path === '/v2') return <DashboardV2 />;
-  return <Dashboard />;
+  // The old Dune-backed dashboard, frozen at its last data. /v2 stays as an
+  // alias because that's the link the preview was shared on.
+  if (path === '/old') return <Dashboard archived />;
+  return <DashboardV2 />;
 }
 
 export default App;

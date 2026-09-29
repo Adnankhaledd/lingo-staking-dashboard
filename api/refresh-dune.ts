@@ -62,48 +62,28 @@ function ranksFromRows(rows: Array<Record<string, unknown>>): Record<string, num
   return out;
 }
 
-// All queries with their limits
+// Queries still refreshed — only the ones a live page reads.
+//
+// The main dashboard moved to /api/staking-metrics (on-chain, via Alchemy) on
+// 2026-09-29, so its 26 staking queries are no longer pulled from Dune. What
+// is left feeds /claims and /data. The retired queries' last results are kept
+// frozen in the blob (see the merge below), so the archived dashboard at /old
+// still renders exactly as it last did.
 const QUERIES: Record<string, number> = {
-  '6590984': 1000, // TOTAL_STAKED_TREND
-  '6534908': 1000, // WEEKLY_STATS
-  '6535206': 1000, // WEEKLY_NEW_STAKERS
-  '6528806': 1000, // COHORT_RETENTION
-  '6919472': 300,  // TOP_STAKERS — match the query ID used in useDuneQuery.ts and fetch all rows
-  '6288543': 1000, // TRADING_FEES
-  '6606898': 1000, // APY_CLAIMS
-  '6535334': 1000, // MONTHLY_STAKING_FLOW
-  '6693660': 1000, // WEEKLY_STAKES
-  '6693715': 1000, // LP_FEES
-  '6708293': 1000, // MEMBERSHIP_TIERS
-  '6738028': 1000, // MONTHLY_NEW_RETURNING
-  '6738074': 50,   // STAKING_TIERS_BY_LOCK
-  '6749292': 1000, // MONTHLY_LINGO_BY_LOCK
-  '6749507': 1000, // COMMUNITY_REWARDS
-  '6760287': 1000, // BUY_PRESSURE
-  '6770827': 1000, // STAKER_TIERS_WEEKLY
-  '6511860': 10,   // LOCK_DISTRIBUTION
-  '6802863': 1000, // WEEKLY_LOCK_BREAKDOWN
+  // /claims
   '6828788': 1000, // WEEKLY_CLAIM_SUMMARY
   '6828804': 1000, // WEEKLY_CLAIMS_BY_SOURCE
   '6828795': 100,  // TOP_CLAIMERS
+  '6828894': 50,   // CLAIMS_BY_TYPE
+  '6963980': 1000, // DECUBATE_WEEKLY_CLAIMS
+  '6991693': 1000, // DECUBATE_CLAIM_FEED
+  '7708413': 100,  // CLAIMS_HOLD_BREAKDOWN
+  // /data
+  '6760287': 1000, // BUY_PRESSURE
   '6952270': 1000, // CARDS_BUY_PRESSURE
   '6952283': 1000, // FUN_BUY_PRESSURE
   '6952297': 1000, // PENGU_BUY_PRESSURE
-  '6963980': 1000, // DECUBATE_WEEKLY_CLAIMS
-  '6981059': 1000, // DECUBATE_APY_CLAIMERS
-  '6991693': 1000, // DECUBATE_CLAIM_FEED
-  '6828894': 50,   // CLAIMS_BY_TYPE
-  '7320190': 1000, // STAKE_DAILY_BREAKDOWN
-  '7340503': 1000, // STAKER_LTV
   '7340695': 1000, // FEE_WALLET_INFLOW
-  '7350883': 50,   // LTV_BY_THRESHOLD
-  '7350966': 50,   // LTV_BY_FIRST_DEPOSIT_TIER
-  '7340511': 50,   // GROWTH_TIER_DISTRIBUTION
-  '7411888': 100,  // NEW_LARGE_STAKERS
-  '7432116': 1,    // STAKERS_BY_USD_THRESHOLD (single-row snapshot)
-  '7568254': 100,  // MONTHLY_TIER_GROWTH
-  '7708413': 100,  // CLAIMS_HOLD_BREAKDOWN
-  '7866579': 50,   // TOP100_MONTHLY_STAKED
 };
 
 interface QueryResult {
@@ -253,6 +233,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
+  // Carry forward everything else already in the blob — the retired dashboard
+  // queries — untouched, so /old keeps rendering its last results.
+  for (const [queryId, existingResult] of Object.entries(existingData?.queries ?? {})) {
+    if (queryId in mergedQueries) continue;
+    mergedQueries[queryId] = existingResult;
+    if (!existingResult.error && existingResult.rows.length > 0) mergedSuccessCount++;
+  }
+
   // ── Annotate Top Stakers rows with rank-change vs previous Dune execution ─
   const topStakersResult = mergedQueries[TOP_STAKERS_QUERY_ID];
   if (topStakersResult && topStakersResult.rows.length > 0) {
@@ -345,7 +333,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const payload: BlobPayload = {
     queries: mergedQueries,
     refreshedAt: new Date().toISOString(),
-    queryCount: entries.length,
+    // Every query in the blob — refreshed ones plus retired ones kept frozen.
+    queryCount: Object.keys(mergedQueries).length,
     successCount: mergedSuccessCount,
   };
 
@@ -359,7 +348,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     console.log(`Blob written: ${blob.url}`);
-    console.log(`Result: ${newSuccessCount} new + ${mergedSuccessCount - newSuccessCount} kept = ${mergedSuccessCount}/${entries.length} total`);
+    console.log(`Result: ${newSuccessCount}/${entries.length} refreshed, ${mergedSuccessCount}/${Object.keys(mergedQueries).length} in the blob have data`);
 
     return res.status(200).json({
       message: `Refreshed ${newSuccessCount}/${entries.length} queries (${mergedSuccessCount} total with kept data)`,
