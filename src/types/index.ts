@@ -7,6 +7,8 @@ export interface KPIData {
   format?: 'number' | 'currency' | 'percent';
   trend?: 'up' | 'down' | 'neutral';
   trendValue?: number;
+  /** Decimal places for the value (default 2) — 0 for counts. */
+  decimals?: number;
 }
 
 export interface ChartDataPoint {

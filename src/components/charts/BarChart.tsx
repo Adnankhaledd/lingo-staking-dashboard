@@ -25,6 +25,8 @@ interface BarChartProps<T extends object> {
   formatXAxis?: (value: string) => string;
   /** When true, the hover tooltip adds a summed "Total" row across all bars. */
   showTotal?: boolean;
+  /** Tooltip value format — e.g. whole numbers for counts. Defaults to formatNumber. */
+  formatValue?: (value: number) => string;
 }
 
 interface CustomTooltipProps {
@@ -32,9 +34,10 @@ interface CustomTooltipProps {
   payload?: Array<{ value: number; name: string; color: string }>;
   label?: string;
   showTotal?: boolean;
+  formatValue?: (value: number) => string;
 }
 
-function CustomTooltip({ active, payload, label, showTotal }: CustomTooltipProps) {
+function CustomTooltip({ active, payload, label, showTotal, formatValue = formatNumber }: CustomTooltipProps) {
   if (!active || !payload || !payload.length) return null;
 
   const total = payload.reduce((sum, entry) => sum + (entry.value ?? 0), 0);
@@ -49,14 +52,14 @@ function CustomTooltip({ active, payload, label, showTotal }: CustomTooltipProps
             style={{ backgroundColor: entry.color }}
           />
           <span className="text-soft-gray text-sm">{entry.name}:</span>
-          <span className="text-lavender font-medium">{formatNumber(entry.value)}</span>
+          <span className="text-lavender font-medium">{formatValue(entry.value)}</span>
         </div>
       ))}
       {showTotal && payload.length > 1 && (
         <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
           <div className="w-2 h-2 rounded-full bg-transparent" />
           <span className="text-soft-gray text-sm font-semibold">Total:</span>
-          <span className="text-lavender font-bold">{formatNumber(total)}</span>
+          <span className="text-lavender font-bold">{formatValue(total)}</span>
         </div>
       )}
     </div>
@@ -72,6 +75,7 @@ export function BarChartComponent<T extends object>({
   showLegend = true,
   formatXAxis = formatChartDate,
   showTotal = false,
+  formatValue,
 }: BarChartProps<T>) {
   return (
     <ResponsiveContainer minWidth={0} width="100%" height={height}>
@@ -124,7 +128,7 @@ export function BarChartComponent<T extends object>({
           width={60}
         />
 
-        <Tooltip content={<CustomTooltip showTotal={showTotal} />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
+        <Tooltip content={<CustomTooltip showTotal={showTotal} formatValue={formatValue} />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
 
         {showLegend && (
           <Legend

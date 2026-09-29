@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import { ArrowUp, ArrowDown, Minus } from 'lucide-react';
-import { formatNumber } from '../../utils/formatters';
 import type { MonthlyTierGrowthRow } from '../../hooks/useDuneQuery';
 
 interface TierGrowthTableProps {
@@ -86,7 +85,7 @@ function HeatmapCell({ value, prev }: { value: number; prev: number | null }) {
   return (
     <td className="py-3 px-4 text-right transition-colors" style={style}>
       <div className="font-semibold text-lavender text-base leading-tight">
-        {formatNumber(value)}
+        {value.toLocaleString()}
       </div>
       {delta == null || pct == null ? (
         <div className="text-[10px] text-purple-gray mt-0.5">—</div>

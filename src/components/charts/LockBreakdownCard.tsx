@@ -4,7 +4,7 @@ import {
 } from 'recharts';
 import { ShieldCheck, Unlock } from 'lucide-react';
 import { formatNumber } from '../../utils/formatters';
-import { useStakeLockBreakdown, type LockHistoryRow } from '../../hooks/useStakeLockBreakdown';
+import { useStakeLockBreakdown, type LockBreakdown, type LockHistoryRow } from '../../hooks/useStakeLockBreakdown';
 
 // Tier display order + colors (longest lock = warmest).
 const TIER_ORDER = ['Flexible', '1 Month', '3 Months', '6 Months', '12 Months', '24 Months', 'Other'];
@@ -34,8 +34,17 @@ function monthLabel(ym: string): string {
   return `${MONTH_NAMES[m - 1]} '${String(y).slice(2)}`;
 }
 
-export function LockBreakdownCard() {
-  const { data, isLoading, error } = useStakeLockBreakdown();
+interface LockBreakdownCardProps {
+  /** Supply the breakdown directly (e.g. from /api/staking-metrics) to skip the fetch. */
+  data?: LockBreakdown | null;
+  isLoading?: boolean;
+}
+
+export function LockBreakdownCard({ data: supplied, isLoading: suppliedLoading }: LockBreakdownCardProps = {}) {
+  const fetched = useStakeLockBreakdown(supplied === undefined);
+  const data = supplied === undefined ? fetched.data : supplied;
+  const isLoading = supplied === undefined ? fetched.isLoading : !!suppliedLoading;
+  const error = supplied === undefined ? fetched.error : null;
 
   // Which tiers actually appear, after folding odd durations into "Other".
   const tierKeys = useMemo(() => {

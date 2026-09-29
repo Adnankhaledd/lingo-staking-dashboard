@@ -39,12 +39,18 @@ interface Result {
   error: string | null;
 }
 
-export function useStakeLockBreakdown(): Result {
+/**
+ * `enabled: false` skips the request — for callers that already hold the same
+ * data from /api/staking-metrics, where it costs no Alchemy calls at all.
+ * (/api/stake-lock-breakdown rebuilds the full history on every CDN miss.)
+ */
+export function useStakeLockBreakdown(enabled = true): Result {
   const [data, setData] = useState<LockBreakdown | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     const base = import.meta.env.DEV ? 'http://localhost:3000' : '';
     fetch(`${base}/api/stake-lock-breakdown`)
@@ -57,7 +63,7 @@ export function useStakeLockBreakdown(): Result {
       .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load'); })
       .finally(() => { if (!cancelled) setIsLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [enabled]);
 
   return { data, isLoading, error };
 }

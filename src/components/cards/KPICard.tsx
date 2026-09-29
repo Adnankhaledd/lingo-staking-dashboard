@@ -8,13 +8,13 @@ interface KPICardProps {
 }
 
 export function KPICard({ data, index = 0 }: KPICardProps) {
-  const { label, value, format, suffix, trend, trendValue } = data;
+  const { label, value, format, suffix, trend, trendValue, decimals = 2 } = data;
 
   const formattedValue = format === 'percent'
     ? formatPercent(value, 1)
     : format === 'currency'
     ? '$' + formatNumber(value)
-    : formatNumber(value, 2);
+    : formatNumber(value, decimals);
 
   const TrendIcon = trend === 'up'
     ? TrendingUp

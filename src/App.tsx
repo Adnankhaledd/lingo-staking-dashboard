@@ -1,4 +1,4 @@
-import { Dashboard, Admin, Claims, PnL, Data, Supply } from './pages';
+import { Dashboard, DashboardV2, Admin, Claims, PnL, Data, Supply } from './pages';
 
 function App() {
   const path = window.location.pathname;
@@ -7,6 +7,7 @@ function App() {
   if (path === '/pnl') return <PnL />;
   if (path === '/data') return <Data />;
   if (path === '/supply') return <Supply />;
+  if (path === '/v2') return <DashboardV2 />;
   return <Dashboard />;
 }
 
