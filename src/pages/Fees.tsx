@@ -182,6 +182,7 @@ export function Fees() {
                 formatXAxis={v => v}
                 formatValue={v => usd(v)}
                 showTotal
+                animate={false}
                 bars={[
                   { dataKey: 'treasury', name: 'Treasury fees', color: '#FFD75E', stackId: 'f' },
                   { dataKey: 'lp', name: 'Liquidity pool fees', color: '#7B68AE', stackId: 'f' },

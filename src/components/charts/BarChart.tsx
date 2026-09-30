@@ -27,6 +27,8 @@ interface BarChartProps<T extends object> {
   showTotal?: boolean;
   /** Tooltip value format — e.g. whole numbers for counts. Defaults to formatNumber. */
   formatValue?: (value: number) => string;
+  /** Set false to draw the bars complete at once (screenshots, background tabs). */
+  animate?: boolean;
 }
 
 interface CustomTooltipProps {
@@ -76,6 +78,7 @@ export function BarChartComponent<T extends object>({
   formatXAxis = formatChartDate,
   showTotal = false,
   formatValue,
+  animate = true,
 }: BarChartProps<T>) {
   return (
     <ResponsiveContainer minWidth={0} width="100%" height={height}>
@@ -149,6 +152,7 @@ export function BarChartComponent<T extends object>({
             fill={`url(#barGradient-${String(bar.dataKey)})`}
             stackId={bar.stackId}
             radius={bar.stackId ? [0, 0, 0, 0] : [4, 4, 0, 0]}
+            isAnimationActive={animate}
             animationDuration={1000}
             animationEasing="ease-out"
           />
