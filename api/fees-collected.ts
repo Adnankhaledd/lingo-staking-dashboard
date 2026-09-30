@@ -60,6 +60,11 @@ const DAY = 86_400;
 // filed by its own timestamp. The margin makes a slightly-off estimate harmless.
 const BLOCK_MARGIN = 43_200;            // ~1 day of Base blocks
 const BLOCK_SECONDS = 2;
+// Start from chunks this size and only split further on a full page. Asking
+// for a whole month at once made the node do a month-long scan of LINGO's
+// entire transfer history per request.
+const INITIAL_CHUNK_BLOCKS = 100_000;   // ~2.3 days
+const RETRIES = 3;
 
 // ─── Who sent it ─────────────────────────────────────────────────────────
 
@@ -229,29 +234,51 @@ interface RawLog { topics: string[]; data: string; blockNumber: string; blockTim
 
 class Budget {
   left = MAX_REQUESTS;
-  take() { if (this.left <= 0) return false; this.left--; return true; }
+  calls = 0;
+  retries = 0;
+  errors: string[] = [];
+  take() { if (this.left <= 0) return false; this.left--; this.calls++; return true; }
+  note(e: string) { if (this.errors.length < 8 && !this.errors.includes(e)) this.errors.push(e); }
 }
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** Rate limits and server errors are retried, not treated as "range too big". */
+const isTransient = (status: number, msg: string) =>
+  status === 429 || status >= 500 || /rate|capacity|timeout|timed out|exceeded.*compute|throughput/i.test(msg);
+
 async function rpc<T>(method: string, params: unknown[], budget: Budget): Promise<{ ok: true; result: T } | { ok: false; error: string }> {
-  if (!budget.take()) return { ok: false, error: 'request budget exhausted' };
-  try {
-    const res = await fetch(ALCHEMY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    });
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-    const data = await res.json();
-    if (data.error) return { ok: false, error: JSON.stringify(data.error).slice(0, 200) };
-    return { ok: true, result: data.result as T };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'fetch failed' };
+  for (let attempt = 0; ; attempt++) {
+    if (!budget.take()) return { ok: false, error: 'request budget exhausted' };
+    let status = 0, error = '';
+    try {
+      const res = await fetch(ALCHEMY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      });
+      status = res.status;
+      if (res.ok) {
+        const data = await res.json();
+        if (!data.error) return { ok: true, result: data.result as T };
+        error = JSON.stringify(data.error).slice(0, 200);
+      } else {
+        error = `HTTP ${res.status}`;
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'fetch failed';
+      status = 599;
+    }
+    budget.note(`${method}: ${error}`);
+    if (attempt >= RETRIES || !isTransient(status, error)) return { ok: false, error };
+    budget.retries++;
+    await sleep(400 * 2 ** attempt);
   }
 }
 
 async function getAllLogs(filter: Record<string, unknown>, from: number, to: number, budget: Budget): Promise<RawLog[]> {
   const out: RawLog[] = [];
-  const stack: Array<[number, number]> = [[from, to]];
+  const stack: Array<[number, number]> = [];
+  for (let hi = to; hi >= from; hi -= INITIAL_CHUNK_BLOCKS) stack.push([Math.max(from, hi - INITIAL_CHUNK_BLOCKS + 1), hi]);
   while (stack.length) {
     const [lo, hi] = stack.pop()!;
     if (lo > hi) continue;
@@ -354,10 +381,8 @@ async function computeMonth(month: string, ctx: Ctx): Promise<MonthRecord> {
     : ctx.headTs - (ctx.head - parseInt(log.blockNumber, 16)) * BLOCK_SECONDS;
   const inMonth = (ts: number) => ts >= startTs && ts < endTs;
 
-  const [transferLogs, swapLogs] = await Promise.all([
-    getAllLogs({ address: LINGO_TOKEN, topics: [TRANSFER_TOPIC, null, '0x' + TREASURY.slice(2).padStart(64, '0')] }, from, to, ctx.budget),
-    getAllLogs({ address: POOL, topics: [SWAP_TOPIC] }, from, to, ctx.budget),
-  ]);
+  const transferLogs = await getAllLogs({ address: LINGO_TOKEN, topics: [TRANSFER_TOPIC, null, '0x' + TREASURY.slice(2).padStart(64, '0')] }, from, to, ctx.budget);
+  const swapLogs = await getAllLogs({ address: POOL, topics: [SWAP_TOPIC] }, from, to, ctx.budget);
 
   const transfers: TransferIn[] = [];
   for (const log of transferLogs) {
@@ -419,7 +444,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (wantsRebuild && !isCron && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
 
   const t0 = Date.now();
+  let ctx: Ctx | null = null;
   try {
+    // Diagnostics: compute one month without storing it.
+    if (typeof req.query.month === 'string' && (isCron || isAdmin)) {
+      ctx = await loadContext();
+      const rec = await computeMonth(req.query.month, ctx);
+      return res.status(200).json({ ...rec, calls: ctx.budget.calls, retries: ctx.budget.retries, errors: ctx.budget.errors, elapsedMs: Date.now() - t0 });
+    }
+
     const summary = await readSummary();
     const age = summary ? Date.now() - Date.parse(summary.generatedAt) : Infinity;
     const serveStored = summary?.complete && (wantsRebuild ? age < REBUILD_MIN_AGE_MS : age < SUMMARY_FRESH_MS);
@@ -428,7 +461,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ...summary, served: 'stored' });
     }
 
-    const ctx = await loadContext();
+    ctx = await loadContext();
     const currentMonth = monthOfTs(ctx.headTs);
     const months: string[] = [];
     for (let m = FIRST_MONTH; m <= currentMonth; m = nextMonth(m)) months.push(m);
@@ -481,6 +514,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     return res.status(200).json({ ...out, served: 'built', elapsedMs: Date.now() - t0 });
   } catch (error) {
-    return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error', elapsedMs: Date.now() - t0 });
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : 'Unknown error',
+      calls: ctx?.budget.calls, retries: ctx?.budget.retries, errors: ctx?.budget.errors,
+      elapsedMs: Date.now() - t0,
+    });
   }
 }
