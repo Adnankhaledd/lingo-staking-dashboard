@@ -1,4 +1,4 @@
-import { Dashboard, DashboardV2, Admin, Claims, PnL, Data, Supply } from './pages';
+import { Dashboard, DashboardV2, Admin, Claims, PnL, Data, Supply, Fees } from './pages';
 
 function App() {
   const path = window.location.pathname;
@@ -10,6 +10,7 @@ function App() {
   // The old Dune-backed dashboard, frozen at its last data. /v2 stays as an
   // alias because that's the link the preview was shared on.
   if (path === '/old') return <Dashboard archived />;
+  if (path === '/fees') return <Fees />;
   return <DashboardV2 />;
 }
 
