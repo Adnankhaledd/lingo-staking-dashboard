@@ -4,29 +4,35 @@ import { put, list } from '@vercel/blob';
 /**
  * /api/fees-collected — fees since launch, from on-chain data via Alchemy.
  * Replaces the two frozen Dune queries behind the old "Total Fees Collected"
- * card (6288543 treasury fees, 6693715 LP fees), keeping their definitions:
+ * card (6288543, 6693715).
  *
- *   Treasury fees  LINGO transferred INTO the Treasury, each transfer ≤ 100k
- *                  (larger ones are internal moves, as in the Dune query).
- *                  Valued at the LINGO price ON THE DAY it arrived — the Dune
- *                  query used a monthly average and hardcoded $0.50 / $0.40
- *                  for the launch months.
- *   LP fees        The LINGO/WETH V3 pool's fee tier × its swap volume, which
- *                  is what the pool paid its liquidity providers.
+ * TREASURY FEES. The LINGO token takes a transfer fee on every non-exempt
+ * transfer (LingoToken._executeTransfer, verified source on Blockscout):
+ *     _transfer(from, treasuryWallet, fee);      // fee
+ *     _transfer(from, to, amount - fee);         // net leg, the very next log
+ * The rate is read from the token's TransferFeeUpdated events: 2% for the
+ * first hour after deployment (Dec 10 2024), then 1.25%, switched to 0% on
+ * Sep 22 2026. treasuryWallet has been the same address since deployment.
+ * So an inflow is a fee only while the rate is above zero, and every inflow of
+ * VERIFY_MIN_LINGO or more is checked for its net leg — a transfer straight
+ * into the Treasury (a deposit) has none. Fees paid by project wallets, reward
+ * and vesting contracts are the project paying itself and are not counted.
  *
- * Nothing is dropped from the Treasury side: every inflow is tagged by who
- * sent it (users, swap routers, DEX pools, project wallets, claim contracts,
- * mints), and the page decides what counts as a fee. That way the definition
- * can change without re-reading a million events.
+ * LP FEES. The LINGO/WETH V3 pool's fee tier × its swap volume — what the pool
+ * paid its liquidity providers. Same method as the Dune query.
  *
- * SCALE. ~750k Treasury transfers and ~250k swaps since launch — far too much
- * for one 60s call. So each month is computed once and stored write-once
- * under fees-v1/months/; a call processes as many missing months as fit in
- * its time budget and reports progress. Once history is filled, a refresh
- * only re-reads the current month (a handful of requests).
+ * PRICES come from the pool itself: each swap is valued by its WETH side ×
+ * ETH/USD, and a day's LINGO price is the pool's volume-weighted average. The
+ * Alchemy LINGO price feed is used only for a day with no swaps — it disagreed
+ * with the pool by 1.6–2.7× in Jan–Mar 2026.
  *
- *   GET             summary (fills missing months first if needed)
- *   GET ?rebuild=1  (cron/admin) recompute the current month, at most every 30 min
+ * SCALE. ~750k Treasury transfers and ~250k swaps since launch, so each
+ * finished month is computed once and stored write-once; a call fills as many
+ * missing months as fit in its time budget and reports progress.
+ *
+ *   GET                    summary (fills missing months first if needed)
+ *   GET ?rebuild=1         (cron/admin) recompute the current month, at most every 30 min
+ *   GET ?month=YYYY-MM     (cron/admin) one month, not stored, with diagnostics
  */
 
 export const config = { maxDuration: 60 };
@@ -44,10 +50,17 @@ const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 // keccak256("Swap(address,address,int256,int256,uint160,uint128,int24)") — Uniswap V3
 const SWAP_TOPIC = '0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67';
 const ZERO = '0x0000000000000000000000000000000000000000';
+// keccak256("TransferFeeUpdated(uint256)") on the LINGO token
+const FEE_UPDATED_TOPIC = '0xf9f635b7cf851af6071aaf78ef8a5f752dc52f19d556fea4512b0c2ad4baea72';
 
 const FIRST_MONTH = '2024-12';          // launch
-const MONTH_PREFIX = 'fees-v1/months/';
-const SUMMARY_KEY = 'fees-v1/summary.json';
+// v2: transfer-fee verification + pool pricing. v1 files are left untouched.
+const MONTH_PREFIX = 'fees-v2/months/';
+const SUMMARY_KEY = 'fees-v2/summary.json';
+// Inflows this large are checked for the net leg that proves a transfer fee.
+// Below it a deposit would be immaterial, and routers/pools never deposit.
+const VERIFY_MIN_LINGO = 1_000;
+const VERIFY_BATCH = 40;
 const MAX_TRANSFER_LINGO = 100_000;     // same cut-off as Dune query 6288543
 const DUST_LINGO = 1;                   // below this is address-poisoning dust
 const WORK_BUDGET_MS = 40_000;
@@ -68,8 +81,11 @@ const RETRIES = 3;
 
 // ─── Who sent it ─────────────────────────────────────────────────────────
 
-export type SenderCategory = 'user' | 'router' | 'dex' | 'project' | 'claims' | 'mint';
-export const CATEGORIES: SenderCategory[] = ['user', 'router', 'dex', 'project', 'claims', 'mint'];
+// 'deposit' = sent straight to the Treasury (no net leg), or sent while the fee
+// was 0%. Everything in user/router/dex is a verified or small transfer fee.
+export type SenderCategory = 'user' | 'router' | 'dex' | 'project' | 'claims' | 'mint' | 'deposit';
+export const CATEGORIES: SenderCategory[] = ['user', 'router', 'dex', 'project', 'claims', 'mint', 'deposit'];
+export const FEE_CATEGORIES: SenderCategory[] = ['user', 'router', 'dex'];
 
 // Same lists as api/backfill-stake-sources.ts (api/ can't share modules).
 const PROJECT_WALLETS: Record<string, string> = {
@@ -120,7 +136,7 @@ const ROUTERS: Record<string, string> = {
   '0x411d2c093e4c2e69bf0d8e94be1bf13dadd879c6': 'an aggregator', '0xd688ab46dc476a05a093e4442d06ceb348adbda8': 'an aggregator',
 };
 
-function categoryOf(addr: string): { category: SenderCategory; label: string | null } {
+function categoryOf(addr: string): { category: Exclude<SenderCategory, 'deposit'>; label: string | null } {
   if (addr === ZERO) return { category: 'mint', label: 'Mint' };
   if (PROJECT_WALLETS[addr]) return { category: 'project', label: PROJECT_WALLETS[addr] };
   if (CLAIM_CONTRACTS[addr]) return { category: 'claims', label: CLAIM_CONTRACTS[addr] };
@@ -134,13 +150,16 @@ function categoryOf(addr: string): { category: SenderCategory; label: string | n
 export interface Agg { lingo: number; usd: number; transfers: number }
 
 export interface MonthRecord {
-  version: 1;
+  version: 2;
   month: string;                 // YYYY-MM
   final: boolean;                // a finished month, stored once
   computedAt: string;
-  avgPrice: number | null;       // mean daily LINGO/USD over the month
+  avgPrice: number | null;       // mean daily LINGO/USD (pool VWAP) over the month
+  pricedFromPoolDays: number;    // days valued from the pool's own trades
+  pricedFromFeedDays: number;    // days with no swaps, valued from the Alchemy feed
   treasury: {
     byCategory: Record<SenderCategory, Agg>;   // transfers ≥ 1 and ≤ 100k LINGO
+    verified: { checked: number; fees: number; deposits: number };
     uniqueSenders: number;
     dust: Agg;                                  // < 1 LINGO
     over100k: Agg;                              // excluded, as in the Dune query
@@ -150,67 +169,116 @@ export interface MonthRecord {
 }
 
 export interface Summary {
-  version: 1;
+  version: 2;
   generatedAt: string;
   complete: boolean;
   pool: { address: string; feeTier: number; lingoIsToken0: boolean };
+  /** The token's transfer-fee rate over time, from TransferFeeUpdated events. */
+  feeSchedule: Array<{ fromBlock: number; fromTs: number; bps: number }>;
   months: MonthRecord[];
 }
 
 // ─── Pure aggregation (exported for tests) ───────────────────────────────
 
-export interface TransferIn { ts: number; from: string; lingo: number }
-export interface SwapIn { ts: number; lingoDelta: number }
+export interface TransferIn { ts: number; block: number; from: string; lingo: number; feeActive: boolean; verified?: boolean }
+export interface SwapIn { ts: number; lingoDelta: number; wethDelta: number }
 
 const zeroAgg = (): Agg => ({ lingo: 0, usd: 0, transfers: 0 });
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** A day's LINGO/USD from the pool's own trades (volume-weighted). */
+export function poolDailyPrices(swaps: SwapIn[], ethPriceAt: (day: number) => number | null): Map<number, number> {
+  const acc = new Map<number, { usd: number; lingo: number }>();
+  for (const s of swaps) {
+    const day = Math.floor(s.ts / DAY);
+    const eth = ethPriceAt(day);
+    if (eth == null || s.lingoDelta === 0) continue;
+    const a = acc.get(day) ?? { usd: 0, lingo: 0 };
+    a.usd += Math.abs(s.wethDelta) * eth;
+    a.lingo += Math.abs(s.lingoDelta);
+    acc.set(day, a);
+  }
+  const out = new Map<number, number>();
+  for (const [day, a] of acc) if (a.lingo > 0) out.set(day, a.usd / a.lingo);
+  return out;
+}
 
 export function aggregateMonth(
   month: string,
   final: boolean,
   transfers: TransferIn[],
   swaps: SwapIn[],
-  priceAt: (day: number) => number | null,
-  feeTier: number,               // e.g. 3000 = 0.3%
+  ethPriceAt: (day: number) => number | null,
+  feedPriceAt: (day: number) => number | null,   // fallback for a day with no swaps
+  feeTier: number,                                // e.g. 3000 = 0.3%
   now: string,
 ): MonthRecord {
+  // ── LINGO price: the pool's VWAP for the day, else the nearest pool day, else the feed ──
+  const pool = poolDailyPrices(swaps, ethPriceAt);
+  const poolDays = [...pool.keys()].sort((a, b) => a - b);
+  let fromPool = 0, fromFeed = 0;
+  const priceCache = new Map<number, number | null>();
+  const lingoPriceAt = (day: number): number | null => {
+    if (priceCache.has(day)) return priceCache.get(day)!;
+    let p: number | null = pool.get(day) ?? null;
+    if (p != null) fromPool++;
+    else {
+      const earlier = poolDays.filter(d => d < day).pop();
+      const later = poolDays.find(d => d > day);
+      const near = earlier ?? later;
+      p = near != null ? pool.get(near)! : feedPriceAt(day);
+      if (near != null) fromPool++; else fromFeed++;
+    }
+    priceCache.set(day, p);
+    return p;
+  };
+
   const byCategory = Object.fromEntries(CATEGORIES.map(c => [c, zeroAgg()])) as Record<SenderCategory, Agg>;
   const dust = zeroAgg();
   const over100k = zeroAgg();
   const senders = new Map<string, { lingo: number; transfers: number }>();
+  const verified = { checked: 0, fees: 0, deposits: 0 };
 
   for (const t of transfers) {
-    const usd = t.lingo * (priceAt(Math.floor(t.ts / DAY)) ?? 0);
-    const bucket = t.lingo < DUST_LINGO ? dust : t.lingo > MAX_TRANSFER_LINGO ? over100k : byCategory[categoryOf(t.from).category];
-    bucket.lingo += t.lingo; bucket.usd += usd; bucket.transfers++;
-    if (t.lingo >= DUST_LINGO && t.lingo <= MAX_TRANSFER_LINGO) {
+    const usd = t.lingo * (lingoPriceAt(Math.floor(t.ts / DAY)) ?? 0);
+    let bucket: Agg;
+    if (t.lingo < DUST_LINGO) bucket = dust;
+    else if (t.lingo > MAX_TRANSFER_LINGO) bucket = over100k;
+    else {
+      const { category } = categoryOf(t.from);
+      if (t.verified !== undefined) { verified.checked++; if (t.verified) verified.fees++; else verified.deposits++; }
+      const isFeeCategory = FEE_CATEGORIES.includes(category);
+      bucket = byCategory[isFeeCategory && (!t.feeActive || t.verified === false) ? 'deposit' : category];
       const s = senders.get(t.from) ?? { lingo: 0, transfers: 0 };
       s.lingo += t.lingo; s.transfers++;
       senders.set(t.from, s);
     }
+    bucket.lingo += t.lingo; bucket.usd += usd; bucket.transfers++;
   }
 
   let volumeUsd = 0, volumeLingo = 0;
   for (const s of swaps) {
-    const lingo = Math.abs(s.lingoDelta);
-    volumeLingo += lingo;
-    volumeUsd += lingo * (priceAt(Math.floor(s.ts / DAY)) ?? 0);
+    volumeLingo += Math.abs(s.lingoDelta);
+    volumeUsd += Math.abs(s.wethDelta) * (ethPriceAt(Math.floor(s.ts / DAY)) ?? 0);
   }
 
   const days = new Set<number>();
   for (const t of transfers) days.add(Math.floor(t.ts / DAY));
   for (const s of swaps) days.add(Math.floor(s.ts / DAY));
-  const prices = [...days].map(d => priceAt(d)).filter((p): p is number => p != null);
+  const prices = [...days].map(d => lingoPriceAt(d)).filter((p): p is number => p != null);
 
   const roundAgg = (a: Agg): Agg => ({ lingo: r2(a.lingo), usd: r2(a.usd), transfers: a.transfers });
   return {
-    version: 1,
+    version: 2,
     month,
     final,
     computedAt: now,
     avgPrice: prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : null,
+    pricedFromPoolDays: fromPool,
+    pricedFromFeedDays: fromFeed,
     treasury: {
       byCategory: Object.fromEntries(CATEGORIES.map(c => [c, roundAgg(byCategory[c])])) as Record<SenderCategory, Agg>,
+      verified,
       uniqueSenders: senders.size,
       dust: roundAgg(dust),
       over100k: roundAgg(over100k),
@@ -230,7 +298,7 @@ export function aggregateMonth(
 
 // ─── Chain + prices ──────────────────────────────────────────────────────
 
-interface RawLog { topics: string[]; data: string; blockNumber: string; blockTimestamp?: string }
+interface RawLog { topics: string[]; data: string; blockNumber: string; blockTimestamp?: string; transactionHash: string; logIndex: string }
 
 class Budget {
   left = MAX_REQUESTS;
@@ -275,10 +343,10 @@ async function rpc<T>(method: string, params: unknown[], budget: Budget): Promis
   }
 }
 
-async function getAllLogs(filter: Record<string, unknown>, from: number, to: number, budget: Budget): Promise<RawLog[]> {
+async function getAllLogs(filter: Record<string, unknown>, from: number, to: number, budget: Budget, initialChunk = INITIAL_CHUNK_BLOCKS): Promise<RawLog[]> {
   const out: RawLog[] = [];
   const stack: Array<[number, number]> = [];
-  for (let hi = to; hi >= from; hi -= INITIAL_CHUNK_BLOCKS) stack.push([Math.max(from, hi - INITIAL_CHUNK_BLOCKS + 1), hi]);
+  for (let hi = to; hi >= from; hi -= initialChunk) stack.push([Math.max(from, hi - initialChunk + 1), hi]);
   while (stack.length) {
     const [lo, hi] = stack.pop()!;
     if (lo > hi) continue;
@@ -295,7 +363,11 @@ async function getAllLogs(filter: Record<string, unknown>, from: number, to: num
   return out;
 }
 
-async function getDailyPrices(startTs: number, endTs: number, budget: Budget): Promise<Map<number, number>> {
+/** Daily USD prices from Alchemy's history endpoint, by token address or symbol. */
+async function getDailyPrices(
+  token: { network: string; address: string } | { symbol: string },
+  startTs: number, endTs: number, budget: Budget,
+): Promise<Map<number, number>> {
   const out = new Map<number, number>();
   for (let from = startTs; from <= endTs; from += 360 * DAY) {
     const to = Math.min(endTs, from + 360 * DAY);
@@ -305,7 +377,7 @@ async function getDailyPrices(startTs: number, endTs: number, budget: Budget): P
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          network: 'base-mainnet', address: LINGO_TOKEN,
+          ...token,
           startTime: new Date(from * 1000).toISOString(), endTime: new Date(to * 1000).toISOString(), interval: '1d',
         }),
       });
@@ -342,8 +414,17 @@ const toLingo = (w: bigint) => Number(w / WEI) + Number(w % WEI) / 1e18;
 
 interface Ctx {
   head: number; headTs: number; budget: Budget;
-  priceAt: (day: number) => number | null;
+  ethPriceAt: (day: number) => number | null;
+  feedPriceAt: (day: number) => number | null;
   feeTier: number; lingoIsToken0: boolean;
+  feeSchedule: Array<{ fromBlock: number; fromTs: number; bps: number }>;
+}
+
+/** Transfer-fee rate in force at a block (0 before deployment). */
+function feeBpsAt(schedule: Ctx['feeSchedule'], block: number): number {
+  let bps = 0;
+  for (const s of schedule) { if (s.fromBlock <= block) bps = s.bps; else break; }
+  return bps;
 }
 
 async function loadContext(): Promise<Ctx> {
@@ -360,9 +441,60 @@ async function loadContext(): Promise<Ctx> {
   if (!feeRes.ok || !t0Res.ok) throw new Error('Could not read the pool');
   const feeTier = Number(BigInt(feeRes.result));
   const lingoIsToken0 = ('0x' + t0Res.result.slice(-40)).toLowerCase() === LINGO_TOKEN;
+
+  // A handful of events across the whole history: one full-range query, split only if refused.
+  const feeLogs = await getAllLogs({ address: LINGO_TOKEN, topics: [FEE_UPDATED_TOPIC] }, 0, head, budget, head + 1);
+  const feeSchedule = feeLogs
+    .map(l => ({
+      fromBlock: parseInt(l.blockNumber, 16),
+      fromTs: l.blockTimestamp ? parseInt(l.blockTimestamp, 16) : headTs - (head - parseInt(l.blockNumber, 16)) * BLOCK_SECONDS,
+      bps: Number(BigInt(l.data)),
+      logIndex: parseInt(l.logIndex, 16),
+    }))
+    .sort((a, b) => a.fromBlock - b.fromBlock || a.logIndex - b.logIndex)
+    .map(({ fromBlock, fromTs, bps }) => ({ fromBlock, fromTs, bps }));
+  if (!feeSchedule.length) throw new Error('No TransferFeeUpdated events found on the token');
+
   const [y, m] = FIRST_MONTH.split('-').map(Number);
-  const prices = await getDailyPrices(Date.UTC(y, m - 1, 1) / 1000, headTs, budget);
-  return { head, headTs, budget, priceAt: makePriceAt(prices), feeTier, lingoIsToken0 };
+  const start = Date.UTC(y, m - 1, 1) / 1000;
+  const [eth, lingo] = await Promise.all([
+    getDailyPrices({ symbol: 'ETH' }, start, headTs, budget),
+    getDailyPrices({ network: 'base-mainnet', address: LINGO_TOKEN }, start, headTs, budget),
+  ]);
+  if (!eth.size) throw new Error('No ETH price history');
+  return { head, headTs, budget, ethPriceAt: makePriceAt(eth), feedPriceAt: makePriceAt(lingo), feeTier, lingoIsToken0, feeSchedule };
+}
+
+/**
+ * Confirm transfer fees by their net leg: the fee log is followed, in the same
+ * transaction, by a Transfer from the same sender. Batched JSON-RPC.
+ */
+async function verifyFees(cands: Array<{ from: string; block: number; tx: string; logIndex: number }>, budget: Budget): Promise<boolean[]> {
+  const out: boolean[] = new Array(cands.length).fill(false);
+  for (let i = 0; i < cands.length; i += VERIFY_BATCH) {
+    const chunk = cands.slice(i, i + VERIFY_BATCH);
+    if (!budget.take()) throw new Error('Request budget exhausted');
+    const body = chunk.map((c, j) => ({
+      jsonrpc: '2.0', id: j, method: 'eth_getLogs',
+      params: [{ address: LINGO_TOKEN, topics: [TRANSFER_TOPIC, '0x' + c.from.slice(2).padStart(64, '0')], fromBlock: '0x' + c.block.toString(16), toBlock: '0x' + c.block.toString(16) }],
+    }));
+    let results: Array<{ id: number; result?: RawLog[] }> | null = null;
+    for (let attempt = 0; attempt <= RETRIES && !results; attempt++) {
+      try {
+        const res = await fetch(ALCHEMY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (res.ok) { const j = await res.json(); if (Array.isArray(j)) results = j; }
+        else budget.note(`verify batch: HTTP ${res.status}`);
+      } catch (e) { budget.note(`verify batch: ${e instanceof Error ? e.message : 'failed'}`); }
+      if (!results) { budget.retries++; await sleep(400 * 2 ** attempt); }
+    }
+    if (!results) throw new Error('Fee verification failed');
+    for (const r of results) {
+      const c = chunk[r.id];
+      const logs = r.result ?? [];
+      out[i + r.id] = logs.some(l => l.transactionHash === c.tx && parseInt(l.logIndex, 16) === c.logIndex + 1);
+    }
+  }
+  return out;
 }
 
 const monthStartTs = (month: string) => { const [y, m] = month.split('-').map(Number); return Date.UTC(y, m - 1, 1) / 1000; };
@@ -385,21 +517,33 @@ async function computeMonth(month: string, ctx: Ctx): Promise<MonthRecord> {
   const swapLogs = await getAllLogs({ address: POOL, topics: [SWAP_TOPIC] }, from, to, ctx.budget);
 
   const transfers: TransferIn[] = [];
+  const cands: Array<{ from: string; block: number; tx: string; logIndex: number; at: number }> = [];
   for (const log of transferLogs) {
     const ts = tsOf(log);
     if (!inMonth(ts) || log.topics.length < 3) continue;
-    transfers.push({ ts, from: ('0x' + log.topics[1].slice(26)).toLowerCase(), lingo: toLingo(BigInt(log.data)) });
+    const block = parseInt(log.blockNumber, 16);
+    const from = ('0x' + log.topics[1].slice(26)).toLowerCase();
+    const lingo = toLingo(BigInt(log.data));
+    const feeActive = feeBpsAt(ctx.feeSchedule, block) > 0;
+    transfers.push({ ts, block, from, lingo, feeActive });
+    if (feeActive && lingo >= VERIFY_MIN_LINGO && lingo <= MAX_TRANSFER_LINGO && FEE_CATEGORIES.includes(categoryOf(from).category)) {
+      cands.push({ from, block, tx: log.transactionHash, logIndex: parseInt(log.logIndex, 16), at: transfers.length - 1 });
+    }
   }
+  const ok = await verifyFees(cands, ctx.budget);
+  cands.forEach((c, i) => { transfers[c.at].verified = ok[i]; });
+
+  const signed = (hex: string) => { const v = int256(hex); return Number(v / WEI) + Number(v % WEI) / 1e18; };
   const swaps: SwapIn[] = [];
   for (const log of swapLogs) {
     const ts = tsOf(log);
     if (!inMonth(ts) || log.data.length < 130) continue;
-    const amount0 = int256(log.data.slice(2, 66));
-    const amount1 = int256(log.data.slice(66, 130));
-    const d = ctx.lingoIsToken0 ? amount0 : amount1;
-    swaps.push({ ts, lingoDelta: Number(d / WEI) + Number(d % WEI) / 1e18 });
+    const a0 = signed(log.data.slice(2, 66));
+    const a1 = signed(log.data.slice(66, 130));
+    // WETH has 18 decimals, like LINGO.
+    swaps.push({ ts, lingoDelta: ctx.lingoIsToken0 ? a0 : a1, wethDelta: ctx.lingoIsToken0 ? a1 : a0 });
   }
-  return aggregateMonth(month, !current, transfers, swaps, ctx.priceAt, ctx.feeTier, new Date().toISOString());
+  return aggregateMonth(month, !current, transfers, swaps, ctx.ethPriceAt, ctx.feedPriceAt, ctx.feeTier, new Date().toISOString());
 }
 
 // ─── Storage ─────────────────────────────────────────────────────────────
@@ -499,10 +643,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (finals.some(f => !f)) return res.status(503).json({ error: 'A stored month could not be read — try again' });
 
     const out: Summary = {
-      version: 1,
+      version: 2,
       generatedAt: new Date().toISOString(),
       complete: !!current,
       pool: { address: POOL, feeTier: ctx.feeTier, lingoIsToken0: ctx.lingoIsToken0 },
+      feeSchedule: ctx.feeSchedule,
       months: [...(finals as MonthRecord[]), ...(current ? [current] : [])],
     };
     // Display-only summary, so a single overwritten key is fine (it decides nothing).
