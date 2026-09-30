@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, Legend } from 'recharts';
 import { Header } from '../components/layout';
 import { ChartCard } from '../components/cards';
 import { BarChartComponent } from '../components/charts';
@@ -43,6 +44,21 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const monthLabel = (ym: string) => { const [y, m] = ym.split('-').map(Number); return `${MONTHS[m - 1]} '${String(y).slice(2)}`; };
 const usd = (n: number) => '$' + Math.round(n).toLocaleString();
 const usdShort = (n: number) => '$' + formatNumber(n, n >= 1_000_000 ? 2 : 1);
+/** Bar labels: $539K, $1.5K, $820 — short enough to sit above a narrow bar. */
+const usdLabel = (n: number) => n >= 1000 ? '$' + formatNumber(n, n >= 10_000 ? 0 : 1) : '$' + Math.round(n);
+
+function MonthlyTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ payload: { treasury: number; lp: number; total: number } }>; label?: string }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="custom-tooltip">
+      <p className="text-soft-gray text-xs mb-2">{label}</p>
+      <p className="text-sm"><span className="text-soft-gray">Treasury fees: </span><span className="text-lavender font-medium">{usd(p.treasury)}</span></p>
+      <p className="text-sm"><span className="text-soft-gray">Pool fees: </span><span className="text-lavender font-medium">{usd(p.lp)}</span></p>
+      <p className="text-sm mt-1 pt-1 border-t border-white/10"><span className="text-soft-gray">Total: </span><span className="text-lavender font-bold">{usd(p.total)}</span></p>
+    </div>
+  );
+}
 
 function useFees() {
   const [data, setData] = useState<Summary | null>(null);
@@ -97,6 +113,14 @@ export function Fees() {
     }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [rows]);
+
+  // Monthly amounts, each month on its own.
+  const monthly = rows.map(r => ({
+    month: r.label,
+    treasury: Math.round(r.treasuryUsd),
+    lp: Math.round(r.lpUsd),
+    total: Math.round(r.treasuryUsd + r.lpUsd),
+  }));
 
   // Cumulative: launch month alone is ~60% of the total, so a monthly view
   // flattens everything after it. The by-year table carries the breakdown.
@@ -168,6 +192,31 @@ export function Fees() {
         </div>
 
         {/* Monthly */}
+        <div className="mb-5">
+          <ChartCard
+            title="Fees per Month"
+            subtitle="Each month's fees in USD, valued at the LINGO price on the day each was paid · total above every bar"
+            isLoading={isLoading}
+            onExport={() => exportToCSV(monthly, 'lingo_fees_per_month')}
+          >
+            {monthly.length ? (
+              <ResponsiveContainer minWidth={0} width="100%" height={320}>
+                <BarChart data={monthly} margin={{ top: 24, right: 10, left: 0, bottom: 0 }} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                  <XAxis dataKey="month" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }} axisLine={false} tickLine={false} dy={10} interval={0} angle={-35} textAnchor="end" height={50} />
+                  <YAxis tickFormatter={v => '$' + formatNumber(v, 0)} stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 12 }} axisLine={false} tickLine={false} dx={-10} width={60} />
+                  <Tooltip content={<MonthlyTooltip />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
+                  <Legend wrapperStyle={{ paddingTop: 12 }} formatter={v => <span className="text-soft-gray text-sm">{v}</span>} />
+                  <Bar dataKey="treasury" name="Treasury fees" stackId="m" fill="#FFD75E" isAnimationActive={false} />
+                  <Bar dataKey="lp" name="Liquidity pool fees" stackId="m" fill="#7B68AE" isAnimationActive={false}>
+                    <LabelList dataKey="total" position="top" formatter={v => usdLabel(Number(v))} style={{ fill: 'rgba(255,255,255,0.75)', fontSize: 11 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <div className="h-[320px] flex items-center justify-center text-soft-gray">{isLoading ? 'Loading…' : 'No data'}</div>}
+          </ChartCard>
+        </div>
+
         <div className="mb-5">
           <ChartCard
             title="Cumulative Fees Since Launch"
