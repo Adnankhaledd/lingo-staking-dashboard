@@ -546,6 +546,76 @@ async function computeMonth(month: string, ctx: Ctx): Promise<MonthRecord> {
   return aggregateMonth(month, !current, transfers, swaps, ctx.ethPriceAt, ctx.feedPriceAt, ctx.feeTier, new Date().toISOString());
 }
 
+// ─── Diagnostic: the other LINGO pools ───────────────────────────────────
+// Only POOL is counted. This measures every other venue's swaps so we can tell
+// whether their LP fees matter. Monthly LINGO volume per pool; valued offline.
+
+const OTHER_POOLS: Array<{ address: string; name: string; kind: 'v2' | 'v3' | 'solidly' }> = [
+  { address: '0xb08fefa8f0f01b9a224fdef416e919b1ceba0d84', name: 'LINGO/WETH V2 (0.3%)', kind: 'v2' },
+  { address: '0x6d85d9f6d80b433ef9eed943e83868d71805a6cd', name: 'LINGO/WETH V3 1%', kind: 'v3' },
+  { address: '0x675177f8ede3f25f8149b4e9df7562798014467f', name: 'Aerodrome USDC/LINGO', kind: 'solidly' },
+  { address: '0x6d2205bd16d9f132713e00fb9e1da8ffb5150d37', name: 'Aerodrome LINGO pool', kind: 'solidly' },
+  { address: '0x1ba7301b43b69f1dc9a6d2017b090a52ff386478', name: 'Aerodrome LINGO pool', kind: 'solidly' },
+  { address: '0x0191fea2ff26116dec46ea699c65b8696020e766', name: 'Aerodrome LINGO pool', kind: 'solidly' },
+];
+const V2_SWAP = '0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822';
+const SOLIDLY_SWAP = '0xb3e2773606abfd36b5bd91394b3a54d1398336c65005baf7bf7a05efeffaf75b';
+const V4_POOL_MANAGER = '0x498581ff718922c3f8e6a244956af099b2652b2b';
+const V4_INITIALIZE = '0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438';
+const V4_SWAP = '0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f';
+
+async function otherPoolsReport(ctx: Ctx) {
+  const month = (log: RawLog) => new Date((log.blockTimestamp ? parseInt(log.blockTimestamp, 16) : ctx.headTs) * 1000).toISOString().slice(0, 7);
+  const u = (hex: string) => toLingo(BigInt('0x' + hex));
+  const i = (hex: string, bits: number) => { let v = BigInt('0x' + hex); if (v >= 1n << BigInt(bits - 1)) v -= 1n << BigInt(bits); return v; };
+  const signedLingo = (v: bigint) => Number(v / WEI) + Number(v % WEI) / 1e18;
+  const out: Array<{ name: string; address: string; feeBps: number | null; swaps: number; byMonth: Record<string, { swaps: number; lingo: number; feeLingo?: number }> }> = [];
+
+  for (const p of OTHER_POOLS) {
+    const t0 = await rpc<string>('eth_call', [{ to: p.address, data: '0x0dfe1681' }, 'latest'], ctx.budget);
+    const lingoIs0 = t0.ok && ('0x' + t0.result.slice(-40)).toLowerCase() === LINGO_TOKEN;
+    const topic = p.kind === 'v2' ? V2_SWAP : p.kind === 'solidly' ? SOLIDLY_SWAP : SWAP_TOPIC;
+    const logs = await getAllLogs({ address: p.address, topics: [topic] }, 0, ctx.head, ctx.budget, ctx.head + 1);
+    let feeBps: number | null = p.kind === 'v2' ? 30 : null;
+    if (p.kind === 'v3') { const f = await rpc<string>('eth_call', [{ to: p.address, data: '0xddca3f43' }, 'latest'], ctx.budget); if (f.ok) feeBps = Number(BigInt(f.result)) / 100; }
+    const byMonth: Record<string, { swaps: number; lingo: number }> = {};
+    for (const l of logs) {
+      const d = l.data.slice(2);
+      let lingo: number;
+      if (p.kind === 'v3') lingo = Math.abs(signedLingo(i(lingoIs0 ? d.slice(0, 64) : d.slice(64, 128), 256)));
+      else { const [a0i, a1i, a0o, a1o] = [0, 64, 128, 192].map(o => u(d.slice(o, o + 64))); lingo = lingoIs0 ? Math.max(a0i, a0o) : Math.max(a1i, a1o); }
+      const m = month(l);
+      const e = byMonth[m] ?? (byMonth[m] = { swaps: 0, lingo: 0 });
+      e.swaps++; e.lingo += lingo;
+    }
+    out.push({ name: p.name, address: p.address, feeBps, swaps: logs.length, byMonth });
+  }
+
+  // Uniswap V4 is one contract for every pool: find LINGO's pools by their Initialize event.
+  const pad = '0x' + LINGO_TOKEN.slice(2).padStart(64, '0');
+  const inits = [
+    ...(await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_INITIALIZE, null, pad] }, 0, ctx.head, ctx.budget, ctx.head + 1)),
+    ...(await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_INITIALIZE, null, null, pad] }, 0, ctx.head, ctx.budget, ctx.head + 1)),
+  ];
+  for (const init of inits) {
+    const id = init.topics[1];
+    const lingoIs0 = ('0x' + init.topics[2].slice(-40)).toLowerCase() === LINGO_TOKEN;
+    const other = '0x' + (lingoIs0 ? init.topics[3] : init.topics[2]).slice(-40);
+    const logs = await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_SWAP, id] }, 0, ctx.head, ctx.budget, ctx.head + 1);
+    const byMonth: Record<string, { swaps: number; lingo: number; feeLingo: number }> = {};
+    for (const l of logs) {
+      const d = l.data.slice(2);
+      const a = signedLingo(i((lingoIs0 ? d.slice(0, 64) : d.slice(64, 128)).slice(32), 128));   // int128 in a 32-byte word
+      const fee = Number(BigInt('0x' + d.slice(-64)));                                               // pips, per swap
+      const m = month(l);
+      const e = byMonth[m] ?? (byMonth[m] = { swaps: 0, lingo: 0, feeLingo: 0 });
+      e.swaps++; e.lingo += Math.abs(a); e.feeLingo += Math.abs(a) * fee / 1_000_000;
+    }
+    out.push({ name: `Uniswap V4 LINGO/${other.slice(0, 8)}… (id ${id.slice(0, 10)}…)`, address: V4_POOL_MANAGER, feeBps: null, swaps: logs.length, byMonth });
+  }
+  return out;
+}
+
 // ─── Storage ─────────────────────────────────────────────────────────────
 
 async function readJson<T>(url: string): Promise<T | null> {
@@ -590,6 +660,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const t0 = Date.now();
   let ctx: Ctx | null = null;
   try {
+    if (req.query.otherPools === '1' && (isCron || isAdmin)) {
+      ctx = await loadContext();
+      const pools = await otherPoolsReport(ctx);
+      return res.status(200).json({ pools, calls: ctx.budget.calls, errors: ctx.budget.errors, elapsedMs: Date.now() - t0 });
+    }
+
     // Diagnostics: compute one month without storing it.
     if (typeof req.query.month === 'string' && (isCron || isAdmin)) {
       ctx = await loadContext();
