@@ -66,7 +66,7 @@ const DUST_LINGO = 1;                   // below this is address-poisoning dust
 const WORK_BUDGET_MS = 40_000;
 const SUMMARY_FRESH_MS = 6 * 60 * 60 * 1000;
 const REBUILD_MIN_AGE_MS = 30 * 60 * 1000;
-const MAX_REQUESTS = 250;
+const MAX_REQUESTS = 800;          // runaway guard per call (~60k CU worst case)
 const LOG_PAGE_LIMIT = 9500;
 const DAY = 86_400;
 // Month ranges are found by estimating blocks from the head, then every log is
