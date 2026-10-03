@@ -32,10 +32,21 @@ export function useLiveTotalStaked(pollInterval = 300_000): UseLiveTotalStakedRe
     }
   }, []);
 
+  // Poll only while the tab is visible. A dashboard left open in a background
+  // tab used to keep polling all day; every poll that misses the CDN cache is
+  // an Alchemy call. Refresh immediately when the tab comes back.
   useEffect(() => {
-    fetchTotal();
-    const interval = setInterval(fetchTotal, pollInterval);
-    return () => clearInterval(interval);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer) return;
+      fetchTotal();
+      timer = setInterval(fetchTotal, pollInterval);
+    };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const onVisibility = () => (document.hidden ? stop() : start());
+    if (document.hidden) fetchTotal(); else start();   // first paint even in a background tab
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchTotal, pollInterval]);
 
   return { totalStaked, isConfigured, isLoading };

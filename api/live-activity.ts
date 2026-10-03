@@ -1,23 +1,30 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
+/**
+ * /api/live-activity — the latest stakes of 10k+ LINGO, for the live feed.
+ *
+ * Read straight from the staking contract's Staked(user, amount, duration)
+ * events: one eth_getLogs gives the staker, amount, lock and tx for every
+ * stake, so nothing else is needed. The previous version re-read the
+ * contract's lock list (~18 eth_calls) and up to 20 full transaction
+ * receipts on every refresh just to recover the lock length the event
+ * already carries — ~1,050 CU per refresh, ~60k CU an hour whenever anyone
+ * had the page open. This is ~70 CU per refresh.
+ *
+ * `wallet` is the staker the event records. For stakes placed on a user's
+ * behalf (the buy-direct flow) that is the user, not the operator wallet that
+ * moved the tokens — which is what the old transfer-based feed showed.
+ */
+
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const STAKING_CONTRACT = (process.env.STAKING_CONTRACT_ADDRESS || '').toLowerCase();
-const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const MIN_AMOUNT = 10_000;
-
+const MAX_EVENTS = 20;
 // keccak256("Staked(address,uint256,uint256)")
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
-
-interface AlchemyTransfer {
-  blockNum: string;
-  hash: string;
-  from: string;
-  to: string;
-  value: number | null;
-  asset: string | null;
-  metadata: { blockTimestamp: string };
-}
+// Look back this far first, then further only if it held too few stakes.
+const WINDOWS_BLOCKS = [129_600, 1_209_600];   // ~3 days, ~28 days (2s blocks)
 
 interface StakingEvent {
   type: 'stake';
@@ -29,40 +36,7 @@ interface StakingEvent {
   lockDuration: string | null;
 }
 
-interface ReceiptLog {
-  address: string;
-  topics: string[];
-  data: string;
-}
-
-interface TxReceipt {
-  transactionHash: string;
-  logs: ReceiptLog[];
-}
-
-async function getStakes(): Promise<AlchemyTransfer[]> {
-  const response = await fetch(ALCHEMY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'alchemy_getAssetTransfers',
-      params: [{
-        contractAddresses: [LINGO_TOKEN],
-        category: ['erc20'],
-        toAddress: STAKING_CONTRACT,
-        maxCount: '0x32',
-        order: 'desc',
-        withMetadata: true,
-      }],
-    }),
-  });
-
-  if (!response.ok) return [];
-  const data = await response.json();
-  return data.result?.transfers ?? [];
-}
+interface RawLog { topics: string[]; data: string; blockNumber: string; blockTimestamp?: string; transactionHash: string; logIndex: string }
 
 // Exact block values from the staking contract (Base = 2 sec/block)
 const KNOWN_DURATIONS: Record<string, string> = {
@@ -82,109 +56,43 @@ function durationToLabel(val: bigint): string {
   return months > 0 ? `${months} Months` : 'Flexible';
 }
 
-// Read lock durations from the contract to build a value → label map
-async function getLockDurationsMap(): Promise<Map<bigint, string>> {
-  const map = new Map<bigint, string>();
-
-  try {
-    // Call lockDurationsCount()
-    const countRes = await fetch(ALCHEMY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1, method: 'eth_call',
-        params: [{ to: STAKING_CONTRACT, data: '0x5ef35984' }, 'latest'],
-      }),
-    });
-
-    if (!countRes.ok) return map;
-    const countData = await countRes.json();
-    const count = Number(BigInt(countData.result || '0x0'));
-
-    if (count === 0) return map;
-
-    // Batch fetch all lockDurations(i)
-    const batch = Array.from({ length: count }, (_, i) => ({
-      jsonrpc: '2.0', id: i, method: 'eth_call',
-      params: [{
-        to: STAKING_CONTRACT,
-        // lockDurations(uint256) selector + padded index
-        data: '0x32298be1' + i.toString(16).padStart(64, '0'),
-      }, 'latest'],
-    }));
-
-    const batchRes = await fetch(ALCHEMY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(batch),
-    });
-
-    if (!batchRes.ok) return map;
-    const results: { id: number; result?: string }[] = await batchRes.json();
-
-    for (const r of results) {
-      if (r.result) {
-        const val = BigInt(r.result);
-        map.set(val, durationToLabel(val));
-      }
-    }
-  } catch {
-    // Fall through — lock durations will be null
-  }
-
-  return map;
-}
-
-// Batch-fetch transaction receipts
-async function batchGetReceipts(txHashes: string[]): Promise<Map<string, TxReceipt>> {
-  const map = new Map<string, TxReceipt>();
-  if (txHashes.length === 0) return map;
-
-  const batch = txHashes.map((hash, i) => ({
-    jsonrpc: '2.0', id: i, method: 'eth_getTransactionReceipt', params: [hash],
-  }));
-
-  const response = await fetch(ALCHEMY_URL, {
+async function rpc<T>(method: string, params: unknown[]): Promise<T> {
+  const res = await fetch(ALCHEMY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(batch),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
-
-  if (!response.ok) return map;
-  const results: { result?: TxReceipt }[] = await response.json();
-
-  for (const r of results) {
-    if (r.result?.transactionHash) {
-      map.set(r.result.transactionHash.toLowerCase(), r.result);
-    }
-  }
-  return map;
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message ?? 'RPC error');
+  return data.result as T;
 }
 
-// Extract lock duration from the Staked event in a tx receipt
-function extractDuration(receipt: TxReceipt, durationMap: Map<bigint, string>): string | null {
-  for (const log of receipt.logs) {
-    if (
-      log.address.toLowerCase() === STAKING_CONTRACT &&
-      log.topics[0] === STAKED_EVENT_TOPIC
-    ) {
-      // data = abi.encode(uint256 amount, uint256 duration)
-      // 0x + 64 chars (amount) + 64 chars (duration)
-      if (log.data.length >= 130) {
-        const durationHex = '0x' + log.data.slice(66);
-        const duration = BigInt(durationHex);
-        return durationMap.get(duration) ?? durationToLabel(duration);
-      }
-    }
-  }
-  return null;
+const WEI = 10n ** 18n;
+const toLingo = (w: bigint) => Number(w / WEI) + Number(w % WEI) / 1e18;
+
+function toEvent(log: RawLog, headTs: number, head: number): StakingEvent {
+  const amount = toLingo(BigInt('0x' + log.data.slice(2, 66)));
+  const duration = BigInt('0x' + log.data.slice(66, 130));
+  const block = parseInt(log.blockNumber, 16);
+  const ts = log.blockTimestamp ? parseInt(log.blockTimestamp, 16) : headTs - (head - block) * 2;
+  return {
+    type: 'stake',
+    wallet: '0x' + log.topics[1].slice(26).toLowerCase(),
+    amount,
+    txHash: log.transactionHash,
+    timestamp: new Date(ts * 1000).toISOString(),
+    blockNum: log.blockNumber,
+    lockDuration: durationToLabel(duration),
+  };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=30');
+  // The feed tolerates a two-minute delay; every cache hit is a call not made.
+  res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=60');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -193,33 +101,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Fetch stakes and lock duration config in parallel
-    const [stakes, durationMap] = await Promise.all([
-      getStakes(),
-      getLockDurationsMap(),
-    ]);
+    const headHex = await rpc<string>('eth_blockNumber', []);
+    const head = parseInt(headHex, 16);
+    const headTs = Math.floor(Date.now() / 1000);
 
-    const filtered = stakes
-      .map(t => ({
-        type: 'stake' as const,
-        wallet: t.from,
-        amount: t.value ?? 0,
-        txHash: t.hash,
-        timestamp: t.metadata?.blockTimestamp || '',
-        blockNum: t.blockNum,
-      }))
-      .filter(e => e.amount >= MIN_AMOUNT)
-      .slice(0, 20);
-
-    // Batch-fetch receipts for filtered events to get lock durations
-    const receipts = await batchGetReceipts(filtered.map(e => e.txHash));
-
-    const events: StakingEvent[] = filtered.map(e => ({
-      ...e,
-      lockDuration: receipts.has(e.txHash.toLowerCase())
-        ? extractDuration(receipts.get(e.txHash.toLowerCase())!, durationMap)
-        : null,
-    }));
+    let events: StakingEvent[] = [];
+    for (const [i, span] of WINDOWS_BLOCKS.entries()) {
+      let logs: RawLog[];
+      try {
+        logs = await rpc<RawLog[]>('eth_getLogs', [{
+          address: STAKING_CONTRACT,
+          topics: [STAKED_EVENT_TOPIC],
+          fromBlock: '0x' + Math.max(0, head - span).toString(16),
+          toBlock: headHex,
+        }]);
+      } catch (e) {
+        // A failed wider look-back keeps what the narrower one already found.
+        if (i > 0) break;
+        throw e;
+      }
+      events = logs
+        .filter(l => l.data.length >= 130 && l.topics.length >= 2)
+        .map(l => ({ l, e: toEvent(l, headTs, head) }))
+        .filter(({ e }) => e.amount >= MIN_AMOUNT)
+        .sort((a, b) => parseInt(b.l.blockNumber, 16) - parseInt(a.l.blockNumber, 16)
+          || parseInt(b.l.logIndex, 16) - parseInt(a.l.logIndex, 16))
+        .map(({ e }) => e)
+        .slice(0, MAX_EVENTS);
+      if (events.length >= MAX_EVENTS) break;
+    }
 
     return res.status(200).json({ events, configured: true });
   } catch (error) {

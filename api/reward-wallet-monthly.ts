@@ -20,6 +20,7 @@ const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const LINGO_TOKEN = '0xfb42da273158b0f642f59f2ba7cc1d5457481677';
 const DEFAULT_WALLET = '0x64967c0dd5605dd3efc6a9bb148b2687a532c15f'; // community reward wallet
+const ALLOWED_WALLETS = new Set([DEFAULT_WALLET, '0x2f26621e931c32542579cf8860d7e8616df32e0e' /* APY wallet */]);
 const MAX_PAGES = 80; // per direction: 80 * 1000 = 80k transfers ceiling
 
 interface Transfer {
@@ -83,8 +84,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (!ALCHEMY_API_KEY) return res.status(200).json({ configured: false, error: 'ALCHEMY_API_KEY not set' });
 
-  const qWallet = req.query.wallet;
-  const wallet = (typeof qWallet === 'string' && /^0x[0-9a-fA-F]{40}$/.test(qWallet)) ? qWallet.toLowerCase() : DEFAULT_WALLET;
+  // Only the two wallets the dashboard shows. Any other ?wallet= would start an
+  // uncached full transfer scan (up to ~20k CU) under a fresh CDN cache key.
+  const qWallet = typeof req.query.wallet === 'string' ? req.query.wallet.toLowerCase() : DEFAULT_WALLET;
+  if (!ALLOWED_WALLETS.has(qWallet)) return res.status(400).json({ error: 'Unsupported wallet' });
+  const wallet = qWallet;
 
   try {
     const [out, inn] = await Promise.all([sumByMonth(wallet, 'from'), sumByMonth(wallet, 'to')]);

@@ -23,7 +23,8 @@ interface UseLiveActivityResult {
   error: string | null;
 }
 
-export function useLiveActivity(pollInterval = 60_000): UseLiveActivityResult {
+// 2 minutes, matching the endpoint's CDN cache — polling faster only re-reads the cache.
+export function useLiveActivity(pollInterval = 120_000): UseLiveActivityResult {
   const [events, setEvents] = useState<StakingEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConfigured, setIsConfigured] = useState(true);
@@ -45,10 +46,21 @@ export function useLiveActivity(pollInterval = 60_000): UseLiveActivityResult {
     }
   }, []);
 
+  // Poll only while the tab is visible. A dashboard left open in a background
+  // tab used to keep polling all day; every poll that misses the CDN cache is
+  // an Alchemy call. Refresh immediately when the tab comes back.
   useEffect(() => {
-    fetchActivity();
-    const interval = setInterval(fetchActivity, pollInterval);
-    return () => clearInterval(interval);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer) return;
+      fetchActivity();
+      timer = setInterval(fetchActivity, pollInterval);
+    };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const onVisibility = () => (document.hidden ? stop() : start());
+    if (document.hidden) fetchActivity(); else start();   // first paint even in a background tab
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchActivity, pollInterval]);
 
   return { events, isLoading, isConfigured, error };

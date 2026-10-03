@@ -67,7 +67,7 @@ const BUCKET_BY_DURATION: Record<string, Bucket> = {
 /** 1-month, 24-month and odd promo/test durations are too small to chart on their own. */
 const bucketOf = (duration: string): Bucket => BUCKET_BY_DURATION[duration] ?? 'other';
 
-// Same labels as api/stake-lock-breakdown.ts, so LockBreakdownCard renders unchanged.
+// Tier labels LockBreakdownCard expects. api/stake-lock-breakdown.ts serves this snapshot's lockBreakdown as-is.
 const DURATION_LABELS: Record<string, string> = {
   '0': 'Flexible', '1296000': '1 Month', '3888000': '3 Months',
   '7776000': '6 Months', '15552000': '12 Months', '30283200': '24 Months',
@@ -166,7 +166,7 @@ export interface Snapshot {
   monthly: MonthlyRow[];
   cohorts: CohortRow[];
   topStakers: Array<{ address: string; staked: number; locked: number; usd: number | null; positions: number; firstStake: string }>;
-  /** Same shape as /api/stake-lock-breakdown, so LockBreakdownCard can render it. */
+  /** What LockBreakdownCard renders; /api/stake-lock-breakdown serves it read-only. */
   lockBreakdown: {
     asOfBlock: number;
     summary: { stillLocked: number; flexibleOrUnlocked: number; totalOpen: number };
@@ -649,10 +649,12 @@ async function rebuild(): Promise<Snapshot> {
   const headBlock = await rpc<{ timestamp: string }>('eth_getBlockByNumber', [headRes.result, false], budget);
   const headTs = headBlock.ok ? parseInt(headBlock.result.timestamp, 16) : Math.floor(Date.now() / 1000);
 
-  const [stakedLogs, closeLogs] = await Promise.all([
-    getAllLogs(STAKED_TOPIC, 0, head, budget),
-    getAllLogs(CLOSE_TOPIC, 0, head, budget),
-  ]);
+  // One stream after the other, not in parallel: the account's throughput
+  // limit is shared with the Lingo app itself, so this daily job shouldn't
+  // burst. Costs a few extra seconds once a day.
+  const stakedLogs = await getAllLogs(STAKED_TOPIC, 0, head, budget);
+  if (!stakedLogs) throw new Error('Request budget exhausted before the full history was read');
+  const closeLogs = await getAllLogs(CLOSE_TOPIC, 0, head, budget);
   if (!stakedLogs || !closeLogs) throw new Error('Request budget exhausted before the full history was read');
 
   // Alchemy returns blockTimestamp on every log; estimate from the head only if absent.
@@ -768,11 +770,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const t0 = Date.now();
-    const snapshot = await rebuild();
+    let snapshot: Snapshot;
+    try {
+      snapshot = await rebuild();
+    } catch (error) {
+      // A failed rebuild (e.g. Alchemy rate-limiting) must not turn every page
+      // view into another full rebuild. Serve the last good snapshot if there
+      // is one; otherwise cache the failure briefly.
+      if (current) {
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
+        return res.status(200).json({ ...current, served: 'stale', rebuildError: error instanceof Error ? error.message : 'Unknown error' });
+      }
+      res.setHeader('Cache-Control', 's-maxage=60');
+      return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
     const saved = await saveSnapshot(snapshot);
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     return res.status(200).json({ ...snapshot, served: 'rebuilt', stored: saved, buildMs: Date.now() - t0 });
   } catch (error) {
+    res.setHeader('Cache-Control', 's-maxage=60');
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
   }
 }

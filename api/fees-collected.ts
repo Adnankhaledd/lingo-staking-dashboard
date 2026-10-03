@@ -32,7 +32,7 @@ import { put, list } from '@vercel/blob';
  *
  *   GET                    summary (fills missing months first if needed)
  *   GET ?rebuild=1         (cron/admin) recompute the current month, at most every 30 min
- *   GET ?month=YYYY-MM     (cron/admin) one month, not stored, with diagnostics
+ *   GET ?month=YYYY-MM     (admin) one month, not stored, with diagnostics
  */
 
 export const config = { maxDuration: 60 };
@@ -60,13 +60,13 @@ const SUMMARY_KEY = 'fees-v2/summary.json';
 // Inflows this large are checked for the net leg that proves a transfer fee.
 // Below it a deposit would be immaterial, and routers/pools never deposit.
 const VERIFY_MIN_LINGO = 1_000;
-const VERIFY_BATCH = 40;
+const VERIFY_BATCH = 10;          // small batches: the throughput limit is shared with the Lingo app
 const MAX_TRANSFER_LINGO = 100_000;     // same cut-off as Dune query 6288543
 const DUST_LINGO = 1;                   // below this is address-poisoning dust
 const WORK_BUDGET_MS = 40_000;
 const SUMMARY_FRESH_MS = 6 * 60 * 60 * 1000;
 const REBUILD_MIN_AGE_MS = 30 * 60 * 1000;
-const MAX_REQUESTS = 800;          // runaway guard per call (~60k CU worst case)
+const MAX_REQUESTS = 800;          // runaway guard: HTTP requests per call (a verify batch counts once)
 const LOG_PAGE_LIMIT = 9500;
 const DAY = 86_400;
 // Month ranges are found by estimating blocks from the head, then every log is
@@ -660,14 +660,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const t0 = Date.now();
   let ctx: Ctx | null = null;
   try {
-    if (req.query.otherPools === '1' && (isCron || isAdmin)) {
+    // Manual diagnostics only — admin password required, never the cron path.
+    if (req.query.otherPools === '1' && isAdmin) {
       ctx = await loadContext();
       const pools = await otherPoolsReport(ctx);
       return res.status(200).json({ pools, calls: ctx.budget.calls, errors: ctx.budget.errors, elapsedMs: Date.now() - t0 });
     }
 
     // Diagnostics: compute one month without storing it.
-    if (typeof req.query.month === 'string' && (isCron || isAdmin)) {
+    if (typeof req.query.month === 'string' && isAdmin) {
       ctx = await loadContext();
       const rec = await computeMonth(req.query.month, ctx);
       return res.status(200).json({ ...rec, calls: ctx.budget.calls, retries: ctx.budget.retries, errors: ctx.budget.errors, elapsedMs: Date.now() - t0 });

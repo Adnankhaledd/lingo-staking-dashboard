@@ -54,10 +54,20 @@ export function useSupplyData(): UseSupplyDataResult {
     }
   }, []);
 
+  // Poll only while the tab is visible (see useLiveActivity) — a background tab
+  // shouldn't keep spending Alchemy calls. Refresh when it comes back.
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, POLL_MS);
-    return () => clearInterval(interval);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer) return;
+      fetchData();
+      timer = setInterval(fetchData, POLL_MS);
+    };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const onVisibility = () => (document.hidden ? stop() : start());
+    if (document.hidden) fetchData(); else start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchData]);
 
   return { ...data, isLoading, refetch: fetchData };

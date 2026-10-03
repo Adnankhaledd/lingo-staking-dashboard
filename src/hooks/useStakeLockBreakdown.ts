@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 
 // Exact staked-by-lock-tier breakdown (current + monthly history) from
-// /api/stake-lock-breakdown. Computed on-chain from events, reconciled against
-// the staking contract's real LINGO balance.
+// /api/stake-lock-breakdown — a read-only view of the daily /api/staking-metrics
+// snapshot (computed on-chain from events, reconciled against the contract balance).
 
 export interface LockTier {
   tier: string;               // "Flexible" | "3 Months" | "12 Months" | …
@@ -42,7 +42,7 @@ interface Result {
 /**
  * `enabled: false` skips the request — for callers that already hold the same
  * data from /api/staking-metrics, where it costs no Alchemy calls at all.
- * (/api/stake-lock-breakdown rebuilds the full history on every CDN miss.)
+ * (Either way the data comes from the same daily snapshot; this just skips a request.)
  */
 export function useStakeLockBreakdown(enabled = true): Result {
   const [data, setData] = useState<LockBreakdown | null>(null);

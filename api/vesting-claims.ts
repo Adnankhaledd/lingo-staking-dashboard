@@ -162,13 +162,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (!ALCHEMY_API_KEY) return res.status(200).json({ configured: false, error: 'ALCHEMY_API_KEY not set' });
 
-  const qAddr = req.query.address;
-  const address = (typeof qAddr === 'string' && /^0x[0-9a-fA-F]{40}$/.test(qAddr)) ? qAddr.toLowerCase() : DEFAULT_ADDRESS;
-  const qTopic = req.query.topic;
-  const topic = (typeof qTopic === 'string' && /^0x[0-9a-fA-F]{64}$/.test(qTopic)) ? qTopic.toLowerCase() : DEFAULT_TOPIC;
+  // The dashboard only asks for the default contract and range. Overrides used
+  // to start an uncached scan (up to ~16k CU) per distinct value, so they're refused.
+  if (req.query.address !== undefined || req.query.topic !== undefined || req.query.fromBlock !== undefined) {
+    return res.status(400).json({ error: 'address/topic/fromBlock overrides are not supported' });
+  }
+  const address = DEFAULT_ADDRESS;
+  const topic = DEFAULT_TOPIC;
   const bucket = req.query.bucket === 'month' ? 'month' : 'week';
-  const qFrom = req.query.fromBlock;
-  const fromBlock = (typeof qFrom === 'string' && /^\d+$/.test(qFrom)) ? parseInt(qFrom, 10) : DEFAULT_FROM_BLOCK;
+  const fromBlock = DEFAULT_FROM_BLOCK;
 
   const budget = { left: MAX_REQUESTS };
   try {

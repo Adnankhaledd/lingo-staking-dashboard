@@ -78,14 +78,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (!ALCHEMY_API_KEY) return res.status(200).json({ configured: false, error: 'ALCHEMY_API_KEY not set' });
 
-  const qAddr = req.query.address;
-  const address = (typeof qAddr === 'string' && /^0x[0-9a-fA-F]{40}$/.test(qAddr)) ? qAddr.toLowerCase() : DEFAULT_ADDRESS;
-  const qTopic = req.query.topic;
-  const topic = (typeof qTopic === 'string' && /^0x[0-9a-fA-F]{64}$/.test(qTopic)) ? qTopic.toLowerCase() : DEFAULT_TOPIC;
-
-  const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
-  const minLingo = Math.max(0, Number(req.query.minLingo) || 50000);
-  const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 200));
+  // Only the choices the claims table offers (7/30/90 days; 10k/50k/100k/250k).
+  // Every other value is a fresh CDN cache key and a fresh scan.
+  if (req.query.address !== undefined || req.query.topic !== undefined) {
+    return res.status(400).json({ error: 'address/topic overrides are not supported' });
+  }
+  const address = DEFAULT_ADDRESS;
+  const topic = DEFAULT_TOPIC;
+  const days = req.query.days === undefined ? 30 : Number(req.query.days);
+  const minLingo = req.query.minLingo === undefined ? 50000 : Number(req.query.minLingo);
+  if (![7, 30, 90].includes(days) || ![10000, 50000, 100000, 250000].includes(minLingo)) {
+    return res.status(400).json({ error: 'days must be 7, 30 or 90; minLingo must be 10000, 50000, 100000 or 250000' });
+  }
+  const limit = 200;
 
   const budget = { left: MAX_REQUESTS };
   try {
