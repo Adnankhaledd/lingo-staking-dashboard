@@ -212,7 +212,7 @@ export function Sellers() {
               {data.window.from.slice(0, 10)} → {data.window.to.slice(0, 10)} · built {new Date(data.generatedAt).toUTCString().slice(5, 22)} UTC
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-              <Card label="Net sold on the DEX" value={usd(totals.dexSold)} note={`${totals.dexWallets} wallets, arbitrage removed`} />
+              <Card label="Net sold on the DEX" value={usd(totals.dexSold)} note={`${totals.dexWallets >= 300 ? 'Top 300' : totals.dexWallets} wallets, arbitrage removed`} />
               <Card label="Deposited to exchanges" value={usd(totals.deposits)}
                 note={[totals.byEx.slice(0, 3).map(([e, v]) => `${e} ${usd(v)}`).join(' · '), totals.projectDeposits ? `+ ${usd(totals.projectDeposits)} from project wallets` : ''].filter(Boolean).join(' · ') || '—'} />
               <Card label="Removed as arbitrage / bots" value={usd(totals.arbs)} note={`${totals.arbWallets} wallets that buy as well as sell`} />
