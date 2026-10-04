@@ -79,6 +79,9 @@ add('router', {
   '0xb141f554188cf306fde443f6e991949636f80e49': 'Bitget Swap', '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae': 'LI.FI/Jumper',
   '0x02e5be68d46dac0b524905bff209cf47ee6db2a9': 'a swap proxy', '0x411d2c093e4c2e69bf0d8e94be1bf13dadd879c6': 'an aggregator',
   '0xd688ab46dc476a05a093e4442d06ceb348adbda8': 'an aggregator',
+  // Found by the first run as "collectors": swap contracts, not exchanges (Blockscout: BaseSettler = 0x Protocol).
+  '0x7747f8d2a76bd6345cc29622a946a929647f2359': '0x Settler', '0x4f6f91599858bf0d19fabcf2c5d591fe13f7c059': '0x Settler',
+  '0x0a2854fbbd9b3ef66f17d47284e7f899b9509330': 'a swap contract', '0x8f10b468b06c6fd214b65f87778827f7d113f996': 'a swap contract',
 });
 add('cex', {
   '0x18b0f4547a89fe4c5fe84f258bea3601fa281e9f': 'KuCoin', '0xb8e6d31e7b212b2b7250ee9c26c56cebbfbe6b23': 'KuCoin',
@@ -159,6 +162,8 @@ export interface AnalyzeInput {
   ethPriceAt: (day: number) => number | null;
   windowStart: number;            // unix seconds
   windowEnd: number;
+  /** All-time LINGO received by the biggest sellers, by funding source — catches project-funded wallets. */
+  allTime?: Map<string, Record<string, number>>;
 }
 
 const r0 = (n: number) => Math.round(n);
@@ -291,7 +296,8 @@ export function analyze(input: AnalyzeInput) {
     if (k === 'pool' || k === 'router') dexBought.set(t.to, (dexBought.get(t.to) ?? 0) + t.lingo);
   }
 
-  type Row = { address: string; label: string | null; class: string; lingo: number; usd: number; sells: number; venues: Record<string, number>; origins: Record<string, number>; first: string; last: string };
+  type Row = { address: string; label: string | null; class: string; lingo: number; usd: number; sells: number; venues: Record<string, number>; origins: Record<string, number>; feeders: number; allTime?: Record<string, number>; first: string; last: string };
+  const feederCount = (addr: string, before: number) => new Set((inflows.get(addr) ?? []).filter(t => t.ts < before && t.ts >= before - LOOKBACK_DAYS * DAY && !entityOf(t.from)).map(t => t.from)).size;
   const rows: Row[] = [];
   for (const [addr, s] of sellers) {
     const synthetic = addr === 'arbitrage / routed' || directKind.has(addr);
@@ -307,12 +313,26 @@ export function analyze(input: AnalyzeInput) {
     }
     else if (exchangeSold > 0 && (dexBought.get(addr) ?? 0) >= 0.5 * exchangeSold) cls = 'arbitrage (DEX → exchange)';
     else if (dexSold > 0 && (mix.get('cex_withdrawal') ?? 0) >= 0.5 * total && total > 0) cls = 'arbitrage (exchange → DEX)';
+    else if (dexSold > 0 && (dexBought.get(addr) ?? 0) >= 0.5 * dexSold) cls = 'trader (buys and sells on the DEX)';
+    else if (dexSold > 0 && (mix.get('bridged_in') ?? 0) >= 0.5 * total && total > 0) cls = 'cross-chain arbitrage (bridged in, sold here)';
+    else if (s.venues.size && [...s.venues.keys()].every(v => v.startsWith('Bridge')) && (dexBought.get(addr) ?? 0) >= 0.5 * s.lingo) cls = 'cross-chain arbitrage (bought here, bridged out)';
     else if (total === 0) cls = 'held (no LINGO received in the 30 days before)';
     else cls = [...mix.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const feeders = synthetic ? 0 : feederCount(addr, s.last + 1);
+    if (!synthetic && feeders >= 20 && !cls.startsWith('arbitrage') && !cls.startsWith('trader')) cls = `wallet farm (${feeders} feeder wallets) — ${cls}`;
+    // All-time funding beats the 30-day window for big sellers: a wallet the
+    // project funded months ago is moving inventory, not dumping.
+    const at = input.allTime?.get(addr);
+    if (at) {
+      const atTotal = Object.values(at).reduce((a, b) => a + b, 0);
+      if (atTotal > 0 && (at.project ?? 0) >= 0.5 * atTotal) cls = 'project-funded wallet (team / market maker?)';
+    }
     const ent = entityOf(addr);
     rows.push({
       address: addr,
       label: ent ? `${ent.name}` : null,
+      feeders,
+      allTime: at,
       class: ent?.kind === 'project' || ent?.kind === 'reward' ? `project (${ent.name})` : cls,
       lingo: r0(s.lingo), usd: r0(s.usd), sells: s.sells,
       venues: Object.fromEntries([...s.venues.entries()].map(([k, v]) => [k, r0(v)])),
@@ -485,7 +505,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }),
     ];
 
-    const report = analyze({ transfers, swaps, ethPriceAt, windowStart, windowEnd: headTs + 1 });
+    const base = { transfers, swaps, ethPriceAt, windowStart, windowEnd: headTs + 1 };
+    const first = analyze(base);
+    // Second pass: all-time LINGO funding of the 30 biggest real sellers (one
+    // alchemy_getAssetTransfers each), so project-funded wallets are labelled.
+    const big = first.topSellers.filter(r => /^0x[0-9a-f]{40}$/.test(r.address) && !r.label).slice(0, 30);
+    const allTime = new Map<string, Record<string, number>>();
+    for (const r of big) {
+      const got = await rpc<{ transfers: Array<{ from: string; value: number | null }> }>('alchemy_getAssetTransfers', [{
+        toAddress: r.address, contractAddresses: [LINGO], category: ['erc20'], maxCount: '0x3e8', order: 'desc', excludeZeroValue: true,
+      }]);
+      if (!got.ok) continue;
+      const mix: Record<string, number> = {};
+      for (const t of got.result.transfers) {
+        const e = entityOf(t.from.toLowerCase());
+        const k = e ? (ORIGIN_OF_KIND[e.kind] ?? 'wallet') : 'wallet';
+        mix[k] = (mix[k] ?? 0) + (t.value ?? 0);
+      }
+      allTime.set(r.address, Object.fromEntries(Object.entries(mix).map(([k, v]) => [k, Math.round(v)])));
+    }
+    const report = analyze({ ...base, allTime });
     res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=600');
     return res.status(200).json({ days, ...report, requests: budget.used, transfersRead: transfers.length, swapsRead: swaps.length, elapsedMs: Date.now() - t0 });
   } catch (error) {
