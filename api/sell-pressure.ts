@@ -318,8 +318,9 @@ export function analyze(input: AnalyzeInput) {
     }
     else if (exchangeSold > 0 && (dexBought.get(addr) ?? 0) >= 0.5 * exchangeSold) cls = 'arbitrage (DEX → exchange)';
     else if (dexSold > 0 && (mix.get('cex_withdrawal') ?? 0) >= 0.5 * total && total > 0) cls = 'arbitrage (exchange → DEX)';
-    else if (dexSold > 0 && (dexBought.get(addr) ?? 0) >= 0.9 * dexSold) cls = 'trader (buys and sells on the DEX)';
-    // Buys back some but sells more: still sell pressure, listed by its net.
+    else if (dexSold > 0 && (dexBought.get(addr) ?? 0) >= dexSold) cls = 'trader (buys and sells on the DEX)';
+    // Buys back some but sells more: still sell pressure, listed by its net
+    // (a bot that churned 1.9M each way but netted -58k is a 58k seller).
     else if (dexSold > 0 && (dexBought.get(addr) ?? 0) >= 0.5 * dexSold) cls = 'net seller (also buys on the DEX)';
     else if (dexSold > 0 && (mix.get('bridged_in') ?? 0) >= 0.5 * total && total > 0) cls = 'cross-chain arbitrage (bridged in, sold here)';
     else if (s.venues.size && [...s.venues.keys()].every(v => v.startsWith('Bridge')) && (dexBought.get(addr) ?? 0) >= 0.5 * s.lingo) cls = 'cross-chain arbitrage (bought here, bridged out)';
@@ -509,7 +510,7 @@ const int256 = (h: string) => { const v = BigInt('0x' + h); return v >= (1n << 2
 // at most once an hour (Blob cache), so the page can't run up Alchemy usage.
 const PERIODS = [7, 14, 20, 30, 45, 60, 90];
 const CACHE_TTL_MS = 60 * 60 * 1000;
-const cacheKey = (days: number) => `sell-pressure-v2/${days}d.json`;
+const cacheKey = (days: number) => `sell-pressure-v3/${days}d.json`;
 
 async function readCached(days: number): Promise<{ generatedAt: string } | null> {
   const token = process.env.BLOB_READ_WRITE_TOKEN || '';

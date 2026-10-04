@@ -60,6 +60,8 @@ function typeLabel(t: string | null, allTime?: Record<string, number> | null): s
 /** Same rule as the API's list split: these buy (on the DEX or elsewhere) as much as they sell. */
 const isArb = (t: string | null) => !!t && (t.startsWith('arbitrage') || t.startsWith('trader') || t.startsWith('cross-chain'));
 
+const isProject = (t: string | null) => !!t && t.startsWith('project');
+
 const usd = (n: number) => '$' + Math.round(n).toLocaleString();
 const short = (a: string) => (/^0x[0-9a-f]{40}$/.test(a) ? `${a.slice(0, 6)}…${a.slice(-4)}` : a);
 
@@ -164,12 +166,14 @@ export function Sellers() {
     if (!data) return null;
     const sum = <T,>(rows: T[], f: (r: T) => number) => rows.reduce((a, r) => a + f(r), 0);
     const byEx = new Map<string, number>();
-    const realDeposits = data.exchangeDeposits.filter(d => !isArb(d.type));
+    // Headline = outside holders; the project's own exchange moves are shown separately.
+    const realDeposits = data.exchangeDeposits.filter(d => !isArb(d.type) && !isProject(d.type));
     for (const d of realDeposits) byEx.set(d.exchange, (byEx.get(d.exchange) ?? 0) + d.usd);
     return {
       dexSold: sum(data.dexSellers, r => r.netSoldUsd), dexWallets: data.dexSellers.length,
       arbs: sum(data.removedAsArbitrage, r => r.soldUsd), arbWallets: data.removedAsArbitrage.length,
       deposits: sum(realDeposits, d => d.usd),
+      projectDeposits: sum(data.exchangeDeposits.filter(d => isProject(d.type)), d => d.usd),
       byEx: [...byEx.entries()].sort((a, b) => b[1] - a[1]),
       bridged: sum(data.bridgeOuts, b => b.usd),
       bridges: [...new Set(data.bridgeOuts.map(b => b.bridge))].slice(0, 3).join(', '),
@@ -209,7 +213,8 @@ export function Sellers() {
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
               <Card label="Net sold on the DEX" value={usd(totals.dexSold)} note={`${totals.dexWallets} wallets, arbitrage removed`} />
-              <Card label="Deposited to exchanges" value={usd(totals.deposits)}  note={totals.byEx.slice(0, 3).map(([e, v]) => `${e} ${usd(v)}`).join(' · ') || '—'} />
+              <Card label="Deposited to exchanges" value={usd(totals.deposits)}
+                note={[totals.byEx.slice(0, 3).map(([e, v]) => `${e} ${usd(v)}`).join(' · '), totals.projectDeposits ? `+ ${usd(totals.projectDeposits)} from project wallets` : ''].filter(Boolean).join(' · ') || '—'} />
               <Card label="Removed as arbitrage / bots" value={usd(totals.arbs)} note={`${totals.arbWallets} wallets that buy as well as sell`} />
               <Card label="Bridged out" value={usd(totals.bridged)} note={totals.bridges ? `Via ${totals.bridges}` : 'None in this period'} />
             </div>
