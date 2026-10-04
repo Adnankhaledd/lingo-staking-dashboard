@@ -6,3 +6,4 @@ export { Data } from './Data';
 export { Supply } from './Supply';
 export { DashboardV2 } from './DashboardV2';
 export { Fees } from './Fees';
+export { Sellers } from './Sellers';

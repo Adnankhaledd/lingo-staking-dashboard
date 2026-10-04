@@ -1,4 +1,4 @@
-import { Dashboard, DashboardV2, Admin, Claims, PnL, Data, Supply, Fees } from './pages';
+import { Dashboard, DashboardV2, Admin, Claims, PnL, Data, Supply, Fees, Sellers } from './pages';
 
 function App() {
   const path = window.location.pathname;
@@ -11,6 +11,7 @@ function App() {
   // alias because that's the link the preview was shared on.
   if (path === '/old') return <Dashboard archived />;
   if (path === '/fees') return <Fees />;
+  if (path === '/sellers') return <Sellers />;
   return <DashboardV2 />;
 }
 

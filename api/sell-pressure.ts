@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { put } from '@vercel/blob';
 
 /**
  * /api/sell-pressure?days=30 — where LINGO selling comes from.
@@ -24,7 +25,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
  *            exchange, or the reverse — are flagged as arbitrage: they move
  *            volume, not net supply.
  *
- * Admin/cron only (never on a page view); ~30–80 Alchemy requests per run.
+ * Serves the /sellers page: preset periods only, each built at most once an
+ * hour and cached in Blob (~60–90 Alchemy requests per build).
  */
 
 export const config = { maxDuration: 60 };
@@ -63,6 +65,7 @@ add('pool', {
   '0x1ba7301b43b69f1dc9a6d2017b090a52ff386478': 'Aerodrome', '0x0191fea2ff26116dec46ea699c65b8696020e766': 'Aerodrome',
 });
 add('router', {
+  '0xafe3bec07253acef080cf7e01aa13a15f38004b0': 'Solver (bot 0x6011b76b)',
   '0x6ff5693b99212da76ad316178a184ab56d299b43': 'Uniswap', '0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad': 'Uniswap',
   '0x2626664c2603336e57b271c5c0b26f421741e481': 'Uniswap', '0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43': 'Aerodrome',
   '0x6cb442acf35158d5eda88fe602221b67b400be3e': 'Aerodrome', '0x19ceead7105607cd444f5ad10dd51356436095a1': 'Odos',
@@ -138,6 +141,8 @@ add('project', {
   '0x0fe275fdfde7eb75a15c0ae8971450dd6f06e7f8': 'Project Safe', '0x8557ef53d037408d225479dd8544dffb06c88d46': 'Liquidity Locker',
   '0x3ea37aa113b092dd14dfada7118efb919c092d0d': 'Liquidity Locker', '0xc588e4415ab61aa8a9496efbe9d715de75550e2a': 'Deployer',
   '0xe8313a4b7a6aaea9e92a8d4acbb08034cb39bf2f': 'Team wallet', '0x2bd8fc849f7c91ce2d3e9c78dd85792a0b14da6d': 'Buy-and-stake wallet',
+  // Funded 19.5M by the Team wallet; moves LINGO between KuCoin and Gate (its Gate deposit address is 0xb6cd70b8).
+  '0x541a19b3c32d00dd06b33497ffe64a67c50ea389': 'Team-funded exchange wallet',
 });
 add('onbehalf', { '0x53a78a339262e374950c491884b0954323b616ef': 'Lingo direct buy' });
 add('mint', { [ZERO]: 'Mint' });
@@ -313,7 +318,9 @@ export function analyze(input: AnalyzeInput) {
     }
     else if (exchangeSold > 0 && (dexBought.get(addr) ?? 0) >= 0.5 * exchangeSold) cls = 'arbitrage (DEX → exchange)';
     else if (dexSold > 0 && (mix.get('cex_withdrawal') ?? 0) >= 0.5 * total && total > 0) cls = 'arbitrage (exchange → DEX)';
-    else if (dexSold > 0 && (dexBought.get(addr) ?? 0) >= 0.5 * dexSold) cls = 'trader (buys and sells on the DEX)';
+    else if (dexSold > 0 && (dexBought.get(addr) ?? 0) >= 0.9 * dexSold) cls = 'trader (buys and sells on the DEX)';
+    // Buys back some but sells more: still sell pressure, listed by its net.
+    else if (dexSold > 0 && (dexBought.get(addr) ?? 0) >= 0.5 * dexSold) cls = 'net seller (also buys on the DEX)';
     else if (dexSold > 0 && (mix.get('bridged_in') ?? 0) >= 0.5 * total && total > 0) cls = 'cross-chain arbitrage (bridged in, sold here)';
     else if (s.venues.size && [...s.venues.keys()].every(v => v.startsWith('Bridge')) && (dexBought.get(addr) ?? 0) >= 0.5 * s.lingo) cls = 'cross-chain arbitrage (bought here, bridged out)';
     else if (total === 0) cls = 'held (no LINGO received in the 30 days before)';
@@ -379,8 +386,46 @@ export function analyze(input: AnalyzeInput) {
     .slice(0, 15);
 
   const totalSell = sum(() => true);
+  // ── The two lists: DEX sellers without arbitrage, and exchange deposits ──
+  const classOf = new Map(rows.map(r => [r.address, r]));
+  const isArb = (c: string) => c.startsWith('arbitrage') || c.startsWith('trader') || c.startsWith('cross-chain');
+  const eventsBySeller = new Map<string, SellEvent[]>();
+  for (const e of events) { const l = eventsBySeller.get(e.seller) ?? []; l.push(e); eventsBySeller.set(e.seller, l); }
+
+  const dexRows = rows.flatMap(r => {
+    const dexEvents = (eventsBySeller.get(r.address) ?? []).filter(e => e.venue === 'DEX');
+    if (!dexEvents.length) return [];
+    const lingo = dexEvents.reduce((a, e) => a + e.lingo, 0);
+    const usd = dexEvents.reduce((a, e) => a + e.usd, 0);
+    const bought = dexBought.get(r.address) ?? 0;
+    const biggest = dexEvents.reduce((a, e) => (e.usd > a.usd ? e : a));
+    return [{
+      address: r.address, label: r.label, type: r.class, allTime: r.allTime ?? null, feeders: r.feeders,
+      soldLingo: r0(lingo), soldUsd: r0(usd), boughtOnDexLingo: r0(bought),
+      netSoldLingo: r0(Math.max(0, lingo - bought)), netSoldUsd: r0(lingo > 0 ? usd * Math.max(0, lingo - bought) / lingo : 0),
+      sells: dexEvents.length, first: new Date(Math.min(...dexEvents.map(e => e.ts)) * 1000).toISOString().slice(0, 10),
+      last: new Date(Math.max(...dexEvents.map(e => e.ts)) * 1000).toISOString().slice(0, 10),
+      biggestTx: biggest.tx,
+    }];
+  }).sort((a, b) => b.netSoldUsd - a.netSoldUsd || b.soldUsd - a.soldUsd);
+
+  const exchangeDeposits = events
+    .filter(e => e.via === 'deposit_address' || e.via === 'hot_wallet')
+    .map(e => ({
+      date: new Date(e.ts * 1000).toISOString().slice(0, 16).replace('T', ' '), exchange: e.venue, depositor: e.seller,
+      type: classOf.get(e.seller)?.class ?? null, lingo: r0(e.lingo), usd: r0(e.usd), tx: e.tx,
+    }))
+    .sort((a, b) => b.usd - a.usd);
+  const bridgeOuts = events.filter(e => e.via === 'bridge')
+    .map(e => ({ date: new Date(e.ts * 1000).toISOString().slice(0, 16).replace('T', ' '), bridge: e.venue.replace('Bridge: ', ''), wallet: e.seller, type: classOf.get(e.seller)?.class ?? null, lingo: r0(e.lingo), usd: r0(e.usd), tx: e.tx }))
+    .sort((a, b) => b.usd - a.usd);
+
   return {
     window: { from: new Date(windowStart * 1000).toISOString(), to: new Date(windowEnd * 1000).toISOString() },
+    dexSellers: dexRows.filter(r => !isArb(r.type)).slice(0, 300),
+    removedAsArbitrage: dexRows.filter(r => isArb(r.type)).slice(0, 100),
+    exchangeDeposits: exchangeDeposits.slice(0, 500),
+    bridgeOuts: bridgeOuts.slice(0, 100),
     totals: {
       sold: totalSell,
       dexBuys: { lingo: r0(dexBuyLingo), usd: r0(dexBuyUsd) },
@@ -460,15 +505,40 @@ const WEI = 10n ** 18n;
 const toLingo = (w: bigint) => Number(w / WEI) + Number(w % WEI) / 1e18;
 const int256 = (h: string) => { const v = BigInt('0x' + h); return v >= (1n << 255n) ? v - (1n << 256n) : v; };
 
+// Public, for the /sellers page — but only these periods, and each is built
+// at most once an hour (Blob cache), so the page can't run up Alchemy usage.
+const PERIODS = [7, 14, 20, 30, 45, 60, 90];
+const CACHE_TTL_MS = 60 * 60 * 1000;
+const cacheKey = (days: number) => `sell-pressure-v2/${days}d.json`;
+
+async function readCached(days: number): Promise<{ generatedAt: string } | null> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN || '';
+  const m = token.match(/^vercel_blob_rw_([^_]+)_/);
+  if (!m) return null;
+  try {
+    const r = await fetch(`https://${m[1]}.public.blob.vercel-storage.com/${cacheKey(days)}`);
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (req.method === 'OPTIONS') return res.status(200).end();
   const isCron = !CRON_SECRET || req.headers.authorization === `Bearer ${CRON_SECRET}`;
   const pw = (req.headers['x-admin-password'] as string | undefined) ?? (req.query.password as string | undefined);
   const isAdmin = !!ADMIN_PASSWORD && pw === ADMIN_PASSWORD;
-  if (!isCron && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
   if (!ALCHEMY_API_KEY) return res.status(200).json({ error: 'ALCHEMY_API_KEY not set' });
 
   const days = Number(req.query.days ?? 30);
-  if (![7, 14, 30, 60, 90].includes(days)) return res.status(400).json({ error: 'days must be 7, 14, 30, 60 or 90' });
+  if (!PERIODS.includes(days)) return res.status(400).json({ error: `days must be one of ${PERIODS.join(', ')}` });
+  const force = req.query.refresh === '1' && (isCron || isAdmin);
+  if (!force) {
+    const cached = await readCached(days);
+    if (cached && Date.now() - Date.parse(cached.generatedAt) < CACHE_TTL_MS) {
+      res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=3000');
+      return res.status(200).json({ ...cached, served: 'cached' });
+    }
+  }
   budget.left = MAX_REQUESTS; budget.used = 0;
   const t0 = Date.now();
 
@@ -525,8 +595,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       allTime.set(r.address, Object.fromEntries(Object.entries(mix).map(([k, v]) => [k, Math.round(v)])));
     }
     const report = analyze({ ...base, allTime });
-    res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=600');
-    return res.status(200).json({ days, ...report, requests: budget.used, transfersRead: transfers.length, swapsRead: swaps.length, elapsedMs: Date.now() - t0 });
+    const body = { days, generatedAt: new Date().toISOString(), ...report, requests: budget.used, transfersRead: transfers.length, swapsRead: swaps.length, elapsedMs: Date.now() - t0 };
+    // Display-only result, so a single overwritten key is fine (see memory: vercel-blob-cdn-stale).
+    try { await put(cacheKey(days), JSON.stringify(body), { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json', cacheControlMaxAge: 60 }); } catch { /* still serve it */ }
+    res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=3000');
+    return res.status(200).json({ ...body, served: 'built' });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error', requests: budget.used, elapsedMs: Date.now() - t0 });
   }
