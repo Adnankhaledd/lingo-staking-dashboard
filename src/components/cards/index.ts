@@ -3,3 +3,4 @@ export { ChartCard, ChartCardSkeleton } from './ChartCard';
 export { TopStakersTable } from './TopStakersTable';
 export { TotalFeesCard } from './TotalFeesCard';
 export { StakingUpdateCard } from './StakingUpdateCard';
+export { StakingUsdCard } from './StakingUsdCard';

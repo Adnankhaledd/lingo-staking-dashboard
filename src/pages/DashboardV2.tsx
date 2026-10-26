@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { Header, SectionNav, type SectionNavItem } from '../components/layout';
-import { KPICard, KPICardSkeleton, ChartCard, StakingUpdateCard } from '../components/cards';
+import { KPICard, KPICardSkeleton, ChartCard, StakingUpdateCard, StakingUsdCard } from '../components/cards';
 import { TierGrowthTable } from '../components/cards/TierGrowthTable';
 import { AreaChartComponent, BarChartComponent, RetentionTable } from '../components/charts';
 import { LockBreakdownCard } from '../components/charts/LockBreakdownCard';
 import { LiveActivityFeed } from '../components/LiveActivityFeed';
 import { useLiveTotalStaked } from '../hooks/useLiveTotalStaked';
+import { usePoolPrices } from '../hooks/usePoolPrices';
 import { useStakingMetrics, type MonthlyRow, type Tier } from '../hooks/useStakingMetrics';
 import type { TotalStakedRow, MonthlyTierGrowthRow } from '../hooks/useDuneQuery';
 import type { MonthlyRetentionData } from '../utils/dataTransformers';
@@ -98,6 +99,7 @@ function StatTile({ label, value, change, note, tone = 'text-lavender' }: {
 export function DashboardV2() {
   const { data, isLoading, error } = useStakingMetrics();
   const { totalStaked: liveTotal } = useLiveTotalStaked();
+  const { days: poolPrices, isLoading: pricesLoading, error: pricesError } = usePoolPrices();
   const [tierBasis, setTierBasis] = useState<'now' | 'then'>('now');
   // December 2024 (launch: 15.5K first-time wallets) dwarfs every later month,
   // so the New Users charts open on the last 12 months.
@@ -293,6 +295,16 @@ export function DashboardV2() {
         {/* ═══ OVERVIEW ═══ */}
         <section id="overview" className="mb-10 scroll-mt-32">
           <StakingUpdateCard data={dailyRows.length ? dailyRows : null} isLoading={isLoading} />
+          {/* Test: the same growth in USD, with the average price. Keep, replace the card above, or drop. */}
+          <div className="mt-5">
+            <StakingUsdCard
+              daily={data?.daily ?? null}
+              prices={poolPrices}
+              liveTotal={liveTotal}
+              isLoading={isLoading || pricesLoading}
+              priceError={pricesError}
+            />
+          </div>
         </section>
 
         <section className="mb-10">
