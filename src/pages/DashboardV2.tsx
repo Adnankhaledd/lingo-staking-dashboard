@@ -99,7 +99,7 @@ function StatTile({ label, value, change, note, tone = 'text-lavender' }: {
 export function DashboardV2() {
   const { data, isLoading, error } = useStakingMetrics();
   const { totalStaked: liveTotal } = useLiveTotalStaked();
-  const { days: poolPrices, isLoading: pricesLoading, error: pricesError } = usePoolPrices();
+  const { days: poolPrices, generatedAt: pricesAsOf, isLoading: pricesLoading, error: pricesError } = usePoolPrices();
   const [tierBasis, setTierBasis] = useState<'now' | 'then'>('now');
   // December 2024 (launch: 15.5K first-time wallets) dwarfs every later month,
   // so the New Users charts open on the last 12 months.
@@ -303,6 +303,7 @@ export function DashboardV2() {
               liveTotal={liveTotal}
               isLoading={isLoading || pricesLoading}
               priceError={pricesError}
+              pricesAsOf={pricesAsOf}
             />
           </div>
         </section>

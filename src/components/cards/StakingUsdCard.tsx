@@ -3,7 +3,7 @@ import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import {
   BarChart,
   Bar,
-  LineChart,
+  ComposedChart,
   Line,
   XAxis,
   YAxis,
@@ -41,6 +41,10 @@ export interface UsdPeriod {
   valueLingo: number;
   avgPrice: number;
   endPrice: number;
+  firstDay: string;
+  lastDay: string;
+  /** Starts after its natural start (cut by fromDay): not comparable with a full period. */
+  cutStart: boolean;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -112,6 +116,7 @@ export function buildUsdPeriods(
       key, label: periodLabel(key, period), isCurrent: false,
       depositedUsd: 0, depositedLingo: 0, withdrawnUsd: 0, withdrawnLingo: 0, netUsd: 0, netLingo: 0,
       valueUsd: 0, valueLingo: 0, avgPrice: 0, endPrice: 0, priceSum: 0, days: 0,
+      firstDay: r.day, lastDay: r.day, cutStart: false,
     };
     b.depositedUsd += r.staked * p;
     b.depositedLingo += r.staked;
@@ -119,6 +124,7 @@ export function buildUsdPeriods(
     b.withdrawnLingo += r.unstaked;
     b.valueLingo = r.total_staked;      // rows are in order, so the last day wins
     b.endPrice = p;
+    b.lastDay = r.day;
     b.priceSum += p;
     b.days++;
     buckets.set(key, b);
@@ -133,11 +139,28 @@ export function buildUsdPeriods(
   }));
   // A first period cut short by fromDay (Q4 '25 holding only December) says so.
   const first = out[0];
-  if (fromDay && fromDay > periodStart(first.key, period)) first.label += ` (from ${MONTHS[Number(fromDay.slice(5, 7)) - 1]})`;
+  if (fromDay && fromDay > periodStart(first.key, period)) {
+    first.label += ` (from ${MONTHS[Number(fromDay.slice(5, 7)) - 1]})`;
+    first.cutStart = true;
+  }
   const cur = out[out.length - 1];
   cur.isCurrent = true;
   if (liveTotal != null) { cur.valueLingo = liveTotal; cur.valueUsd = liveTotal * cur.endPrice; }
   return out;
+}
+
+/**
+ * Which periods the hero reads. Only a full period is a fair comparison (not
+ * "2025", which starts in December). Flows reach the last nightly snapshot,
+ * which holds only minutes of its own day, so on a period's first day the
+ * current bar is empty and the flow hero shows the last full period instead
+ * of "$0 so far".
+ */
+export function pickHero(data: UsdPeriod[]): { cur: number; prev: number | null; flow: number; flowBefore: number | null } {
+  const cur = data.length - 1;
+  const comparable = (i: number) => (i >= 0 && !data[i].cutStart ? i : null);
+  const flow = data[cur].firstDay === data[cur].lastDay && comparable(cur - 1) != null ? cur - 1 : cur;
+  return { cur, prev: comparable(cur - 1), flow, flowBefore: comparable(flow - 1) };
 }
 
 const usd = (n: number) => {
@@ -213,9 +236,13 @@ interface StakingUsdCardProps {
   liveTotal?: number | null;
   isLoading: boolean;
   priceError?: string | null;
+  /** When the price history was last rebuilt. */
+  pricesAsOf?: string | null;
 }
 
-export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError }: StakingUsdCardProps) {
+const STALE_PRICES_MS = 36 * 60 * 60 * 1000;   // two missed twice-daily refreshes and then some
+
+export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError, pricesAsOf }: StakingUsdCardProps) {
   const [period, setPeriod] = useState<Period>('month');
   const [metric, setMetric] = useState<Metric>('deposited');
 
@@ -241,10 +268,17 @@ export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError
   }
 
   const key = METRIC_KEY[metric];
-  const cur = data[data.length - 1];
-  const prev = data.length > 1 ? data[data.length - 2] : null;
+  const periodWord = period;
   const pctVs = (a: number, b: number | undefined) => (b ? ((a - b) / Math.abs(b)) * 100 : null);
-  const periodWord = period === 'week' ? 'week' : period;
+  const hero = pickHero(data);
+  const cur = data[hero.cur];
+  const prev = hero.prev != null ? data[hero.prev] : null;
+  const flow = data[hero.flow];
+  const flowBefore = hero.flowBefore != null ? data[hero.flowBefore] : null;
+  const flowIsCurrent = hero.flow === hero.cur;
+  const flowName = metric === 'net' ? 'Net added' : 'Deposited';
+  const asOfMs = pricesAsOf ? Date.parse(pricesAsOf) : NaN;
+  const pricesStale = Number.isFinite(asOfMs) && Date.now() - asOfMs > STALE_PRICES_MS;
 
   return (
     <div className="flagship-card p-6 group transition-all duration-300">
@@ -267,22 +301,27 @@ export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-5">
           <div className="flex flex-col items-center gap-1.5">
             <span className="text-[11px] text-purple-gray uppercase tracking-wider">
-              {metric === 'value' ? 'Staked value now' : `${metric === 'net' ? 'Net added' : 'Deposited'} this ${periodWord} so far`}
+              {metric === 'value'
+                ? 'Staked value now'
+                : flowIsCurrent ? `${flowName} this ${periodWord} so far` : `${flowName} last ${periodWord}`}
             </span>
             <span className="text-4xl sm:text-5xl font-bold bg-gradient-to-r from-purple via-light1 to-lavender bg-clip-text text-transparent tracking-tight">
-              {usd(cur[key])}
+              {usd(metric === 'value' ? cur.valueUsd : flow[key])}
             </span>
             <span className="flex items-center gap-2 text-sm text-purple-gray">
               {metric === 'value'
                 ? <>{formatNumber(cur.valueLingo)} LINGO <Chip pct={pctVs(cur.valueUsd, prev?.valueUsd)} /></>
-                : <>{formatNumber(metric === 'net' ? cur.netLingo : cur.depositedLingo)} LINGO · last {periodWord} {prev ? usd(prev[key]) : '—'}</>}
+                : <>
+                    {formatNumber(metric === 'net' ? flow.netLingo : flow.depositedLingo)} LINGO
+                    {flowBefore && <> · {flowIsCurrent ? `last ${periodWord}` : `the ${periodWord} before`} {usd(flowBefore[key])}</>}
+                  </>}
             </span>
           </div>
           <div className="flex flex-col items-center gap-1.5">
             <span className="text-[11px] text-purple-gray uppercase tracking-wider">Avg LINGO price this {periodWord}</span>
             <span className="text-4xl sm:text-5xl font-bold text-lavender tracking-tight">{price(cur.avgPrice)}</span>
             <span className="flex items-center gap-2 text-sm text-purple-gray">
-              last {periodWord} {prev ? price(prev.avgPrice) : '—'} <Chip pct={pctVs(cur.avgPrice, prev?.avgPrice)} />
+              {prev && <>last {periodWord} {price(prev.avgPrice)} <Chip pct={pctVs(cur.avgPrice, prev.avgPrice)} /></>}
             </span>
           </div>
         </div>
@@ -337,21 +376,27 @@ export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError
           </BarChart>
         </ResponsiveContainer>
 
-        {/* Average price strip — same periods, its own scale */}
+        {/* Average price strip — same periods, its own scale. A band x-axis puts
+            each point at the centre of the bar above it. */}
         <p className="text-[11px] text-purple-gray mt-3 mb-1 ml-1">Average LINGO price</p>
         <ResponsiveContainer minWidth={0} width="100%" height={120}>
-          <LineChart data={data} margin={CHART_MARGIN} syncId="stakingUsd">
+          <ComposedChart data={data} margin={CHART_MARGIN} syncId="stakingUsd">
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-            <XAxis dataKey="label" {...AXIS} dy={8} />
+            <XAxis dataKey="label" scale="band" {...AXIS} dy={8} />
             <YAxis {...AXIS} width={Y_WIDTH} tickFormatter={v => price(Number(v))} tickCount={3} />
             <Tooltip content={() => null} cursor={{ stroke: 'rgba(255,255,255,0.15)' }} />
             <Line type="linear" dataKey="avgPrice" stroke={PRICE} strokeWidth={2} dot={false} activeDot={{ r: 4, stroke: '#14141f', strokeWidth: 2 }} animationDuration={800} />
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
 
         <p className="text-[11px] text-purple-gray mt-4 leading-relaxed">
           USD at each day's LINGO price from the LINGO/WETH pool's own trades. Deposited counts every stake, including
           re-stakes of unlocked LINGO; Net added subtracts withdrawals. Flows run to the last nightly snapshot; staked value uses the live total.
+          {pricesAsOf && (
+            <span className={pricesStale ? ' text-amber-400' : ''}>
+              {' '}Prices updated {new Date(pricesAsOf).toUTCString().slice(5, 22)} UTC{pricesStale ? ' — out of date, the price refresh has not run' : ''}.
+            </span>
+          )}
         </p>
       </div>
     </div>

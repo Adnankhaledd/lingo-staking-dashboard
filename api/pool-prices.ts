@@ -13,8 +13,10 @@ import { put, list } from '@vercel/blob';
  * writes the summary that page views read. Page views make no Alchemy calls.
  *
  *   GET              stored summary (never builds)
- *   GET ?rebuild=1   (cron/admin) fill missing months + refresh the current one,
- *                    at most every 30 min
+ *   GET ?rebuild=1   (cron/admin) fill missing months + refresh the current one.
+ *                    One rebuild per 30-minute slot, claimed write-once, so a
+ *                    burst of calls can't multiply Alchemy usage (CRON_SECRET
+ *                    unset leaves this open, like the other cron endpoints).
  */
 
 export const config = { maxDuration: 60 };
@@ -32,6 +34,7 @@ const SWAP_TOPIC = '0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115f
 const FIRST_MONTH = '2024-12';
 const MONTH_PREFIX = 'pool-prices-v1/months/';
 const SUMMARY_KEY = 'pool-prices-v1/summary.json';
+const CLAIM_PREFIX = 'pool-prices-v1/claims/';     // one write-once file per 30-minute rebuild slot
 const DAY = 86_400;
 const BLOCK_SECONDS = 2;
 const MONTH_MARGIN_BLOCKS = 2_000;    // block↔time is estimated; swaps are filtered by their own timestamp
@@ -101,9 +104,11 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const isTransient = (status: number, msg: string) =>
   status === 429 || status >= 500 || /rate|capacity|timeout|timed out|exceeded.*compute|throughput/i.test(msg);
 
-async function rpc<T>(method: string, params: unknown[], budget: Budget): Promise<{ ok: true; result: T } | { ok: false; error: string }> {
+type RpcResult<T> = { ok: true; result: T } | { ok: false; error: string; transient: boolean };
+
+async function rpc<T>(method: string, params: unknown[], budget: Budget): Promise<RpcResult<T>> {
   for (let attempt = 0; ; attempt++) {
-    if (!budget.take()) return { ok: false, error: 'request budget exhausted' };
+    if (!budget.take()) return { ok: false, error: 'request budget exhausted', transient: false };
     let status = 0, error = '';
     try {
       const res = await fetch(ALCHEMY_URL, {
@@ -121,7 +126,8 @@ async function rpc<T>(method: string, params: unknown[], budget: Budget): Promis
       error = e instanceof Error ? e.message : 'fetch failed';
       status = 599;
     }
-    if (attempt >= RETRIES || !isTransient(status, error)) return { ok: false, error };
+    const transient = isTransient(status, error);
+    if (attempt >= RETRIES || !transient) return { ok: false, error, transient };
     await sleep(400 * 2 ** attempt);
   }
 }
@@ -135,6 +141,8 @@ async function getAllLogs(filter: Record<string, unknown>, from: number, to: num
     if (lo > hi) continue;
     const r = await rpc<RawLog[]>('eth_getLogs', [{ ...filter, fromBlock: '0x' + lo.toString(16), toBlock: '0x' + hi.toString(16) }], budget);
     if (!r.ok && r.error === 'request budget exhausted') throw new Error('Request budget exhausted');
+    // Throttling is not "range too big": splitting would turn one refused call into dozens.
+    if (!r.ok && r.transient) throw new Error(`getLogs throttled: ${r.error}`);
     if (!r.ok || (r.result?.length ?? 0) >= LOG_PAGE_LIMIT) {
       if (lo === hi) { if (!r.ok) throw new Error(`getLogs failed at block ${lo}: ${r.error}`); out.push(...r.result); continue; }
       const mid = Math.floor((lo + hi) / 2);
@@ -146,26 +154,35 @@ async function getAllLogs(filter: Record<string, unknown>, from: number, to: num
   return out;
 }
 
-/** ETH/USD by UTC day from Alchemy's price history. */
+/**
+ * ETH/USD by UTC day from Alchemy's price history. Every chunk must arrive:
+ * a month priced off a neighbouring chunk's ETH would be stored write-once.
+ */
 async function ethDailyPrices(startTs: number, endTs: number, budget: Budget): Promise<Map<number, number>> {
   const out = new Map<number, number>();
   for (let from = startTs; from <= endTs; from += 360 * DAY) {
     const to = Math.min(endTs, from + 360 * DAY);
-    if (!budget.take()) break;
-    try {
-      const res = await fetch(HIST_PRICES_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'ETH', startTime: new Date(from * 1000).toISOString(), endTime: new Date(to * 1000).toISOString(), interval: '1d' }),
-      });
-      if (!res.ok) continue;
-      const json = await res.json();
-      for (const d of json?.data ?? []) {
-        const v = Number(d?.value);
-        const t = Date.parse(d?.timestamp ?? '');
-        if (Number.isFinite(v) && v > 0 && Number.isFinite(t)) out.set(Math.floor(t / 1000 / DAY), v);
-      }
-    } catch { /* missing days fall back to the nearest known price */ }
+    let got = false;
+    for (let attempt = 0; attempt <= RETRIES && !got; attempt++) {
+      if (attempt) await sleep(400 * 2 ** attempt);
+      if (!budget.take()) throw new Error('Request budget exhausted');
+      try {
+        const res = await fetch(HIST_PRICES_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbol: 'ETH', startTime: new Date(from * 1000).toISOString(), endTime: new Date(to * 1000).toISOString(), interval: '1d' }),
+        });
+        if (!res.ok) { if (isTransient(res.status, '')) continue; break; }
+        const json = await res.json();
+        for (const d of json?.data ?? []) {
+          const v = Number(d?.value);
+          const t = Date.parse(d?.timestamp ?? '');
+          if (Number.isFinite(v) && v > 0 && Number.isFinite(t)) out.set(Math.floor(t / 1000 / DAY), v);
+        }
+        got = true;
+      } catch { /* retried */ }
+    }
+    if (!got) throw new Error(`ETH price history unavailable for ${new Date(from * 1000).toISOString().slice(0, 10)}…`);
   }
   return out;
 }
@@ -219,6 +236,15 @@ async function readSummary(): Promise<Summary | null> {
   } catch { return null; }
 }
 
+/** Claim this 30-minute slot's rebuild. False if another call already has it. */
+async function claimSlot(): Promise<boolean> {
+  const slot = new Date(Math.floor(Date.now() / REBUILD_MIN_AGE_MS) * REBUILD_MIN_AGE_MS).toISOString().slice(0, 16).replace(':', '-');
+  try {
+    await put(`${CLAIM_PREFIX}${slot}.json`, '{}', { access: 'public', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json' });
+    return true;
+  } catch { return false; }
+}
+
 /** Finished months already stored. Write-once files, so a CDN copy is never stale. */
 async function storedMonths(): Promise<Map<string, MonthPrices>> {
   const out = new Map<string, MonthPrices>();
@@ -248,12 +274,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const summary = await readSummary();
   const age = summary ? Date.now() - Date.parse(summary.generatedAt) : Infinity;
-  if (!wantsRebuild || (summary?.complete && age < REBUILD_MIN_AGE_MS)) {
+  const serveStored = () => {
     if (!summary) return res.status(200).json({ error: 'Pool prices have not been built yet' });
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     return res.status(200).json({ ...summary, served: 'stored' });
-  }
+  };
+  if (!wantsRebuild || (summary?.complete && age < REBUILD_MIN_AGE_MS)) return serveStored();
   if (!ALCHEMY_API_KEY) return res.status(200).json({ error: 'ALCHEMY_API_KEY not set' });
+  // One rebuild per slot: concurrent or repeated calls get the stored summary.
+  // (A partial backfill therefore continues in the next slot.)
+  if (!(await claimSlot())) return serveStored();
 
   const t0 = Date.now();
   const budget = new Budget();
@@ -297,6 +327,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (Date.now() - t0 > WORK_BUDGET_MS) {
+      return res.status(202).json({ complete: false, progress: 'finished months stored; current month next run', computedThisCall: computed, requests: budget.calls, elapsedMs: Date.now() - t0 });
+    }
     const current = await computeMonth(currentMonth, ctx);
     const days: Array<[string, number]> = [];
     for (const m of months) {
