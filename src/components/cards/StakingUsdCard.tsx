@@ -25,6 +25,7 @@ import type { DailyRow } from '../../hooks/useStakingMetrics';
 
 type Period = 'week' | 'month' | 'quarter' | 'year';
 type Metric = 'deposited' | 'net' | 'value';
+type Range = '12m' | 'all';
 
 export interface UsdPeriod {
   key: string;
@@ -145,6 +146,15 @@ const METRIC_OPTIONS: { value: Metric; label: string }[] = [
   { value: 'net', label: 'Net added' },
   { value: 'value', label: 'Staked value' },
 ];
+const RANGE_OPTIONS: { value: Range; label: string }[] = [
+  { value: '12m', label: 'Last 12 months' },
+  { value: 'all', label: 'All time' },
+];
+// Launch (Dec 2024, ~$0.40) dwarfs every later period in USD, so week and month
+// views open on the last 12 months, like the New Users charts. Quarters and years
+// are few enough to always show in full.
+const RECENT_BARS: Partial<Record<Period, number>> = { week: 52, month: 12 };
+
 const METRIC_KEY: Record<Metric, 'depositedUsd' | 'netUsd' | 'valueUsd'> = { deposited: 'depositedUsd', net: 'netUsd', value: 'valueUsd' };
 
 // Validated together against the card surface (#14141f): purple / red / teal.
@@ -200,11 +210,15 @@ interface StakingUsdCardProps {
 export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError }: StakingUsdCardProps) {
   const [period, setPeriod] = useState<Period>('month');
   const [metric, setMetric] = useState<Metric>('deposited');
+  const [range, setRange] = useState<Range>('12m');
 
-  const data = useMemo(
+  const all = useMemo(
     () => (daily && prices ? buildUsdPeriods(daily, prices, period, liveTotal) : []),
     [daily, prices, period, liveTotal],
   );
+  const recent = RECENT_BARS[period];
+  // The hero always compares with the period before, even when the chart is trimmed.
+  const data = range === '12m' && recent ? all.slice(-recent) : all;
 
   if (isLoading) {
     return (
@@ -214,7 +228,7 @@ export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError
       </div>
     );
   }
-  if (!data.length) {
+  if (!all.length) {
     return (
       <div className="flagship-card p-6 text-sm text-soft-gray">
         Staking Update · USD — {priceError ? `price history unavailable (${priceError})` : 'no data yet'}
@@ -223,8 +237,8 @@ export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError
   }
 
   const key = METRIC_KEY[metric];
-  const cur = data[data.length - 1];
-  const prev = data.length > 1 ? data[data.length - 2] : null;
+  const cur = all[all.length - 1];
+  const prev = all.length > 1 ? all[all.length - 2] : null;
   const pctVs = (a: number, b: number | undefined) => (b ? ((a - b) / Math.abs(b)) * 100 : null);
   const periodWord = period === 'week' ? 'week' : period;
 
@@ -239,6 +253,7 @@ export function StakingUsdCard({ daily, prices, liveTotal, isLoading, priceError
             <span className="normal-case tracking-normal text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-purple-gray">test</span>
           </h3>
           <div className="flex flex-wrap gap-2">
+            {recent && <Toggle options={RANGE_OPTIONS} value={range} onChange={setRange} />}
             <Toggle options={METRIC_OPTIONS} value={metric} onChange={setMetric} />
             <Toggle options={PERIOD_OPTIONS} value={period} onChange={setPeriod} />
           </div>
