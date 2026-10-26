@@ -13,6 +13,13 @@ import { put, list } from '@vercel/blob';
  * at any moment — exactly, and reconciled against the contract's real LINGO
  * balance. Durations are in BLOCKS: 15,552,000 blocks × 2s = 12 months.
  *
+ * PRICES. Stakes are valued in USD (tiers) with the LINGO/WETH pool's daily
+ * VWAP, read from the summary /api/pool-prices stores (its cron runs at 00:05,
+ * this one at 00:10). Alchemy's LINGO price history disagreed with the pool by
+ * 1.6–2.7× in Jan–Mar 2026, so it is asked only for days after the pool series
+ * ends, or for every day if the series can't be read. The current month is
+ * still valued at Alchemy's live price.
+ *
  * COST. One rebuild reads the full history (~60 eth_getLogs pages plus a few
  * calls, ~10s). It runs once a day from cron. Page views are served the stored
  * snapshot and never touch Alchemy, so the cost does not grow with traffic.
@@ -44,6 +51,7 @@ const CLOSE_TOPIC = '0x7fc4727e062e336010f2c282598ef5f14facb3de68cf8195c2f23e145
 // what to post, so a read that lags an overwrite by a minute only shows
 // yesterday's numbers briefly. cacheControlMaxAge caps how long that can last.
 const SNAPSHOT_KEY = 'staking-metrics-v1.json';
+const POOL_PRICES_KEY = 'pool-prices-v1/summary.json';   // written by api/pool-prices.ts
 // Bump when the snapshot shape changes: a stored snapshot of another version
 // is treated as missing, so the next request rebuilds instead of serving a
 // shape the page no longer reads.
@@ -155,7 +163,8 @@ export interface Snapshot {
   asOfTs: number;
   requests: Record<string, number>;
   source: { stakedEvents: number; closeEvents: number; closedUnmatched: number; timestampsEstimated: number };
-  price: { live: number | null; firstDay: string | null; days: number };
+  /** poolThrough: last day the pool series covered; alchemyDays: days priced from Alchemy's feed instead. */
+  price: { live: number | null; firstDay: string | null; days: number; poolThrough: string | null; alchemyDays: number };
   reconciliation: { onChainBalance: number; computedOpen: number; deltaLingo: number } | null;
   current: {
     totalStaked: number; locked: number; unlocked: number; activeStakers: number;
@@ -193,6 +202,7 @@ export interface ComputeInput {
   onChainWei: bigint | null;
   timestampsEstimated?: number;
   requests?: Record<string, number>;
+  priceSource?: { poolThrough: string | null; alchemyDays: number };
 }
 
 interface Position { n: number; amount: bigint; duration: string; unlockTs: number; user: string }
@@ -515,7 +525,10 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       closedUnmatched,
       timestampsEstimated: input.timestampsEstimated ?? 0,
     },
-    price: { live: livePrice, firstDay: priceDays.length ? isoDay(priceDays[0]) : null, days: priceDays.length },
+    price: {
+      live: livePrice, firstDay: priceDays.length ? isoDay(priceDays[0]) : null, days: priceDays.length,
+      poolThrough: input.priceSource?.poolThrough ?? null, alchemyDays: input.priceSource?.alchemyDays ?? 0,
+    },
     reconciliation,
     current: {
       totalStaked: totalNow,
@@ -597,6 +610,27 @@ async function getAllLogs(topic: string, from: number, to: number, budget: Budge
   return out;
 }
 
+interface PoolPricesSummary { version: number; generatedAt: string; complete: boolean; days: Array<[string, number]> }
+
+/**
+ * Daily LINGO/USD from the pool's trades ([dayStartTs, usd]), and the last day
+ * the series covers: the day it was generated, since it lists only days with
+ * trades. Null if it hasn't been built or can't be read.
+ */
+async function getPoolPrices(): Promise<{ days: Array<[number, number]>; throughDay: number } | null> {
+  const { data } = await readBlobJson<PoolPricesSummary>(POOL_PRICES_KEY);
+  if (data?.version !== 1 || !data.complete || !Array.isArray(data.days)) return null;
+  const days: Array<[number, number]> = [];
+  for (const [day, usd] of data.days) {
+    const ts = Date.parse(`${day}T00:00:00Z`) / 1000;
+    if (Number.isFinite(ts) && Number.isFinite(usd) && usd > 0) days.push([ts, usd]);
+  }
+  const generatedMs = Date.parse(data.generatedAt);
+  if (!days.length || !Number.isFinite(generatedMs)) return null;
+  return { days, throughDay: dayOf(generatedMs / 1000) };
+}
+
+/** Alchemy's LINGO/USD history — only for days the pool series doesn't cover. */
 async function getDailyPrices(startTs: number, endTs: number, budget: Budget): Promise<Array<[number, number]>> {
   const out: Array<[number, number]> = [];
   for (let from = startTs; from <= endTs; from += PRICE_CHUNK_DAYS * DAY) {
@@ -689,9 +723,14 @@ async function rebuild(): Promise<Snapshot> {
     });
   }
 
+  // Pool prices wherever they reach; Alchemy's feed only past their end, or for
+  // everything if they can't be read. Days before the pool's first trade had
+  // no market at all and take its first price, as they did with Alchemy's.
   const firstTs = stakes.reduce((m, s) => Math.min(m, s.ts), headTs);
-  const [dailyPrices, livePrice, balRes] = await Promise.all([
-    getDailyPrices(dayOf(firstTs) * DAY, headTs, budget),
+  const pool = await getPoolPrices();
+  const gapFromDay = pool ? pool.throughDay + 1 : dayOf(firstTs);
+  const [alchemyPrices, livePrice, balRes] = await Promise.all([
+    gapFromDay <= dayOf(headTs) ? getDailyPrices(gapFromDay * DAY, headTs, budget) : Promise.resolve([]),
     getLivePrice(budget),
     rpc<string>('eth_call', [{
       to: LINGO_TOKEN,
@@ -699,9 +738,12 @@ async function rebuild(): Promise<Snapshot> {
     }, 'latest'], budget),
   ]);
   const onChainWei = balRes.ok && balRes.result && balRes.result !== '0x' ? BigInt(balRes.result) : null;
+  const fallbackPrices = alchemyPrices.filter(([ts]) => dayOf(ts) >= gapFromDay);
 
   return computeMetrics({
-    stakes, closes, head, headTs, dailyPrices, livePrice, onChainWei,
+    stakes, closes, head, headTs, livePrice, onChainWei,
+    dailyPrices: [...(pool?.days ?? []), ...fallbackPrices],
+    priceSource: { poolThrough: pool ? isoDay(pool.throughDay) : null, alchemyDays: new Set(fallbackPrices.map(([ts]) => dayOf(ts))).size },
     timestampsEstimated: estimated,
     requests: budget.used,
   });
@@ -709,22 +751,23 @@ async function rebuild(): Promise<Snapshot> {
 
 // ─── Snapshot storage ────────────────────────────────────────────────────
 
-async function readSnapshot(): Promise<{ data: Snapshot | null; error: boolean }> {
+/** A public Blob's JSON. error: it may exist but couldn't be read. */
+async function readBlobJson<T>(key: string): Promise<{ data: T | null; error: boolean }> {
   const token = process.env.BLOB_READ_WRITE_TOKEN || '';
   const match = token.match(/^vercel_blob_rw_([^_]+)_/);
   if (match) {
     try {
-      const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${SNAPSHOT_KEY}`);
-      if (res.ok) return { data: (await res.json()) as Snapshot, error: false };
+      const res = await fetch(`https://${match[1]}.public.blob.vercel-storage.com/${key}`);
+      if (res.ok) return { data: (await res.json()) as T, error: false };
       if (res.status === 404) return { data: null, error: false };
     } catch { /* fall through to list() */ }
   }
   try {
-    const { blobs } = await list({ prefix: SNAPSHOT_KEY });
+    const { blobs } = await list({ prefix: key });
     if (blobs.length === 0) return { data: null, error: false };
     const res = await fetch(blobs[0].url);
     if (!res.ok) return { data: null, error: true };
-    return { data: (await res.json()) as Snapshot, error: false };
+    return { data: (await res.json()) as T, error: false };
   } catch {
     return { data: null, error: !token ? false : true };
   }
@@ -754,7 +797,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (wantsRebuild && !isCron && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const stored = await readSnapshot();
+    const stored = await readBlobJson<Snapshot>(SNAPSHOT_KEY);
     if (stored.error) {
       // Serving nothing beats rebuilding on every request during a Blob outage.
       return res.status(503).json({ error: 'Snapshot unreadable — try again shortly' });

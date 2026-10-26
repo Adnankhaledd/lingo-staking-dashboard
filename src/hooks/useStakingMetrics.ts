@@ -60,7 +60,8 @@ export interface StakingMetrics {
   asOfTs: number;
   requests: Record<string, number>;
   source: { stakedEvents: number; closeEvents: number; closedUnmatched: number; timestampsEstimated: number };
-  price: { live: number | null; firstDay: string | null; days: number };
+  // poolThrough/alchemyDays are missing from snapshots built before the pool price switch.
+  price: { live: number | null; firstDay: string | null; days: number; poolThrough?: string | null; alchemyDays?: number };
   reconciliation: { onChainBalance: number; computedOpen: number; deltaLingo: number } | null;
   current: {
     totalStaked: number; locked: number; unlocked: number; activeStakers: number;
