@@ -96,6 +96,8 @@ const KNOWN_DURATIONS: Record<string, string> = {
   '7776000': '6 Months',
   '15552000': '12 Months',
   '30283200': '24 Months',
+  // the same options re-sized for 200ms blocks, if the owner updates lockDurations
+  '12960000': '1 Month', '38880000': '3 Months', '77760000': '6 Months', '155520000': '12 Months', '302832000': '24 Months',
 };
 
 const DURATION_COLORS: Record<string, number> = {
@@ -120,7 +122,7 @@ interface StakingEvent {
 // they elapse 10× faster. Labels keep the name the user chose in the app.
 function durationToLabel(val: bigint): string {
   return KNOWN_DURATIONS[val.toString()] ??
-    (() => { const m = Math.round(Number(val) * 2 / 86_400 / 30); return m > 0 ? `${m} Months` : 'Flexible'; })();
+    (() => { const m = Math.round(Number(val) * (Number(val) > 30_283_200 ? 0.2 : 2) / 86_400 / 30); return m > 0 ? `${m} Months` : 'Flexible'; })();
 }
 
 function formatAmount(amount: number): string {

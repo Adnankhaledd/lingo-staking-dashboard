@@ -202,6 +202,8 @@ export interface Summary {
   /** The token's transfer-fee rate over time, from TransferFeeUpdated events. */
   feeSchedule: Array<{ fromBlock: number; fromTs: number; bps: number }>;
   months: MonthRecord[];
+  /** Built with Base's block clock. A summary without it may hold months the old fixed-2s code scanned wrongly. */
+  clocked?: true;
 }
 
 // ─── Pure aggregation (exported for tests) ───────────────────────────────
@@ -401,31 +403,43 @@ async function getAllLogs(filter: Record<string, unknown>, from: number, to: num
 }
 
 /** Daily USD prices from Alchemy's history endpoint, by token address or symbol. */
+/**
+ * Daily USD prices from Alchemy's history endpoint. `required` (ETH): every
+ * chunk must arrive, or a month would be priced off a neighbouring chunk's
+ * quote and stored write-once. The LINGO feed is only a fallback, so a
+ * missing chunk there just leaves those days to the nearest known price.
+ */
 async function getDailyPrices(
   token: { network: string; address: string } | { symbol: string },
-  startTs: number, endTs: number, budget: Budget,
+  startTs: number, endTs: number, budget: Budget, required = false,
 ): Promise<Map<number, number>> {
   const out = new Map<number, number>();
   for (let from = startTs; from <= endTs; from += 360 * DAY) {
     const to = Math.min(endTs, from + 360 * DAY);
-    if (!budget.take()) break;
-    try {
-      const res = await fetch(HIST_PRICES_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...token,
-          startTime: new Date(from * 1000).toISOString(), endTime: new Date(to * 1000).toISOString(), interval: '1d',
-        }),
-      });
-      if (!res.ok) continue;
-      const json = await res.json();
-      for (const d of json?.data ?? []) {
-        const v = Number(d?.value);
-        const t = Date.parse(d?.timestamp ?? '');
-        if (Number.isFinite(v) && v > 0 && Number.isFinite(t)) out.set(Math.floor(t / 1000 / DAY), v);
-      }
-    } catch { /* missing days fall back to the nearest known price */ }
+    let got = false;
+    for (let attempt = 0; attempt <= RETRIES && !got; attempt++) {
+      if (attempt) await sleep(400 * 2 ** attempt);
+      if (!budget.take()) break;
+      try {
+        const res = await fetch(HIST_PRICES_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...token,
+            startTime: new Date(from * 1000).toISOString(), endTime: new Date(to * 1000).toISOString(), interval: '1d',
+          }),
+        });
+        if (!res.ok) { if (isTransient(res.status, '')) continue; break; }
+        const json = await res.json();
+        for (const d of json?.data ?? []) {
+          const v = Number(d?.value);
+          const t = Date.parse(d?.timestamp ?? '');
+          if (Number.isFinite(v) && v > 0 && Number.isFinite(t)) out.set(Math.floor(t / 1000 / DAY), v);
+        }
+        got = true;
+      } catch { /* retried */ }
+    }
+    if (!got && required) throw new Error(`Price history unavailable from ${new Date(from * 1000).toISOString().slice(0, 10)}`);
   }
   return out;
 }
@@ -495,7 +509,7 @@ async function loadContext(): Promise<Ctx> {
   const [y, m] = FIRST_MONTH.split('-').map(Number);
   const start = Date.UTC(y, m - 1, 1) / 1000;
   const [eth, lingo] = await Promise.all([
-    getDailyPrices({ symbol: 'ETH' }, start, headTs, budget),
+    getDailyPrices({ symbol: 'ETH' }, start, headTs, budget, true),
     getDailyPrices({ network: 'base-mainnet', address: LINGO_TOKEN }, start, headTs, budget),
   ]);
   if (!eth.size) throw new Error('No ETH price history');
@@ -714,7 +728,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const summary = await readSummary();
     const age = summary ? Date.now() - Date.parse(summary.generatedAt) : Infinity;
-    const serveStored = summary?.complete && (wantsRebuild ? age < REBUILD_MIN_AGE_MS : age < SUMMARY_FRESH_MS);
+    // A summary the old fixed-2s code built after Base's switch is rebuilt, not served.
+    const trusted = !!summary && (summary.clocked || Date.parse(summary.generatedAt) < CLOCK_SWITCH_MS);
+    const serveStored = trusted && summary?.complete && (wantsRebuild ? age < REBUILD_MIN_AGE_MS : age < SUMMARY_FRESH_MS);
     if (summary && serveStored) {
       res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
       return res.status(200).json({ ...summary, served: 'stored' });
@@ -751,7 +767,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const current = Date.now() - t0 < WORK_BUDGET_MS
       ? await computeMonth(currentMonth, ctx)
-      : summary?.months.find(r => r.month === currentMonth) ?? null;
+      : (summary?.clocked ? summary.months.find(r => r.month === currentMonth) ?? null : null);
 
     const finals = await Promise.all(months.filter(m => m !== currentMonth).map(async m =>
       computed.get(m) ?? (await readJson<MonthRecord>(stored.get(m)!))));
@@ -764,6 +780,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       pool: { address: POOL, feeTier: ctx.feeTier, lingoIsToken0: ctx.lingoIsToken0 },
       feeSchedule: ctx.feeSchedule,
       months: [...(finals as MonthRecord[]), ...(current ? [current] : [])],
+      clocked: true,
     };
     // Display-only summary, so a single overwritten key is fine (it decides nothing).
     try {

@@ -503,9 +503,7 @@ function buildBlocks(rep: ReportResult, userId?: string): unknown[] {
   // Printing the requested range would imply coverage we don't have, and the
   // percentages beside it would silently describe only the recent tail.
   const coveredFrom = rep.partial ? rep.coveredFromBlock : rep.range.fromBlock;
-  const coveredFromTs = rep.period.fromTs
-    + ((coveredFrom - rep.range.fromBlock) / Math.max(1, rep.range.toBlock - rep.range.fromBlock))
-      * (rep.period.toTs - rep.period.fromTs);
+  const coveredFromTs = rep.partial ? Math.max(rep.period.fromTs, blockToTs(coveredFrom)) : rep.period.fromTs;
   const contextBits = [
     `Total: *${rep.totalCount}* stakes · ${Math.round(rep.totalLingo).toLocaleString()} LINGO${rep.totalUsd > 0 ? ` · ${fmtUsd(rep.totalUsd)}` : ''}`,
     `blocks ${coveredFrom.toLocaleString()}–${rep.range.toBlock.toLocaleString()}`,

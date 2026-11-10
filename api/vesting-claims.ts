@@ -12,8 +12,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
  * captures claims regardless of mint-vs-transfer. Event has no indexed params:
  *   data word[0] = claimer, data word[1] = amount (1e18).
  *
- * For weekly buckets, block→timestamp is interpolated from ~8 sampled block
- * timestamps across the range (fixed 2s/block drifts too much over months).
+ * Each log is dated by its own blockTimestamp, or by Base's block clock if a
+ * log ever lacks one (never a fixed seconds-per-block: Base went 2s → 200ms).
  *
  * Params: ?bucket=week|month (default week), ?address=, ?topic=, ?fromBlock=.
  *
@@ -136,35 +136,6 @@ async function getAllLogs(address: string, topic: string, from: number, to: numb
   return out;
 }
 
-/** Build an accurate block→unix-seconds function from sampled real timestamps. */
-async function buildBlockToTs(minBlock: number, maxBlock: number, head: number, headTs: number) {
-  const fallback = blockToTs;
-  if (maxBlock <= minBlock) return fallback;
-  const N = 8;
-  const wanted = new Set<number>();
-  for (let i = 0; i <= N; i++) wanted.add(Math.round(minBlock + (maxBlock - minBlock) * i / N));
-  wanted.add(head);
-  const samples: Array<[number, number]> = [];
-  for (const b of [...wanted].sort((a, z) => a - z)) {
-    const r = await rpc<{ timestamp: string }>('eth_getBlockByNumber', ['0x' + b.toString(16), false]);
-    if (r.ok && r.result) samples.push([b, parseInt(r.result.timestamp, 16)]);
-  }
-  if (samples.length < 2) return fallback;
-  return (b: number) => {
-    // piecewise-linear interpolation / endpoint extrapolation
-    if (b <= samples[0][0]) {
-      const [b0, t0] = samples[0], [b1, t1] = samples[1];
-      return Math.round(t0 + (b - b0) * (t1 - t0) / (b1 - b0));
-    }
-    for (let i = 0; i < samples.length - 1; i++) {
-      const [b0, t0] = samples[i], [b1, t1] = samples[i + 1];
-      if (b <= b1) return Math.round(t0 + (b - b0) * (t1 - t0) / (b1 - b0));
-    }
-    const [b0, t0] = samples[samples.length - 2], [b1, t1] = samples[samples.length - 1];
-    return Math.round(t0 + (b - b0) * (t1 - t0) / (b1 - b0));
-  };
-}
-
 function weekKey(tsSec: number): string {
   const d = new Date(tsSec * 1000);
   const day = d.getUTCDay(); // 0 = Sunday
@@ -224,22 +195,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       logs = got;
     }
 
-    // Only pay for a head-block timestamp when some log lacks its own.
-    const needsInterp = logs.some(l => !l.blockTimestamp);
-    let blockToTs: (b: number) => number = () => 0;
-    if (needsInterp) {
-      const headBlk = await rpc<{ timestamp: string }>('eth_getBlockByNumber', [headRes.result, false]);
-      const headTs = headBlk.ok ? parseInt(headBlk.result.timestamp, 16) : Math.floor(Date.now() / 1000);
-      // NOTE: spread (Math.min(...arr)) overflows the call stack at ~100k+ logs.
-      let minBlock = Infinity, maxBlock = -Infinity;
-      for (const l of logs) {
-        const b = parseInt(l.blockNumber, 16);
-        if (b < minBlock) minBlock = b;
-        if (b > maxBlock) maxBlock = b;
-      }
-      blockToTs = await buildBlockToTs(minBlock, maxBlock, head, headTs);
-    }
-
+    // Alchemy puts a blockTimestamp on every log; date any that lack one by the block clock.
     for (const log of logs) {
       const d = log.data.slice(2);
       if (d.length < 128) continue;

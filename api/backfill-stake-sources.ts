@@ -71,20 +71,22 @@ const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/token
 const HIST_PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/historical`;
 const LINGO_DECIMALS = 18;
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
-const MAX_GETLOGS_RANGE = 500_000; // chunk eth_getLogs to stay within provider limits
+const GETLOGS_RANGE_SECONDS = 1_000_000; // ~11.6 days of chain time per eth_getLogs (500k blocks at 2s)
 const DEFAULT_LIMIT = 150;
 const CLASSIFY_CONCURRENCY = 6;
 
 const KNOWN_DURATIONS: Record<string, string> = {
   '0': 'Flexible', '1296000': '1 Month', '3888000': '3 Months',
   '7776000': '6 Months', '15552000': '12 Months', '30283200': '24 Months',
+  // the same options re-sized for 200ms blocks, if the owner updates lockDurations
+  '12960000': '1 Month', '38880000': '3 Months', '77760000': '6 Months', '155520000': '12 Months', '302832000': '24 Months',
 };
 
 // Lock lengths are block counts named for 2s blocks; since Base's 200ms switch
 // they elapse 10× faster. Labels keep the name the user chose in the app.
 function durationToLabel(val: bigint): string {
   return KNOWN_DURATIONS[val.toString()] ??
-    (() => { const m = Math.round(Number(val) * 2 / 86_400 / 30); return m > 0 ? `${m} Months` : 'Flexible'; })();
+    (() => { const m = Math.round(Number(val) * (Number(val) > 30_283_200 ? 0.2 : 2) / 86_400 / 30); return m > 0 ? `${m} Months` : 'Flexible'; })();
 }
 
 function parseAmount(hex: string): number {
@@ -243,7 +245,7 @@ async function scanStakes(fromBlock: number, toBlock: number, limit: number, qua
   let oldestScanned = toBlock;
 
   while (hi >= fromBlock) {
-    const lo = Math.max(fromBlock, hi - MAX_GETLOGS_RANGE + 1);
+    const lo = Math.max(fromBlock, Math.min(hi, tsToBlock(blockToTs(hi) - GETLOGS_RANGE_SECONDS) + 1));
     const logs = await rpc<RawLog[]>('eth_getLogs', [{
       address: STAKING_CONTRACT,
       topics: [STAKED_EVENT_TOPIC],

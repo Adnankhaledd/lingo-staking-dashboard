@@ -95,6 +95,8 @@ export type Bucket = 'flexible' | '3mo' | '6mo' | '12mo' | 'other';
 const BUCKETS: Bucket[] = ['flexible', '3mo', '6mo', '12mo', 'other'];
 const BUCKET_BY_DURATION: Record<string, Bucket> = {
   '0': 'flexible', '3888000': '3mo', '7776000': '6mo', '15552000': '12mo',
+  // the same options re-sized for 200ms blocks, if the owner updates lockDurations
+  '38880000': '3mo', '77760000': '6mo', '155520000': '12mo',
 };
 /** 1-month, 24-month and odd promo/test durations are too small to chart on their own. */
 const bucketOf = (duration: string): Bucket => BUCKET_BY_DURATION[duration] ?? 'other';
@@ -103,11 +105,20 @@ const bucketOf = (duration: string): Bucket => BUCKET_BY_DURATION[duration] ?? '
 const DURATION_LABELS: Record<string, string> = {
   '0': 'Flexible', '1296000': '1 Month', '3888000': '3 Months',
   '7776000': '6 Months', '15552000': '12 Months', '30283200': '24 Months',
+  '12960000': '1 Month', '38880000': '3 Months', '77760000': '6 Months', '155520000': '12 Months', '302832000': '24 Months',
 };
+/**
+ * Seconds per block a lock length was sized for. Every option offered at 2s
+ * was at most 30,283,200 blocks (24 months); anything longer, or one of the
+ * ×10 values, was sized for 200ms blocks.
+ */
+const RESIZED_FOR_200MS = new Set(['12960000', '38880000', '77760000', '155520000', '302832000']);
+const designSecondsPerBlock = (duration: string) =>
+  RESIZED_FOR_200MS.has(duration) || Number(duration) > 30_283_200 ? 0.2 : DESIGN_SECONDS_PER_BLOCK;
 function labelOf(duration: string): string {
   const known = DURATION_LABELS[duration];
   if (known) return known;
-  const days = Number(duration) * DESIGN_SECONDS_PER_BLOCK / DAY;
+  const days = Number(duration) * designSecondsPerBlock(duration) / DAY;
   return days > 0 ? `${days < 1 ? days.toFixed(1) : days.toFixed(0)}d (other)` : 'Flexible';
 }
 
@@ -410,7 +421,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       else positions.set(key, {
         n: 1, amount: ev.amount, duration: ev.duration, user: ev.user,
         unlockTs: blockToTs(ev.unlockBlock),
-        designUnlockTs: ev.ts + Number(ev.duration) * DESIGN_SECONDS_PER_BLOCK,
+        designUnlockTs: ev.ts + Number(ev.duration) * designSecondsPerBlock(ev.duration),
       });
       balance.set(ev.user, (balance.get(ev.user) ?? 0n) + ev.amount);
       totalOpen += ev.amount;
@@ -773,8 +784,9 @@ async function rebuild(): Promise<Snapshot> {
   if (!headRes.ok) throw new Error(`head: ${headRes.error}`);
   const head = parseInt(headRes.result, 16);
   const headBlock = await rpc<{ timestamp: string }>('eth_getBlockByNumber', [headRes.result, false], budget);
-  const headTs = headBlock.ok ? parseInt(headBlock.result.timestamp, 16) : Math.floor(Date.now() / 1000);
-  if (headBlock.ok && Math.abs(headTs - blockToTs(head)) > 900) {
+  // A block 200ms old can still be unknown to the node: then fall back to the clock, not a crash.
+  const headTs = headBlock.ok && headBlock.result ? parseInt(headBlock.result.timestamp, 16) : blockToTs(head);
+  if (headBlock.ok && headBlock.result && Math.abs(headTs - blockToTs(head)) > 900) {
     throw new Error(`Base block clock is off by ${headTs - blockToTs(head)}s at block ${head}: block time changed again — add a BASE_CLOCK segment`);
   }
 
