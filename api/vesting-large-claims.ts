@@ -25,7 +25,28 @@ const DEFAULT_TOPIC = '0xc7798891864187665ac6dd119286e44ec13f014527aeeb2b8eb3fd4
 const ABS_MIN_BLOCK = 20_000_000;
 const MAX_REQUESTS = 120;
 const LOG_PAGE_LIMIT = 9500;
-const SEC_PER_BLOCK = 2; // Base ~2s/block; we over-cover then filter by real ts
+
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
 
 interface RawLog { data: string; blockNumber: string; blockTimestamp?: string; transactionHash?: string }
 
@@ -101,9 +122,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const nowTs = headBlk.ok ? parseInt(headBlk.result.timestamp, 16) : Math.floor(Date.now() / 1000);
     const cutoffTs = nowTs - days * 86400;
 
-    // Over-cover the window in blocks, then filter precisely by real blockTimestamp.
-    const blocksBack = Math.ceil((days * 86400) / SEC_PER_BLOCK) + 5000;
-    const fromBlock = Math.max(ABS_MIN_BLOCK, head - blocksBack);
+    // Over-cover the window by an hour, then filter precisely by real blockTimestamp.
+    const fromBlock = Math.max(ABS_MIN_BLOCK, Math.min(head, tsToBlock(cutoffTs - 3600)));
 
     const logs = await getAllLogs(address, topic, fromBlock, head, budget);
     if (!logs) return res.status(200).json({ error: 'Request budget exhausted — narrow ?days=' });
@@ -115,8 +135,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const log of logs) {
       const d = log.data.slice(2);
       if (d.length < 128) continue;
-      const ts = log.blockTimestamp ? parseInt(log.blockTimestamp, 16) : 0;
-      if (ts && ts < cutoffTs) continue;
+      const ts = log.blockTimestamp ? parseInt(log.blockTimestamp, 16) : blockToTs(parseInt(log.blockNumber, 16));
+      if (ts < cutoffTs) continue;
       const amountWei = BigInt('0x' + d.slice(64, 128));
       windowWei += amountWei;
       windowClaims++;

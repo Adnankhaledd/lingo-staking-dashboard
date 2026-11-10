@@ -39,7 +39,29 @@ const DEFAULT_FROM_BLOCK = 20_000_000; // no activity before this
 const MAX_REQUESTS = 220;
 const LOG_PAGE_LIMIT = 9500;
 const CACHE_KEY = 'vesting-claims-cache.json';
-const REORG_MARGIN = 100; // ~3 min on Base — never cache the very tip
+const REORG_MARGIN = 1_000; // a few minutes of Base blocks — never cache the very tip
+
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
 
 /** period -> [wei as a decimal string, claim count] */
 type CacheBuckets = Record<string, [string, number]>;
@@ -116,7 +138,7 @@ async function getAllLogs(address: string, topic: string, from: number, to: numb
 
 /** Build an accurate block→unix-seconds function from sampled real timestamps. */
 async function buildBlockToTs(minBlock: number, maxBlock: number, head: number, headTs: number) {
-  const fallback = (b: number) => headTs - (head - b) * 2;
+  const fallback = blockToTs;
   if (maxBlock <= minBlock) return fallback;
   const N = 8;
   const wanted = new Set<number>();

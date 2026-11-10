@@ -45,6 +45,28 @@ export const config = { maxDuration: 60 };
 
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
 const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/by-address`;
 const SLACK_URL = process.env.LINGO_BUYS_SLACK_WEBHOOK_URL || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -559,7 +581,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       // Use the latest real transfer (project wallets included) so the test
       // looks exactly like a live alert; fall back to a sample if none.
-      const recent = await getBuys(Math.max(START_BLOCK, head - 302_400), head, budget, true);
+      const recent = await getBuys(Math.max(START_BLOCK, Math.min(head, tsToBlock(blockToTs(head) - 7 * 86_400))), head, budget, true);
       const sample: Buy = recent?.length ? recent[recent.length - 1] : {
         key: 'test', txHash: '0x' + '0'.repeat(64), from: BUY_WALLET, token: 'USDC',
         micro: 100_000_000, ts: Math.floor(Date.now() / 1000), block: head, logIndex: 0,

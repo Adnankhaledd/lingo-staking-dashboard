@@ -37,6 +37,28 @@ export const config = { maxDuration: 60 };
 
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const CRON_SECRET = process.env.CRON_SECRET || '';
@@ -320,15 +342,12 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
   }
 }
 
-/** Estimate block numbers for the period from the latest block (Base ~2s/block). */
+/** The period's block range, from Base's block clock, capped at the latest block. */
 async function resolveBlocks(p: Period): Promise<{ fromBlock: number; toBlock: number } | null> {
   const latestHex = await rpc<string>('eth_blockNumber', []);
   if (!latestHex) return null;
   const latest = parseInt(latestHex, 16);
-  const blk = await rpc<{ timestamp: string }>('eth_getBlockByNumber', [latestHex, false]);
-  if (!blk) return null;
-  const latestTs = parseInt(blk.timestamp, 16);
-  const est = (ts: number) => Math.max(0, latest - Math.round((latestTs - ts) / 2));
+  const est = (ts: number) => Math.min(latest, tsToBlock(ts));
   const toBlock = Math.min(latest, est(p.toTs));
   const fromBlock = Math.min(toBlock, est(p.fromTs));
   return { fromBlock, toBlock };
@@ -683,9 +702,7 @@ async function runBreakdown(text: string): Promise<BreakdownResult> {
   const buckets = makeBuckets(spec.period, spec.gran, nowSec);
   const unit = spec.gran === 'day' ? 86_400 : 7 * 86_400;
   const origin = buckets.length ? buckets[0].start : spec.period.fromTs;
-  const { fromBlock, toBlock } = rep.range;
   const { fromTs, toTs } = spec.period;
-  const blockToTs = (b: number) => fromTs + ((b - fromBlock) / Math.max(1, toBlock - fromBlock)) * (toTs - fromTs);
 
   // A scan cut short by the page/time budget never reached the oldest blocks.
   // Those buckets must not look like quiet days.

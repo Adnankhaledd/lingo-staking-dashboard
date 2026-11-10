@@ -31,6 +31,28 @@ const STAKING_CONTRACT = (process.env.STAKING_CONTRACT_ADDRESS || '').toLowerCas
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
 const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
+
 // USD-denominated floor for REPORTING, deliberately lower than the $100 alert
 // floor in api/discord-alerts.ts. A floor is noise control for a ping, but on a
 // report it biases the answer: every "% bought on DEX" would silently mean
@@ -49,7 +71,6 @@ const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/token
 const HIST_PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/historical`;
 const LINGO_DECIMALS = 18;
 const STAKED_EVENT_TOPIC = '0x1449c6dd7851abc30abf37f57715f492010519147cc2652fbc38202c18a6ee90';
-const BLOCKS_PER_DAY = 43_200; // Base ~2s/block
 const MAX_GETLOGS_RANGE = 500_000; // chunk eth_getLogs to stay within provider limits
 const DEFAULT_LIMIT = 150;
 const CLASSIFY_CONCURRENCY = 6;
@@ -59,6 +80,8 @@ const KNOWN_DURATIONS: Record<string, string> = {
   '7776000': '6 Months', '15552000': '12 Months', '30283200': '24 Months',
 };
 
+// Lock lengths are block counts named for 2s blocks; since Base's 200ms switch
+// they elapse 10× faster. Labels keep the name the user chose in the app.
 function durationToLabel(val: bigint): string {
   return KNOWN_DURATIONS[val.toString()] ??
     (() => { const m = Math.round(Number(val) * 2 / 86_400 / 30); return m > 0 ? `${m} Months` : 'Flexible'; })();
@@ -523,7 +546,9 @@ const PROV_ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // account for 180k+ LINGO transfers worth almost nothing; unfiltered they
 // would dominate the mix by sender count while funding none of the stake.
 const PROV_DUST_LINGO = 1;
-const PROV_WINDOW_BLOCKS = 43_200; // ~24h on Base
+const PROV_WINDOW_SECONDS = 86_400; // the ~24h before a stake
+/** First block of the provenance window ending at `block`. */
+const provWindowStart = (block: number) => tsToBlock(blockToTs(block) - PROV_WINDOW_SECONDS);
 
 export type ProvenanceSource =
   | 'bought' | 'bought_cex' | 'bought_direct' | 'bridged'
@@ -647,7 +672,7 @@ function provToLingo(weiValue: bigint): number {
 }
 
 async function provBoughtUpstream(eoa: string, beforeBlock: number): Promise<boolean> {
-  const ts = await provInbound(eoa, beforeBlock - PROV_WINDOW_BLOCKS, beforeBlock, 0x5);
+  const ts = await provInbound(eoa, provWindowStart(beforeBlock), beforeBlock, 0x5);
   if (ts.length === 0) return false;
   const r = await provGetReceipt(ts[0].hash);
   if (!r) return false;
@@ -748,7 +773,7 @@ async function classifyProvenance(input: ClassifyInput): Promise<Provenance> {
     // two most common real patterns: a small reward landing right after a large
     // unstake made the whole stake look like a reward payout, and "unstaked,
     // then bought more" was reported as a pure re-stake with the buy invisible.
-    const transfers = (await provInbound(walletLc, input.stakeBlock - PROV_WINDOW_BLOCKS, input.stakeBlock))
+    const transfers = (await provInbound(walletLc, provWindowStart(input.stakeBlock), input.stakeBlock))
       .filter(t => t.hash.toLowerCase() !== input.stakeTxHash.toLowerCase());
     if (transfers.length === 0) return provMk('preheld', 'low', 'No inbound LINGO in the ~24h before staking');
 
@@ -829,7 +854,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const latest = await getLatestBlock();
     const toBlock = q.beforeBlock ? parseInt(q.beforeBlock, 10) : (q.toBlock ? parseInt(q.toBlock, 10) : latest);
-    const fromBlock = q.fromBlock ? parseInt(q.fromBlock, 10) : Math.max(0, toBlock - days * BLOCKS_PER_DAY);
+    const fromBlock = q.fromBlock ? parseInt(q.fromBlock, 10) : Math.min(toBlock, tsToBlock(blockToTs(toBlock) - days * 86_400));
 
     // Value each stake at the price on ITS OWN day — this scan is usually
     // historical. Degrade to a flat live-price floor, then to a fixed one.

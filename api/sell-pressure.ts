@@ -46,12 +46,33 @@ const V3_SWAP = '0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcc
 const V2_SWAP = '0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822';
 const ZERO = '0x0000000000000000000000000000000000000000';
 const DAY = 86_400;
-const BLOCKS_PER_DAY = 43_200;
 const LOOKBACK_DAYS = 30;
 const MAX_REQUESTS = 400;
 const LOG_PAGE_LIMIT = 9500;
-const INITIAL_CHUNK = 300_000;       // ~7 days per request; split only if refused
+const INITIAL_CHUNK_SECONDS = 7 * DAY;   // per request; split only if refused
 const DUST = 1;                      // < 1 LINGO is poisoning dust / zero-fee legs
+
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
 
 // ─── Who is who (same lists as api/backfill-stake-sources.ts) ───────────
 
@@ -463,10 +484,20 @@ async function rpc<T>(method: string, params: unknown[]): Promise<{ ok: true; re
   return { ok: false, error: 'retries exhausted' };
 }
 
+/** [from, to] split into consecutive ranges of at most `seconds` of chain time, oldest first. */
+function timeChunks(from: number, to: number, seconds: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let lo = from; lo <= to; ) {
+    const hi = Math.min(to, Math.max(lo, tsToBlock(blockToTs(lo) + seconds) - 1));
+    out.push([lo, hi]);
+    lo = hi + 1;
+  }
+  return out;
+}
+
 async function getAllLogs(filter: Record<string, unknown>, from: number, to: number): Promise<RawLog[]> {
   const out: RawLog[] = [];
-  const stack: Array<[number, number]> = [];
-  for (let hi = to; hi >= from; hi -= INITIAL_CHUNK) stack.push([Math.max(from, hi - INITIAL_CHUNK + 1), hi]);
+  const stack = timeChunks(from, to, INITIAL_CHUNK_SECONDS).reverse();   // popped oldest first
   while (stack.length) {
     const [lo, hi] = stack.pop()!;
     const r = await rpc<RawLog[]>('eth_getLogs', [{ ...filter, fromBlock: '0x' + lo.toString(16), toBlock: '0x' + hi.toString(16) }]);
@@ -510,7 +541,7 @@ const int256 = (h: string) => { const v = BigInt('0x' + h); return v >= (1n << 2
 // at most once an hour (Blob cache), so the page can't run up Alchemy usage.
 const PERIODS = [7, 14, 20, 30, 45, 60, 90];
 const CACHE_TTL_MS = 60 * 60 * 1000;
-const cacheKey = (days: number) => `sell-pressure-v3/${days}d.json`;
+const cacheKey = (days: number) => `sell-pressure-v4/${days}d.json`;
 
 async function readCached(days: number): Promise<{ generatedAt: string } | null> {
   const token = process.env.BLOB_READ_WRITE_TOKEN || '';
@@ -549,8 +580,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const headBlock = parseInt(head.result, 16);
     const headTs = Math.floor(Date.now() / 1000);
     const windowStart = headTs - days * DAY;
-    const fromBlock = Math.max(0, headBlock - (days + LOOKBACK_DAYS + 1) * BLOCKS_PER_DAY);
-    const tsOf = (l: RawLog) => l.blockTimestamp ? parseInt(l.blockTimestamp, 16) : headTs - (headBlock - parseInt(l.blockNumber, 16)) * 2;
+    const fromBlock = Math.min(headBlock, tsToBlock(windowStart - (LOOKBACK_DAYS + 1) * DAY));
+    const tsOf = (l: RawLog) => l.blockTimestamp ? parseInt(l.blockTimestamp, 16) : blockToTs(parseInt(l.blockNumber, 16));
 
     const transferLogs = await getAllLogs({ address: LINGO, topics: [TRANSFER_TOPIC] }, fromBlock, headBlock);
     const v3Logs = await getAllLogs({ address: V3_POOL, topics: [V3_SWAP] }, fromBlock, headBlock);

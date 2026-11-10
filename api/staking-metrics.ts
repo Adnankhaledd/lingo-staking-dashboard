@@ -58,12 +58,36 @@ const POOL_PRICES_KEY = 'pool-prices-v1/summary.json';   // written by api/pool-
 const SNAPSHOT_VERSION = 2;
 const MAX_REQUESTS = 160;
 const LOG_PAGE_LIMIT = 9500;
-const BLOCK_SECONDS = 2;            // Base block time — fixed by the protocol
+// Lock options were sized for 2s blocks: used only to name them and to say
+// when a lock was meant to end. Real unlock times come from the block clock.
+const DESIGN_SECONDS_PER_BLOCK = 2;
 const DAY = 86_400;
 const REBUILD_MIN_AGE_MS = 2 * 60 * 60 * 1000;
 const STALE_AFTER_MS = 30 * 60 * 60 * 1000;
 const TOP_STAKERS = 100;
 const PRICE_CHUNK_DAYS = 360;       // the historical endpoint allows 1 year at 1d
+
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
 
 // ─── Classification ──────────────────────────────────────────────────────
 
@@ -83,7 +107,7 @@ const DURATION_LABELS: Record<string, string> = {
 function labelOf(duration: string): string {
   const known = DURATION_LABELS[duration];
   if (known) return known;
-  const days = Number(duration) * BLOCK_SECONDS / DAY;
+  const days = Number(duration) * DESIGN_SECONDS_PER_BLOCK / DAY;
   return days > 0 ? `${days < 1 ? days.toFixed(1) : days.toFixed(0)}d (other)` : 'Flexible';
 }
 
@@ -184,6 +208,28 @@ export interface Snapshot {
     reconciliation: { onChainBalance: number; computedOpen: number; deltaLingo: number; note: string } | null;
     events: { staked: number; closed: number; closedUnmatched: number };
   };
+  /**
+   * When locked LINGO becomes withdrawable. The contract unlocks at a block
+   * number (stake block + duration); durations were sized for 2s blocks, so
+   * since Base's 200ms switch every lock ends ~10× sooner than designed.
+   */
+  unlockSchedule: UnlockSchedule;
+}
+
+export interface UnlockSchedule {
+  /** Head timestamp minus the block clock's estimate: ~0 while the clock is right. */
+  clockDriftSec: number;
+  lockedNow: number;
+  /** Future unlocks by the Monday-starting UTC week they happen in. */
+  weekly: Array<{ week: string; lingo: number; positions: number }>;
+  within: { d7: number; d30: number; d60: number; d90: number };
+  lastUnlock: string | null;
+  /** Open positions already withdrawable that, at 2s blocks, would still be locked. */
+  unlockedEarly: { lingo: number; positions: number };
+  /** Positions withdrawn since the switch before their designed unlock date. */
+  withdrawnEarly: { lingo: number; positions: number };
+  /** Still-locked positions that will unlock more than a day before their designed date. */
+  stillLockedEarly: { lingo: number; positions: number };
 }
 
 // ─── Pure computation (exported for tests) ───────────────────────────────
@@ -205,7 +251,8 @@ export interface ComputeInput {
   priceSource?: { poolThrough: string | null; alchemyDays: number };
 }
 
-interface Position { n: number; amount: bigint; duration: string; unlockTs: number; user: string }
+/** unlockTs: when the contract releases it (real block clock). designUnlockTs: when it would have at 2s blocks. */
+interface Position { n: number; amount: bigint; duration: string; unlockTs: number; designUnlockTs: number; user: string }
 
 interface Flow {
   staked: Record<Bucket, bigint>;
@@ -260,6 +307,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   const everClosed = new Set<string>();
   let totalOpen = 0n;
   let closedUnmatched = 0;
+  let withdrawnEarlyWei = 0n, withdrawnEarlyN = 0;
 
   const flows = new Map<string, Flow>();
   const flowOf = (month: string): Flow => {
@@ -359,7 +407,11 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       const key = `${ev.user}|${ev.unlockBlock}|${ev.amount}`;
       const pos = positions.get(key);
       if (pos) pos.n++;
-      else positions.set(key, { n: 1, amount: ev.amount, duration: ev.duration, unlockTs: ev.ts + Number(ev.duration) * BLOCK_SECONDS, user: ev.user });
+      else positions.set(key, {
+        n: 1, amount: ev.amount, duration: ev.duration, user: ev.user,
+        unlockTs: blockToTs(ev.unlockBlock),
+        designUnlockTs: ev.ts + Number(ev.duration) * DESIGN_SECONDS_PER_BLOCK,
+      });
       balance.set(ev.user, (balance.get(ev.user) ?? 0n) + ev.amount);
       totalOpen += ev.amount;
       dayStaked += ev.amount;
@@ -371,6 +423,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       // A close that matches nothing is counted and otherwise ignored, exactly
       // as the reconciliation expects. It has never happened on this contract.
       if (!pos) { closedUnmatched++; continue; }
+      if (pos.duration !== '0' && pos.designUnlockTs > ev.ts) { withdrawnEarlyWei += ev.amount; withdrawnEarlyN++; }
       if (--pos.n === 0) positions.delete(key);
       const bal = (balance.get(ev.user) ?? 0n) - ev.amount;
       if (bal > 0n) balance.set(ev.user, bal); else balance.delete(ev.user);
@@ -489,7 +542,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
     });
 
   // ── LockBreakdownCard-compatible block ──
-  const blockAtTs = (ts: number) => Math.max(0, Math.min(head, head - Math.round((headTs - ts) / BLOCK_SECONDS)));
+  const blockAtTs = (ts: number) => Math.min(head, tsToBlock(ts));
   const lbTiers = [...now.byLabel.entries()]
     .sort((a, b) => Number(BigInt(a[0]) - BigInt(b[0])))
     .map(([dur, v]) => ({
@@ -512,6 +565,44 @@ export function computeMetrics(input: ComputeInput): Snapshot {
     const locked = round(toLingo(m.locked));
     return { month: m.month, atBlock: blockAtTs(m.atTs), partial: m.partial, total, locked, free: total - locked, byTier, lockedByTier };
   });
+
+  // ── Unlock schedule ──
+  const weekOf = (ts: number) => {
+    const d = new Date(ts * 1000);
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((d.getUTCDay() + 6) % 7))).toISOString().slice(0, 10);
+  };
+  const weeks = new Map<string, { wei: bigint; positions: number }>();
+  const within = { d7: 0n, d30: 0n, d60: 0n, d90: 0n };
+  let unlockedEarlyWei = 0n, unlockedEarlyN = 0, stillEarlyWei = 0n, stillEarlyN = 0, lastUnlockTs = 0;
+  for (const p of positions.values()) {
+    if (p.duration === '0') continue;
+    const amt = p.amount * BigInt(p.n);
+    if (p.unlockTs <= headTs) {
+      if (p.designUnlockTs > headTs) { unlockedEarlyWei += amt; unlockedEarlyN += p.n; }
+      continue;
+    }
+    const w = weeks.get(weekOf(p.unlockTs)) ?? { wei: 0n, positions: 0 };
+    w.wei += amt; w.positions += p.n;
+    weeks.set(weekOf(p.unlockTs), w);
+    const left = p.unlockTs - headTs;
+    if (left <= 7 * DAY) within.d7 += amt;
+    if (left <= 30 * DAY) within.d30 += amt;
+    if (left <= 60 * DAY) within.d60 += amt;
+    if (left <= 90 * DAY) within.d90 += amt;
+    if (p.designUnlockTs > p.unlockTs + DAY) { stillEarlyWei += amt; stillEarlyN += p.n; }
+    lastUnlockTs = Math.max(lastUnlockTs, p.unlockTs);
+  }
+  const unlockSchedule: UnlockSchedule = {
+    clockDriftSec: headTs - blockToTs(head),
+    lockedNow,
+    weekly: [...weeks.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([week, w]) => ({ week, lingo: round(toLingo(w.wei)), positions: w.positions })),
+    within: { d7: round(toLingo(within.d7)), d30: round(toLingo(within.d30)), d60: round(toLingo(within.d60)), d90: round(toLingo(within.d90)) },
+    lastUnlock: lastUnlockTs ? new Date(lastUnlockTs * 1000).toISOString().slice(0, 10) : null,
+    unlockedEarly: { lingo: round(toLingo(unlockedEarlyWei)), positions: unlockedEarlyN },
+    withdrawnEarly: { lingo: round(toLingo(withdrawnEarlyWei)), positions: withdrawnEarlyN },
+    stillLockedEarly: { lingo: round(toLingo(stillEarlyWei)), positions: stillEarlyN },
+  };
 
   return {
     version: SNAPSHOT_VERSION,
@@ -550,6 +641,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       reconciliation: reconciliation && { ...reconciliation, note: 'delta ≈ 0 means the event model ties out to the contract balance' },
       events: { staked: input.stakes.length, closed: input.closes.length, closedUnmatched },
     },
+    unlockSchedule,
   };
 }
 
@@ -682,6 +774,9 @@ async function rebuild(): Promise<Snapshot> {
   const head = parseInt(headRes.result, 16);
   const headBlock = await rpc<{ timestamp: string }>('eth_getBlockByNumber', [headRes.result, false], budget);
   const headTs = headBlock.ok ? parseInt(headBlock.result.timestamp, 16) : Math.floor(Date.now() / 1000);
+  if (headBlock.ok && Math.abs(headTs - blockToTs(head)) > 900) {
+    throw new Error(`Base block clock is off by ${headTs - blockToTs(head)}s at block ${head}: block time changed again — add a BASE_CLOCK segment`);
+  }
 
   // One stream after the other, not in parallel: the account's throughput
   // limit is shared with the Lingo app itself, so this daily job shouldn't
@@ -696,7 +791,7 @@ async function rebuild(): Promise<Snapshot> {
   const tsOf = (log: RawLog) => {
     if (log.blockTimestamp) return parseInt(log.blockTimestamp, 16);
     estimated++;
-    return headTs - (head - parseInt(log.blockNumber, 16)) * BLOCK_SECONDS;
+    return blockToTs(parseInt(log.blockNumber, 16));
   };
   const stakes: StakeEvent[] = [];
   for (const log of stakedLogs) {

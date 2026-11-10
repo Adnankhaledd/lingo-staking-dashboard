@@ -56,6 +56,11 @@ const FEE_UPDATED_TOPIC = '0xf9f635b7cf851af6071aaf78ef8a5f752dc52f19d556fea4512
 const FIRST_MONTH = '2024-12';          // launch
 // v2: transfer-fee verification + pool pricing. v1 files are left untouched.
 const MONTH_PREFIX = 'fees-v2/months/';
+// Months written after Base's 200ms switch by the old fixed-2s code scanned the
+// wrong blocks (2026-10 was stored with no swaps at all). Those are ignored;
+// every month since is written here instead, still write-once.
+const MONTH_PREFIX_CLOCKED = 'fees-v2/months-clocked/';
+const CLOCK_SWITCH_MS = Date.parse('2026-11-05T18:00:01Z');
 const SUMMARY_KEY = 'fees-v2/summary.json';
 // Inflows this large are checked for the net leg that proves a transfer fee.
 // Below it a deposit would be immaterial, and routers/pools never deposit.
@@ -69,15 +74,36 @@ const REBUILD_MIN_AGE_MS = 30 * 60 * 1000;
 const MAX_REQUESTS = 800;          // runaway guard: HTTP requests per call (a verify batch counts once)
 const LOG_PAGE_LIMIT = 9500;
 const DAY = 86_400;
-// Month ranges are found by estimating blocks from the head, then every log is
-// filed by its own timestamp. The margin makes a slightly-off estimate harmless.
-const BLOCK_MARGIN = 43_200;            // ~1 day of Base blocks
-const BLOCK_SECONDS = 2;
-// Start from chunks this size and only split further on a full page. Asking
+// Month ranges come from Base's block clock, then every log is filed by its
+// own timestamp. The margin makes an off-by-a-little range harmless.
+const MARGIN_SECONDS = DAY;
+// Start from chunks this long and only split further on a full page. Asking
 // for a whole month at once made the node do a month-long scan of LINGO's
 // entire transfer history per request.
-const INITIAL_CHUNK_BLOCKS = 100_000;   // ~2.3 days
+const INITIAL_CHUNK_SECONDS = 2.3 * DAY;
 const RETRIES = 3;
+
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
 
 // ─── Who sent it ─────────────────────────────────────────────────────────
 
@@ -343,10 +369,21 @@ async function rpc<T>(method: string, params: unknown[], budget: Budget): Promis
   }
 }
 
-async function getAllLogs(filter: Record<string, unknown>, from: number, to: number, budget: Budget, initialChunk = INITIAL_CHUNK_BLOCKS): Promise<RawLog[]> {
+/** [from, to] split into consecutive ranges of at most `seconds` of chain time, oldest first. */
+function timeChunks(from: number, to: number, seconds: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let lo = from; lo <= to; ) {
+    const hi = Math.min(to, Math.max(lo, tsToBlock(blockToTs(lo) + seconds) - 1));
+    out.push([lo, hi]);
+    lo = hi + 1;
+  }
+  return out;
+}
+
+/** `wholeRange`: one request first (for rare events across all history), split only if refused. */
+async function getAllLogs(filter: Record<string, unknown>, from: number, to: number, budget: Budget, wholeRange = false): Promise<RawLog[]> {
   const out: RawLog[] = [];
-  const stack: Array<[number, number]> = [];
-  for (let hi = to; hi >= from; hi -= initialChunk) stack.push([Math.max(from, hi - initialChunk + 1), hi]);
+  const stack: Array<[number, number]> = wholeRange ? [[from, to]] : timeChunks(from, to, INITIAL_CHUNK_SECONDS).reverse();
   while (stack.length) {
     const [lo, hi] = stack.pop()!;
     if (lo > hi) continue;
@@ -443,11 +480,11 @@ async function loadContext(): Promise<Ctx> {
   const lingoIsToken0 = ('0x' + t0Res.result.slice(-40)).toLowerCase() === LINGO_TOKEN;
 
   // A handful of events across the whole history: one full-range query, split only if refused.
-  const feeLogs = await getAllLogs({ address: LINGO_TOKEN, topics: [FEE_UPDATED_TOPIC] }, 0, head, budget, head + 1);
+  const feeLogs = await getAllLogs({ address: LINGO_TOKEN, topics: [FEE_UPDATED_TOPIC] }, 0, head, budget, true);
   const feeSchedule = feeLogs
     .map(l => ({
       fromBlock: parseInt(l.blockNumber, 16),
-      fromTs: l.blockTimestamp ? parseInt(l.blockTimestamp, 16) : headTs - (head - parseInt(l.blockNumber, 16)) * BLOCK_SECONDS,
+      fromTs: l.blockTimestamp ? parseInt(l.blockTimestamp, 16) : blockToTs(parseInt(l.blockNumber, 16)),
       bps: Number(BigInt(l.data)),
       logIndex: parseInt(l.logIndex, 16),
     }))
@@ -505,12 +542,9 @@ async function computeMonth(month: string, ctx: Ctx): Promise<MonthRecord> {
   const startTs = monthStartTs(month);
   const current = month === monthOfTs(ctx.headTs);
   const endTs = current ? ctx.headTs + 1 : monthStartTs(nextMonth(month));
-  const blockAt = (ts: number) => ctx.head - Math.round((ctx.headTs - ts) / BLOCK_SECONDS);
-  const from = Math.max(0, blockAt(startTs) - BLOCK_MARGIN);
-  const to = Math.min(ctx.head, blockAt(endTs) + BLOCK_MARGIN);
-  const tsOf = (log: RawLog) => log.blockTimestamp
-    ? parseInt(log.blockTimestamp, 16)
-    : ctx.headTs - (ctx.head - parseInt(log.blockNumber, 16)) * BLOCK_SECONDS;
+  const from = Math.min(ctx.head, tsToBlock(startTs - MARGIN_SECONDS));
+  const to = Math.min(ctx.head, tsToBlock(endTs + MARGIN_SECONDS));
+  const tsOf = (log: RawLog) => log.blockTimestamp ? parseInt(log.blockTimestamp, 16) : blockToTs(parseInt(log.blockNumber, 16));
   const inMonth = (ts: number) => ts >= startTs && ts < endTs;
 
   const transferLogs = await getAllLogs({ address: LINGO_TOKEN, topics: [TRANSFER_TOPIC, null, '0x' + TREASURY.slice(2).padStart(64, '0')] }, from, to, ctx.budget);
@@ -575,7 +609,7 @@ async function otherPoolsReport(ctx: Ctx) {
     const t0 = await rpc<string>('eth_call', [{ to: p.address, data: '0x0dfe1681' }, 'latest'], ctx.budget);
     const lingoIs0 = t0.ok && ('0x' + t0.result.slice(-40)).toLowerCase() === LINGO_TOKEN;
     const topic = p.kind === 'v2' ? V2_SWAP : p.kind === 'solidly' ? SOLIDLY_SWAP : SWAP_TOPIC;
-    const logs = await getAllLogs({ address: p.address, topics: [topic] }, 0, ctx.head, ctx.budget, ctx.head + 1);
+    const logs = await getAllLogs({ address: p.address, topics: [topic] }, 0, ctx.head, ctx.budget, true);
     let feeBps: number | null = p.kind === 'v2' ? 30 : null;
     if (p.kind === 'v3') { const f = await rpc<string>('eth_call', [{ to: p.address, data: '0xddca3f43' }, 'latest'], ctx.budget); if (f.ok) feeBps = Number(BigInt(f.result)) / 100; }
     const byMonth: Record<string, { swaps: number; lingo: number }> = {};
@@ -594,14 +628,14 @@ async function otherPoolsReport(ctx: Ctx) {
   // Uniswap V4 is one contract for every pool: find LINGO's pools by their Initialize event.
   const pad = '0x' + LINGO_TOKEN.slice(2).padStart(64, '0');
   const inits = [
-    ...(await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_INITIALIZE, null, pad] }, 0, ctx.head, ctx.budget, ctx.head + 1)),
-    ...(await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_INITIALIZE, null, null, pad] }, 0, ctx.head, ctx.budget, ctx.head + 1)),
+    ...(await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_INITIALIZE, null, pad] }, 0, ctx.head, ctx.budget, true)),
+    ...(await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_INITIALIZE, null, null, pad] }, 0, ctx.head, ctx.budget, true)),
   ];
   for (const init of inits) {
     const id = init.topics[1];
     const lingoIs0 = ('0x' + init.topics[2].slice(-40)).toLowerCase() === LINGO_TOKEN;
     const other = '0x' + (lingoIs0 ? init.topics[3] : init.topics[2]).slice(-40);
-    const logs = await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_SWAP, id] }, 0, ctx.head, ctx.budget, ctx.head + 1);
+    const logs = await getAllLogs({ address: V4_POOL_MANAGER, topics: [V4_SWAP, id] }, 0, ctx.head, ctx.budget, true);
     const byMonth: Record<string, { swaps: number; lingo: number; feeLingo: number }> = {};
     for (const l of logs) {
       const d = l.data.slice(2);
@@ -632,15 +666,19 @@ async function readSummary(): Promise<Summary | null> {
 /** Finished months already stored. Each is written once and never changes. */
 async function storedMonths(): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  let cursor: string | undefined;
-  do {
-    const page = await list({ prefix: MONTH_PREFIX, cursor });
-    for (const b of page.blobs) {
-      const mm = b.pathname.match(/(\d{4}-\d{2})\.json$/);
-      if (mm) out.set(mm[1], b.url);
-    }
-    cursor = page.hasMore ? page.cursor : undefined;
-  } while (cursor);
+  for (const prefix of [MONTH_PREFIX, MONTH_PREFIX_CLOCKED]) {   // clocked files win
+    let cursor: string | undefined;
+    do {
+      const page = await list({ prefix, cursor });
+      for (const b of page.blobs) {
+        const mm = b.pathname.match(/(\d{4}-\d{2})\.json$/);
+        if (!mm) continue;
+        if (prefix === MONTH_PREFIX && new Date(b.uploadedAt).getTime() >= CLOCK_SWITCH_MS) continue;
+        out.set(mm[1], b.url);
+      }
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+  }
   return out;
 }
 
@@ -695,7 +733,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rec = await computeMonth(m, ctx);
       computed.set(m, rec);
       try {
-        await put(`${MONTH_PREFIX}${m}.json`, JSON.stringify(rec), {
+        await put(`${MONTH_PREFIX_CLOCKED}${m}.json`, JSON.stringify(rec), {
           access: 'public', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json',
         });
       } catch { /* already written by an overlapping call — same content */ }

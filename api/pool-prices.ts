@@ -36,13 +36,34 @@ const MONTH_PREFIX = 'pool-prices-v1/months/';
 const SUMMARY_KEY = 'pool-prices-v1/summary.json';
 const CLAIM_PREFIX = 'pool-prices-v1/claims/';     // one write-once file per 30-minute rebuild slot
 const DAY = 86_400;
-const BLOCK_SECONDS = 2;
-const MONTH_MARGIN_BLOCKS = 2_000;    // block↔time is estimated; swaps are filtered by their own timestamp
-const INITIAL_CHUNK_BLOCKS = 650_000; // ~15 days; split only when a page is full or refused
+const MONTH_MARGIN_SECONDS = 3_600;  // ranges over-cover; swaps are filtered by their own timestamp
+const INITIAL_CHUNK_SECONDS = 15 * DAY; // split only when a page is full or refused
 const LOG_PAGE_LIMIT = 9_500;
 const WORK_BUDGET_MS = 40_000;
 const REBUILD_MIN_AGE_MS = 30 * 60 * 1000;
 const MAX_REQUESTS = 300;
+
+// ── Base block clock ──
+// Base made a block every 2s from genesis, and every 200ms from block
+// 53,556,128 (2026-11-05 18:00:01 UTC). Convert between blocks and time with
+// these, never with a fixed seconds-per-block. If Base changes block time
+// again, add a segment here — and in every api/ file (they can't share code).
+const BASE_CLOCK = [
+  { block: 0, ts: 1_686_789_347, msPerBlock: 2_000 },
+  { block: 53_556_127, ts: 1_793_901_601, msPerBlock: 200 },
+] as const;
+/** Timestamp (unix seconds) of a block, past or future. */
+function blockToTs(block: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (block >= seg.block) s = seg;
+  return s.ts + Math.floor(((block - s.block) * s.msPerBlock) / 1000);
+}
+/** The block produced at (or just before) a unix-seconds time. */
+function tsToBlock(ts: number): number {
+  let s: (typeof BASE_CLOCK)[number] = BASE_CLOCK[0];
+  for (const seg of BASE_CLOCK) if (ts >= seg.ts) s = seg;
+  return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
+}
 const RETRIES = 3;
 
 export interface MonthPrices {
@@ -132,10 +153,20 @@ async function rpc<T>(method: string, params: unknown[], budget: Budget): Promis
   }
 }
 
+/** [from, to] split into consecutive ranges of at most `seconds` of chain time, oldest first. */
+function timeChunks(from: number, to: number, seconds: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let lo = from; lo <= to; ) {
+    const hi = Math.min(to, Math.max(lo, tsToBlock(blockToTs(lo) + seconds) - 1));
+    out.push([lo, hi]);
+    lo = hi + 1;
+  }
+  return out;
+}
+
 async function getAllLogs(filter: Record<string, unknown>, from: number, to: number, budget: Budget): Promise<RawLog[]> {
   const out: RawLog[] = [];
-  const stack: Array<[number, number]> = [];
-  for (let hi = to; hi >= from; hi -= INITIAL_CHUNK_BLOCKS) stack.push([Math.max(from, hi - INITIAL_CHUNK_BLOCKS + 1), hi]);
+  const stack = timeChunks(from, to, INITIAL_CHUNK_SECONDS).reverse();   // popped oldest first
   while (stack.length) {
     const [lo, hi] = stack.pop()!;
     if (lo > hi) continue;
@@ -209,14 +240,13 @@ interface Ctx { head: number; headTs: number; budget: Budget; ethPriceAt: (day: 
 async function computeMonth(month: string, ctx: Ctx): Promise<MonthPrices> {
   const startTs = monthStartTs(month);
   const endTs = Math.min(monthStartTs(nextMonth(month)), ctx.headTs + 1);
-  const blockAt = (ts: number) => ctx.head - Math.round((ctx.headTs - ts) / BLOCK_SECONDS);
-  const from = Math.max(0, blockAt(startTs) - MONTH_MARGIN_BLOCKS);
-  const to = Math.min(ctx.head, blockAt(endTs) + MONTH_MARGIN_BLOCKS);
+  const from = Math.min(ctx.head, tsToBlock(startTs - MONTH_MARGIN_SECONDS));
+  const to = Math.min(ctx.head, tsToBlock(endTs + MONTH_MARGIN_SECONDS));
   const logs = await getAllLogs({ address: POOL, topics: [SWAP_TOPIC] }, from, to, ctx.budget);
   const swaps: SwapIn[] = [];
   for (const l of logs) {
     if (l.data.length < 130) continue;
-    const ts = l.blockTimestamp ? parseInt(l.blockTimestamp, 16) : ctx.headTs - (ctx.head - parseInt(l.blockNumber, 16)) * BLOCK_SECONDS;
+    const ts = l.blockTimestamp ? parseInt(l.blockTimestamp, 16) : blockToTs(parseInt(l.blockNumber, 16));
     if (ts < startTs || ts >= endTs) continue;
     const weth = Number(int256(l.data.slice(2, 66))) / 1e18;
     const lingo = Number(int256(l.data.slice(66, 130))) / 1e18;
