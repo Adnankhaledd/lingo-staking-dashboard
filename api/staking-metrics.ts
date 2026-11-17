@@ -64,7 +64,7 @@ const POOL_HOURLY_KEY = 'pool-prices-v1/hourly.json';     // same, hourly from F
 // Bump when the snapshot shape changes: a stored snapshot of another version
 // is treated as missing, so the next request rebuilds instead of serving a
 // shape the page no longer reads.
-const SNAPSHOT_VERSION = 4;   // 3: Mythic tier · 4: tiers as the Lingo app computes them
+const SNAPSHOT_VERSION = 5;   // 3: Mythic tier · 4: tiers as the Lingo app computes them · 5: its exact rule (lock types, OTC boost)
 const MAX_REQUESTS = 160;
 const LOG_PAGE_LIMIT = 9500;
 // Lock options were sized for 2s blocks: used only to name them and to say
@@ -145,22 +145,81 @@ const MYTHIC_USD = 15_000;
 /** A 12-month lock or longer (24 months), by its original option. */
 const isYearLock = (duration: string) => duration !== '0' && Number(duration) * designSecondsPerBlock(duration) >= 360 * DAY;
 /**
- * TIERS AS THE LINGO APP COMPUTES THEM (reverse-engineered from its database,
- * 2026-11-17: the USD formula reproduces its stored stake_usd for 591 of 591
- * recently recalculated users). A user's "USD staked" is the sum over open
- * stakes of amount × a FIXED price per stake:
- *   - staked before 2026-01-01:                   $0.01
- *   - 2026-01-01 up to block 41,932,126 (Feb 9):  $0.010105 (the app's price feed was stuck)
- *   - after:                                      the market price when staked (pool, hourly)
- * Then the bands below, and Mythic = $15k+ of that in 12-month-or-longer lock
- * options (by lock type, as the app's stake_by_lock.twelveMonths). Not
- * reproduced: the app's grace (it keeps a user in a tier until the stake falls
- * roughly 20% below it), stale per-user records, and free-box stakes (app-only).
+ * TIERS AS THE LINGO APP COMPUTES THEM — staking-api LingoTierService.calculateTier
+ * and StakesService.getStakedUsdByLockEffectiveExcludePhantom (lingo-monorepo,
+ * origin/dev 2026-11-14), checked against its production database. Tiers are
+ * stake-only (the 60-day score is no longer used). Each open stake has a FIXED
+ * USD value = amount × price, where price is:
+ *   - staked before 2026-01-01:                   $0.01 (SCORES_AND_TIERS_PRE_CUTOFF_PRICE)
+ *   - 2026-01-01 up to block 41,932,126 (Feb 9):  $0.010105 (what the app stored: its price feed was stuck)
+ *   - after:                                      the market price when staked (the app stores
+ *                                                 CoinGecko's; here the pool's hourly VWAP)
+ * × 1.25 for OTC purchases staked Sep 29 – Oct 10 or Oct 26 18:00 – Nov 9 18:00, 2026.
+ * A tier counts only stakes whose lock option is long enough (by lock type, even
+ * after the lock has run out): Member/Holder/Elite 3 months+, Legend 6 months+,
+ * Mythic 12 months. Flexible, 1-month, promo and 24-month stakes count for no tier
+ * (the app maps 30,283,200 blocks to noLock). Free-box stakes are app-only.
  */
 const APP_FLAT_UNTIL_TS = 1_767_225_600;          // 2026-01-01T00:00:00Z
 const APP_FLAT_PRICE = 0.01;
 const APP_FROZEN_UNTIL_BLOCK = 41_932_126;
 const APP_FROZEN_PRICE = 0.010105;
+const OTC_BOOST = 1.25;
+// The boost windows have closed, so the boosted stakes are a fixed set: the app's
+// otc_purchases.stake_hash in those windows (first 16 hex digits, unique among all stakes).
+const OTC_BOOSTED_TX_PREFIXES = new Set([
+  'e6bc12290b21749b', '3d521a5c1e11958c', 'cdd7dd140305d618', '27a0b71c9b9daac8', 'e278014bf5f1426d', '1351ff7a8ab3a1b2', '12054ff041247907', '5d9e3a6f6e455cf3',
+  '863e24692fb2b90b', 'e53d39ac0db3a222', '9589afd41aec4831', 'dd2585462c8eb19a', '383bb533be883560', '9053bd6526dd33d1', '818517e452610211', '7ba9d028dffff363',
+  '14216164725516d2', '801be412cd591ccc', '13e4c4ade80425c4', 'd79f3c6745be79a0', '19484264e6c4ab71', '205220f0e6b3b132', '440f55904a5aded4', 'e04d07efd3122532',
+  'fa4a3234b2865673', '02d9ba5c23c775b8', '3f9247113bfce03b', '8a0714c308d356cc', '4d292cd136d5144f', '92721ddc89766600', 'fca5b24960aef355', 'e59fde4eef670636',
+  'b30e8563a6e0fb2a', 'b6a425196666a929', '2f00a2a957fe9aaf', '1b4e0dc426f42e52', '2f4839b8d678a83c', '79af7375005fd1d4', '95ceec7f151f422e', '83787c3c8e57e42e',
+  '9e46314d3d3a22a7', 'cc56d14760ccb394', '13266944d393b5d2', 'b9155645f52b4872', 'db4a1b4aadf6a89b', 'bdb8332fa4833d3b', '75d5720a449638ae', '87bd85edae4c8c84',
+  '7df691102bbc902e', '82848c31f6172170', '99b0346b8503b581', '1a595201944c50e7', '224496ed1303426c', '41a2569c2ab9bd3d', 'e52bc8a63d7ae5c6', '703d3e81b4281ca5',
+  '9a1dd82058ed0bfa', 'd6a449ae5efa6e6f', 'e832831ecfda1bd8', 'bbab9c7b5b3f4905', '10883231c012fcc4', '306ab96b2b999226', '7fb1ce0a4e86e4cf', '5ce3cb0366dd7262',
+  '26f4d53be8430df4', '59d820a7abe5ffe6', '5e86d1b5d067760d', '51a75638f9c21198', 'c07b98db6b425b1b', '0539f34ea66ae7f1', '28fd13c1403be051', '7230e86645968c03',
+  '8e0cb2a9feb0b113', 'a048f285ab5d397a', 'd38a4bb912528123', 'd3c197f1b5a4185c', '984f461cec91543e', '58afe7cf2633c267', '60f8c15a44e4706a', 'bf25d7addc1200f1',
+  'ca8ab511d6971183', 'bd841e1dc699156b', '8776424454cd9502', '386c5f5ae6061cad', '3c919e75e641c2cf', 'fa6b02bf1b393be3', 'c5ee7a265dc31697', 'd5fea5d73071e088',
+  '2f45df5161262009', 'd9cccd6a428919f2', '39932f4b7ae52310', '9db84c07591e3213', '847ce482226de889', '007d304ea4b9eb3d', '2d8dc43c7d7f29b0', 'aa35c8260721a00c',
+  '1c8b732859932cc5', '0dedcabc65f8733b', '8dd17f49026500ea', 'b215f2b20f669a89', 'ac5dbb65283e72d1', 'cf50bab3478b9f22', 'add74c24383e8215', '5476e5a1e9204129',
+  '6e97600c54825629', '19f6663d2ce22386', 'e590aa33015b48a6', '24b3507fa4b5b904', '0ef7c7e2fe10c4bf', 'c688852f9fff862e', '30ad60dc63a3accc', '571fa956d2fb758d',
+  'ff83ece01e52f176', 'a807e3311a471ddb', '1ce2129cdf028c44', 'e59d610ee5f386b3', '1f738e90f1e9dfdf', 'e18d21db7a9b9ced', '8655d4331f6dc87a', 'a8c3dd45fb47f653',
+  'fe96c080ba3ce9fe', '7de34a44135de3b2', '9061e53731339802', '41fbbf64a479c7da', '13257c39ce61d917', 'e0d7bc2a946fa424', '12b6489d18cb7617', '972117d1440c449f',
+  'f66543b2b563cfe3', 'a15a3e3b5d609822', '9243067b54e453e3', '8d235abb221749f5', '28571029b98f22a1', 'b8a8588e7388d062', 'f322df3c14cb9e4a', '85bccf570fbfa8a3',
+  '98698f831800c922', 'a988c95850c8c8fd', 'c5818232aaa9fa56', '8b8bfeb59683b405', '7b82db811cb92385', '33e07686ff250b9a', 'a82f246ed3679bcc', '05748b05a81cda1f',
+  'ed238779ea1fed5d', '43af50e65efac636', 'efb744a210ab6279', 'e3d0c9dcebb431e7', 'b27842fda87319bb', '1aa1cdc1f11650c3', 'e6f5aee468950e74', '9c54737ff6d7cb56',
+  'b807cb94117033c3', '0099af37229dc29f', 'aa4993c35049c2ff', '3f62f08388d2915c', '29c65a006eece5d8', 'd4df72320870a3ae', 'a00571935960347e', 'b841ab0bb2766319',
+  'c74b79c809ca07a8', 'd889cf66c1dd0a04', '2b4ff4a4f23489bf', 'aa6b9c1b559aab3c', '51de4e2a04853f21', '04a48a92552526b8', '317bc70343dd2bcd', '421756e28cee9dfc',
+  'f13f7811b5a10141', '12ce185b238f5169', 'd75062b1d06d722a', '313386829dca25c7', '96489f1268e7bfca', '46bfa1420c50fc48', '67794588b17c65e1', '2c1b6696a1c6772e',
+  '47587d54ad68d00b', 'ad43a6840a18d4a6', 'e95a5953415efbe2', 'a4e0a15405edb15b', 'b4a6c5d3a1f0e96e', '056a1afdd04a3027', '8117ed014e2b0ad6', '4dadbe8cdf2dda2b',
+  'c23db038ef38809f', '6fb8920d376ed541', 'f98861231f180aa1', '08e30448e8f1b953', 'f400c0d3c79bdfa9', '5120c193821b5c76', '10519332edc3a5e0', '787da5260c16cf63',
+  'c4dc4cc97536bdb9', '352e08b4207c8fea', '5ff1be796a4ee402', '41dbc36fd4b04863', '97e787e9d4d812c3', '88f4a33ffc4b0ed1', '4ac82807dde145c5', 'a075dba7c17e5fb9',
+  '488a2e5bf403b094', 'f4fdb9bf8110d8ac', 'f6fd58450051aefe', '18017c442dc27b10', '1e3e5c5199967156', '1994fb65a7871230', '0a996f3c2e017c3b', 'ff1e78c29ab29e48',
+  'e5a08ebe2ae63ce1', '1eedd64b9243219e', '89ee417598bd69ff', '85f14550c6f90e25',
+]);
+/** The app's lock type for an on-chain duration (its stakes.power_boost_config, re-sized ×10 included). */
+const APP_LOCK_MONTHS: Record<string, 3 | 6 | 12> = {
+  '3888000': 3, '38880000': 3, '7776000': 6, '77760000': 6, '15552000': 12, '155520000': 12,
+};
+/** Qualifying USD per tier's lock requirement: stakes with 3+, 6+ and 12-month locks. */
+interface AppStake { m3: number; m6: number; m12: number }
+const zeroAppStake = (): AppStake => ({ m3: 0, m6: 0, m12: 0 });
+function addAppStake(into: AppStake, months: 0 | 3 | 6 | 12, usd: number) {
+  if (months >= 3) into.m3 += usd;
+  if (months >= 6) into.m6 += usd;
+  if (months >= 12) into.m12 += usd;
+}
+/** The app sums exact decimals; round so a float residue can't drop a wallet below a line. */
+const cents6 = (x: number) => Math.round(x * 1e6) / 1e6;
+function appTierOf(s: AppStake | undefined): Tier {
+  if (!s) return 'below';
+  if (cents6(s.m12) >= MYTHIC_USD) return 'mythic';
+  if (cents6(s.m6) >= 2500) return 'legend';
+  const m3 = cents6(s.m3);
+  if (m3 >= 1000) return 'elite';
+  if (m3 >= 250) return 'holder';
+  if (m3 >= 100) return 'member';
+  return 'below';
+}
 
 function tierOf(usd: number, yearLockedUsd = 0): Tier {
   if (yearLockedUsd >= MYTHIC_USD) return 'mythic';
@@ -291,7 +350,7 @@ export interface UnlockSchedule {
 
 // ─── Pure computation (exported for tests) ───────────────────────────────
 
-export interface StakeEvent { block: number; logIndex: number; ts: number; user: string; amount: bigint; duration: string }
+export interface StakeEvent { block: number; logIndex: number; ts: number; user: string; amount: bigint; duration: string; tx?: string }
 export interface CloseEvent { block: number; logIndex: number; ts: number; user: string; amount: bigint; unlockBlock: number }
 
 export interface ComputeInput {
@@ -311,7 +370,7 @@ export interface ComputeInput {
 }
 
 /** unlockTs: when the contract releases it (real block clock). designUnlockTs: when it would have at 2s blocks. */
-interface Position { n: number; amount: bigint; duration: string; unlockTs: number; designUnlockTs: number; user: string; appUsd: number }
+interface Position { n: number; amount: bigint; duration: string; unlockTs: number; designUnlockTs: number; user: string; appUsd: number; appMonths: 0 | 3 | 6 | 12 }
 
 interface Flow {
   staked: Record<Bucket, bigint>;
@@ -367,12 +426,9 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   };
   const appPriceOf = (ev: { ts: number; block: number }) =>
     ev.ts < APP_FLAT_UNTIL_TS ? APP_FLAT_PRICE : ev.block <= APP_FROZEN_UNTIL_BLOCK ? APP_FROZEN_PRICE : marketPriceAt(ev.ts);
-  const appUsd = new Map<string, number>();       // per wallet, open stakes
-  const appYearUsd = new Map<string, number>();   // of which 12-month-or-longer lock options
-  const addTo = (m: Map<string, number>, k: string, v: number) => {
-    const next = (m.get(k) ?? 0) + v;
-    if (next > 1e-9) m.set(k, next); else m.delete(k);
-  };
+  const appValueOf = (ev: StakeEvent) =>
+    toLingo(ev.amount) * appPriceOf(ev) * (ev.tx && OTC_BOOSTED_TX_PREFIXES.has(ev.tx.slice(2, 18).toLowerCase()) ? OTC_BOOST : 1);
+  const appStake = new Map<string, AppStake>();   // per wallet: qualifying USD by lock requirement
 
   // ── One chronological stream ──
   type Ev = { block: number; logIndex: number; ts: number; user: string; amount: bigint; close: boolean; duration: string; unlockBlock: number };
@@ -384,7 +440,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   events.sort((a, b) => a.block - b.block || a.logIndex - b.logIndex);
 
   const positions = new Map<string, Position>();
-  const newWalletApp = new Map<string, Map<string, { usd: number; year: number }>>();   // month → wallet → first-month app USD
+  const newWalletApp = new Map<string, Map<string, AppStake>>();   // month → wallet → first-month app USD
   const balance = new Map<string, bigint>();          // only wallets with a non-zero balance
   const firstStake = new Map<string, { month: string; ts: number }>();
   const everClosed = new Set<string>();
@@ -441,7 +497,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       const yearLingo = toLingo(yearLocked.get(user) ?? 0n);
       if (price != null) tiers[tierOf(lingo * price, yearLingo * price)]++;
       if (currentPrice != null) tiersNow[tierOf(lingo * currentPrice, yearLingo * currentPrice)]++;
-      const at = tierOf(appUsd.get(user) ?? 0, appYearUsd.get(user) ?? 0);
+      const at = appTierOf(appStake.get(user));
       tiersApp[at]++;
       if (appWallets && at !== 'below') appWallets.set(user, at);
       const c = firstStake.get(user)!.month;
@@ -489,14 +545,14 @@ export function computeMetrics(input: ComputeInput): Snapshot {
         f.newWallets++;
         f.firstStakeLingo += ev.amount;
       }
-      const evAppUsd = toLingo(ev.amount) * appPriceOf(ev);
+      const evAppUsd = appValueOf(ev);
+      const evAppMonths = APP_LOCK_MONTHS[ev.duration] ?? 0;
       if (first.month === month) {
         f.newLingo += ev.amount;
         let nm = newWalletApp.get(month);
         if (!nm) { nm = new Map(); newWalletApp.set(month, nm); }
-        const nw = nm.get(ev.user) ?? { usd: 0, year: 0 };
-        nw.usd += evAppUsd;
-        if (isYearLock(ev.duration)) nw.year += evAppUsd;
+        const nw = nm.get(ev.user) ?? zeroAppStake();
+        addAppStake(nw, evAppMonths, evAppUsd);
         nm.set(ev.user, nw);
         const p = priceAt(d);
         if (p != null) f.newWalletUsd.set(ev.user, (f.newWalletUsd.get(ev.user) ?? 0) + toLingo(ev.amount) * p);
@@ -513,11 +569,14 @@ export function computeMetrics(input: ComputeInput): Snapshot {
         n: 1, amount: ev.amount, duration: ev.duration, user: ev.user,
         unlockTs: blockToTs(ev.unlockBlock),
         designUnlockTs: ev.ts + Number(ev.duration) * designSecondsPerBlock(ev.duration),
-        appUsd: evAppUsd,
+        appUsd: evAppUsd, appMonths: evAppMonths,
       });
       balance.set(ev.user, (balance.get(ev.user) ?? 0n) + ev.amount);
-      addTo(appUsd, ev.user, evAppUsd);
-      if (isYearLock(ev.duration)) addTo(appYearUsd, ev.user, evAppUsd);
+      if (evAppMonths) {
+        const a = appStake.get(ev.user) ?? zeroAppStake();
+        addAppStake(a, evAppMonths, evAppUsd);
+        appStake.set(ev.user, a);
+      }
       totalOpen += ev.amount;
       dayStaked += ev.amount;
     } else {
@@ -530,11 +589,11 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       if (!pos) { closedUnmatched++; continue; }
       if (pos.duration !== '0' && pos.designUnlockTs > ev.ts) { withdrawnEarlyWei += ev.amount; withdrawnEarlyN++; }
       if (--pos.n === 0) positions.delete(key);
-      addTo(appUsd, ev.user, -pos.appUsd);
-      if (isYearLock(pos.duration)) addTo(appYearUsd, ev.user, -pos.appUsd);
+      const a = appStake.get(ev.user);
+      if (a && pos.appMonths) addAppStake(a, pos.appMonths, -pos.appUsd);
       const bal = (balance.get(ev.user) ?? 0n) - ev.amount;
       if (bal > 0n) balance.set(ev.user, bal);
-      else { balance.delete(ev.user); appUsd.delete(ev.user); appYearUsd.delete(ev.user); }
+      else { balance.delete(ev.user); appStake.delete(ev.user); }
       everClosed.add(ev.user);
       totalOpen -= ev.amount;
       dayUnstaked += ev.amount;
@@ -565,7 +624,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
     const newWalletTiers = zeroTiers();
     for (const [user, usd] of f.newWalletUsd) newWalletTiers[tierOf(usd, f.newWalletYearLockUsd.get(user) ?? 0)]++;
     const newWalletTiersApp = zeroTiers();
-    for (const v of newWalletApp.get(month)?.values() ?? []) newWalletTiersApp[tierOf(v.usd, v.year)]++;
+    for (const v of newWalletApp.get(month)?.values() ?? []) newWalletTiersApp[appTierOf(v)]++;
     return {
       month,
       partial: e?.partial ?? false,
@@ -765,7 +824,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
 
 // ─── Chain + prices ──────────────────────────────────────────────────────
 
-interface RawLog { topics: string[]; data: string; blockNumber: string; logIndex: string; blockTimestamp?: string }
+interface RawLog { topics: string[]; data: string; blockNumber: string; logIndex: string; blockTimestamp?: string; transactionHash?: string }
 
 class Budget {
   left = MAX_REQUESTS;
@@ -928,6 +987,7 @@ async function rebuild(): Promise<Snapshot> {
       user: '0x' + log.topics[1].slice(26).toLowerCase(),
       amount: BigInt('0x' + log.data.slice(2, 66)),
       duration: BigInt('0x' + log.data.slice(66, 130)).toString(),
+      tx: log.transactionHash,
     });
   }
   const closes: CloseEvent[] = [];
@@ -1016,6 +1076,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const pw = (req.headers['x-admin-password'] as string | undefined) ?? (req.query.password as string | undefined);
   const isAdmin = !!ADMIN_PASSWORD && pw === ADMIN_PASSWORD;
   const wantsRebuild = req.query.rebuild === '1';
+  // A ?rebuild=1 reply must never be cached at the edge: a cached 'skipped' reply
+  // would swallow the next real rebuild request (the cron's included).
+  const cache = (v: string): void => { res.setHeader('Cache-Control', wantsRebuild ? 'no-store' : v); };
   if (wantsRebuild && !isCron && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -1030,7 +1093,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const needRebuild = !current || ageMs > STALE_AFTER_MS || (wantsRebuild && !tooSoon);
 
     if (!needRebuild && current) {
-      res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
+      cache('s-maxage=300, stale-while-revalidate=3600');
       return res.status(200).json({ ...current, served: 'stored', ...(wantsRebuild ? { rebuildSkipped: `last rebuild ${Math.round(ageMs / 60000)} min ago` } : {}) });
     }
 
@@ -1043,17 +1106,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // view into another full rebuild. Serve the last good snapshot if there
       // is one; otherwise cache the failure briefly.
       if (current) {
-        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
+        cache('s-maxage=300, stale-while-revalidate=3600');
         return res.status(200).json({ ...current, served: 'stale', rebuildError: error instanceof Error ? error.message : 'Unknown error' });
       }
-      res.setHeader('Cache-Control', 's-maxage=60');
+      cache('s-maxage=60');
       return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
     const saved = await saveSnapshot(snapshot);
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
+    cache('s-maxage=300, stale-while-revalidate=3600');
     return res.status(200).json({ ...snapshot, served: 'rebuilt', stored: saved, buildMs: Date.now() - t0 });
   } catch (error) {
-    res.setHeader('Cache-Control', 's-maxage=60');
+    cache('s-maxage=60');
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
   }
 }

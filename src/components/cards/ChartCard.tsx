@@ -10,6 +10,8 @@ interface ChartCardProps {
   isLoading?: boolean;
   className?: string;
   lastUpdated?: string | null;
+  /** Extra controls in the header, before the CSV button (e.g. a view toggle). */
+  actions?: ReactNode;
 }
 
 function formatLastUpdated(isoDate: string): string {
@@ -36,6 +38,7 @@ export function ChartCard({
   isLoading,
   className = '',
   lastUpdated,
+  actions,
 }: ChartCardProps) {
   return (
     <div className={`flagship-card rounded-2xl p-6 ${className}`}>
@@ -47,7 +50,8 @@ export function ChartCard({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
+          {actions}
           {lastUpdated && (
             <div className="flex items-center gap-1 text-xs text-purple-gray" title={`Query executed: ${new Date(lastUpdated).toLocaleString()}`}>
               <Clock className="w-3 h-3" />

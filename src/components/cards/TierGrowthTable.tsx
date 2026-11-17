@@ -7,6 +7,8 @@ interface TierGrowthTableProps {
   isLoading?: boolean;
   /** Shown under the title, e.g. to explain a change in how tiers are counted. */
   note?: React.ReactNode;
+  /** The Mythic column (the on-chain dashboard has it; the archived Dune data predates it). */
+  showMythic?: boolean;
 }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -113,10 +115,9 @@ function HeatmapCell({ value, prev }: { value: number; prev: number | null }) {
   );
 }
 
-export function TierGrowthTable({ data, isLoading, note }: TierGrowthTableProps) {
+export function TierGrowthTable({ data, isLoading, note, showMythic = false }: TierGrowthTableProps) {
   const rows = useMemo(() => (data ? normalize(data) : []), [data]);
-  // Mythic only where the data has it (the archived Dune page doesn't).
-  const tiers = useMemo(() => TIERS.filter(t => t.key !== 'mythic' || !rows.length || rows.some(r => r.mythic != null)), [rows]);
+  const tiers = useMemo(() => TIERS.filter(t => t.key !== 'mythic' || showMythic), [showMythic]);
 
   return (
     <div className="flagship-card rounded-2xl">

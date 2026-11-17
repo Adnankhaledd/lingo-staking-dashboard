@@ -62,12 +62,12 @@ function TierRulesNote({ compact = false }: { compact?: boolean }) {
     <div className="rounded-xl border border-purple/30 bg-purple/10 px-4 py-3 text-xs text-soft-gray leading-relaxed flex gap-2.5">
       <Info className="w-4 h-4 text-lavender shrink-0 mt-0.5" />
       <div>
-        <span className="text-lavender font-medium">Updated Nov 17, 2026: tiers now match the Lingo app.</span>{' '}
-        Each stake keeps the USD value the app gives it — $0.01 per LINGO for stakes made before 2026, $0.0101 for
-        Jan 1 – Feb 9, 2026, and the market price when staked after that — and Mythic means $15k+ in 12-month locks.
-        {!compact && <> Before this update every stake was valued at today's price, which put more wallets in higher tiers,
-        so the lower counts come from that change, not from stakers leaving. Choose “At today's price” for the previous view.
-        The app can also keep someone in a tier until their stake falls about 20% below it, so a few users sit one tier higher there.</>}
+        <span className="text-lavender font-medium">Updated Nov 17, 2026: tiers now follow the Lingo app's rules.</span>{' '}
+        Each stake keeps the USD value the app gives it — $0.01 per LINGO if staked before 2026, then the price when staked
+        (OTC buys in the Oct and S2 pre-season boosts count 1.25×) — and a tier only counts stakes locked long enough:
+        3 months+ for Member, Holder and Elite, 6 months+ for Legend, 12 months for Mythic.
+        {!compact && <> Before this update every stake counted at today's price, whatever its lock, so the lower counts come from
+        that change, not from stakers leaving. Choose “At today's price” for the previous view.</>}
       </div>
     </div>
   );
@@ -121,6 +121,8 @@ export function DashboardV2() {
   // 'app': tiers as the Lingo app computes them (default since 2026-11-17).
   // 'now': the earlier view, every balance at today's LINGO price.
   const [tierBasis, setTierBasis] = useState<'app' | 'now'>('app');
+  // New Wallets by Tier: as the app values first-month stakes, or at the price on the day (the earlier view).
+  const [newWalletsBasis, setNewWalletsBasis] = useState<'app' | 'then'>('app');
   // December 2024 (launch: 15.5K first-time wallets) dwarfs every later month,
   // so the New Users charts open on the last 12 months.
   const [range, setRange] = useState<'12m' | 'all'>('12m');
@@ -228,9 +230,9 @@ export function DashboardV2() {
   })), [usersRange]);
 
   const newWalletsByTier = useMemo(() => usersRange.map(m => {
-    const t = m.newWalletTiersApp ?? m.newWalletTiers;
+    const t = newWalletsBasis === 'app' ? m.newWalletTiersApp ?? m.newWalletTiers : m.newWalletTiers;
     return { month: flowLabel(m), member: t.member, holder: t.holder, elite: t.elite, legend: t.legend, mythic: t.mythic ?? 0 };
-  }), [usersRange]);
+  }), [usersRange, newWalletsBasis]);
 
   const byWalletType = useMemo(() => usersRange.map(m => ({
     month: flowLabel(m),
@@ -528,7 +530,19 @@ export function DashboardV2() {
 
             <ChartCard
               title="New Wallets by Tier ($100+)"
-              subtitle={`By the USD value of their first month's stakes, as the Lingo app values them (since Nov 17, 2026; see Users by Tier). Under-$100 wallets not shown${newUserKpis ? ` (${((monthly[monthly.length - 1]?.newWalletTiersApp ?? monthly[monthly.length - 1]?.newWalletTiers)?.below ?? 0).toLocaleString()} this month)` : ''}.`}
+              subtitle={newWalletsBasis === 'app'
+                ? `Tier each new wallet reached with its first month's stakes, by the Lingo app's rules (since Nov 17, 2026: locks of 3 months+, stakes before 2026 at $0.01 per LINGO, so 2024–25 months show far fewer than the earlier view). Under-$100 wallets not shown${newUserKpis ? ` (${((monthly[monthly.length - 1]?.newWalletTiersApp ?? monthly[monthly.length - 1]?.newWalletTiers)?.below ?? 0).toLocaleString()} this month)` : ''}.`
+                : `By the USD value of their first month's stakes at the price on the day, any lock — the view before Nov 17, 2026. Under-$100 wallets not shown${newUserKpis ? ` (${(monthly[monthly.length - 1]?.newWalletTiers.below ?? 0).toLocaleString()} this month)` : ''}.`}
+              actions={
+                <div className="inline-flex rounded-lg border border-white/10 p-0.5 text-[11px]">
+                  {([['app', 'As in the app'], ['then', 'Price on the day']] as const).map(([k, label]) => (
+                    <button key={k} onClick={() => setNewWalletsBasis(k)}
+                      className={`px-2 py-1 rounded-md transition-colors ${newWalletsBasis === k ? 'bg-purple/30 text-lavender' : 'text-soft-gray hover:text-lavender'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              }
               isLoading={isLoading}
               onExport={() => exportToCSV(newWalletsByTier, 'lingo_new_wallets_by_tier')}
             >
@@ -631,6 +645,7 @@ export function DashboardV2() {
             data={tierGrowthRows}
             isLoading={isLoading}
             note={tierBasis === 'app' ? <TierRulesNote compact /> : undefined}
+            showMythic
           />
         </section>
 

@@ -373,7 +373,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const age = summary ? Date.now() - Date.parse(summary.generatedAt) : Infinity;
   const serveStored = () => {
     if (!summary) return res.status(200).json({ error: 'Pool prices have not been built yet' });
-    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    // Never cache a ?rebuild=1 reply at the edge: a cached 'stored' reply would swallow later rebuilds (the cron's included).
+    res.setHeader('Cache-Control', wantsRebuild ? 'no-store' : 's-maxage=3600, stale-while-revalidate=86400');
     return res.status(200).json({ ...summary, served: 'stored' });
   };
   if (!wantsRebuild || (summary?.complete && age < REBUILD_MIN_AGE_MS)) return serveStored();
