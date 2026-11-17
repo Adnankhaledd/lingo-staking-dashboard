@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { Info, ShieldCheck } from 'lucide-react';
 import { Header, SectionNav, type SectionNavItem } from '../components/layout';
 import { KPICard, KPICardSkeleton, ChartCard, StakingUpdateCard, StakingUsdCard } from '../components/cards';
 import { TierGrowthTable } from '../components/cards/TierGrowthTable';
@@ -56,6 +56,23 @@ const pctChange = (now: number, prev: number | null | undefined) =>
 const trendOf = (v: number | undefined): KPIData['trend'] =>
   v == null ? 'neutral' : v > 0 ? 'up' : v < 0 ? 'down' : 'neutral';
 
+/** Explains the 2026-11-17 switch to the app's tier rules, so the lower counts don't read as stakers leaving. */
+function TierRulesNote({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="rounded-xl border border-purple/30 bg-purple/10 px-4 py-3 text-xs text-soft-gray leading-relaxed flex gap-2.5">
+      <Info className="w-4 h-4 text-lavender shrink-0 mt-0.5" />
+      <div>
+        <span className="text-lavender font-medium">Updated Nov 17, 2026: tiers now match the Lingo app.</span>{' '}
+        Each stake keeps the USD value the app gives it — $0.01 per LINGO for stakes made before 2026, $0.0101 for
+        Jan 1 – Feb 9, 2026, and the market price when staked after that — and Mythic means $15k+ in 12-month locks.
+        {!compact && <> Before this update every stake was valued at today's price, which put more wallets in higher tiers,
+        so the lower counts come from that change, not from stakers leaving. Choose “At today's price” for the previous view.
+        The app can also keep someone in a tier until their stake falls about 20% below it, so a few users sit one tier higher there.</>}
+      </div>
+    </div>
+  );
+}
+
 function Empty({ loading, height = 300 }: { loading: boolean; height?: number }) {
   return (
     <div className="flex items-center justify-center text-soft-gray" style={{ height }}>
@@ -101,7 +118,9 @@ export function DashboardV2() {
   const { data, isLoading, error } = useStakingMetrics();
   const { totalStaked: liveTotal } = useLiveTotalStaked();
   const { days: poolPrices, generatedAt: pricesAsOf, isLoading: pricesLoading, error: pricesError } = usePoolPrices();
-  const [tierBasis, setTierBasis] = useState<'now' | 'then'>('now');
+  // 'app': tiers as the Lingo app computes them (default since 2026-11-17).
+  // 'now': the earlier view, every balance at today's LINGO price.
+  const [tierBasis, setTierBasis] = useState<'app' | 'now'>('app');
   // December 2024 (launch: 15.5K first-time wallets) dwarfs every later month,
   // so the New Users charts open on the last 12 months.
   const [range, setRange] = useState<'12m' | 'all'>('12m');
@@ -208,14 +227,10 @@ export function DashboardV2() {
     newWallets: m.newWallets,
   })), [usersRange]);
 
-  const newWalletsByTier = useMemo(() => usersRange.map(m => ({
-    month: flowLabel(m),
-    member: m.newWalletTiers.member,
-    holder: m.newWalletTiers.holder,
-    elite: m.newWalletTiers.elite,
-    legend: m.newWalletTiers.legend,
-    mythic: m.newWalletTiers.mythic ?? 0,
-  })), [usersRange]);
+  const newWalletsByTier = useMemo(() => usersRange.map(m => {
+    const t = m.newWalletTiersApp ?? m.newWalletTiers;
+    return { month: flowLabel(m), member: t.member, holder: t.holder, elite: t.elite, legend: t.legend, mythic: t.mythic ?? 0 };
+  }), [usersRange]);
 
   const byWalletType = useMemo(() => usersRange.map(m => ({
     month: flowLabel(m),
@@ -224,27 +239,27 @@ export function DashboardV2() {
   })), [usersRange]);
 
   // ── Users by tier ──
-  const tierKey = tierBasis === 'now' ? 'tiersNow' : 'tiers';
-  const tierChart = useMemo(() => monthly.map(m => ({
-    month: balanceLabel(m),
-    member: m[tierKey].member,
-    holder: m[tierKey].holder,
-    elite: m[tierKey].elite,
-    legend: m[tierKey].legend,
-    mythic: m[tierKey].mythic ?? 0,
-  })), [monthly, tierKey]);
+  const tiersOf = useCallback((m: MonthlyRow) => (tierBasis === 'app' ? m.tiersApp ?? m.tiersNow : m.tiersNow), [tierBasis]);
+  const tierChart = useMemo(() => monthly.map(m => {
+    const t = tiersOf(m);
+    return { month: balanceLabel(m), member: t.member, holder: t.holder, elite: t.elite, legend: t.legend, mythic: t.mythic ?? 0 };
+  }), [monthly, tiersOf]);
+  const currentTiers = data ? (tierBasis === 'app' ? data.current.tiersApp ?? data.current.tiers : data.current.tiers) : null;
 
   // TierGrowthTable reads the old Dune row shape.
-  const tierGrowthRows: MonthlyTierGrowthRow[] = useMemo(() => monthly.map(m => ({
-    month: `${m.month}-01`,
-    total_stakers: m.activeStakers,
-    'below $100': m[tierKey].below,
-    'member ($100+)': m[tierKey].member,
-    'holder ($250+)': m[tierKey].holder,
-    'elite ($1000+)': m[tierKey].elite,
-    'legend ($2500+)': m[tierKey].legend,
-    'mythic ($15k+ 1-yr lock)': m[tierKey].mythic ?? 0,
-  })), [monthly, tierKey]);
+  const tierGrowthRows: MonthlyTierGrowthRow[] = useMemo(() => monthly.map(m => {
+    const t = tiersOf(m);
+    return {
+      month: `${m.month}-01`,
+      total_stakers: m.activeStakers,
+      'below $100': t.below,
+      'member ($100+)': t.member,
+      'holder ($250+)': t.holder,
+      'elite ($1000+)': t.elite,
+      'legend ($2500+)': t.legend,
+      'mythic ($15k+ 1-yr lock)': t.mythic ?? 0,
+    };
+  }), [monthly, tiersOf]);
 
   // ── Retention ──
   const retention: MonthlyRetentionData[] = useMemo(() => (data?.cohorts ?? []).map(c => ({
@@ -513,7 +528,7 @@ export function DashboardV2() {
 
             <ChartCard
               title="New Wallets by Tier ($100+)"
-              subtitle={`By the USD value of their first month's stakes, at the price on the day. Under-$100 wallets not shown${newUserKpis ? ` (${(monthly[monthly.length - 1]?.newWalletTiers.below ?? 0).toLocaleString()} this month)` : ''}.`}
+              subtitle={`By the USD value of their first month's stakes, as the Lingo app values them (since Nov 17, 2026; see Users by Tier). Under-$100 wallets not shown${newUserKpis ? ` (${((monthly[monthly.length - 1]?.newWalletTiersApp ?? monthly[monthly.length - 1]?.newWalletTiers)?.below ?? 0).toLocaleString()} this month)` : ''}.`}
               isLoading={isLoading}
               onExport={() => exportToCSV(newWalletsByTier, 'lingo_new_wallets_by_tier')}
             >
@@ -558,7 +573,7 @@ export function DashboardV2() {
           <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
             <h2 className="text-sm font-semibold text-soft-gray uppercase tracking-widest">Users by Tier</h2>
             <div className="inline-flex rounded-lg border border-white/10 p-0.5 text-xs">
-              {([['now', "At today's price"], ['then', 'At the price then']] as const).map(([k, label]) => (
+              {([['app', 'As in the app'], ['now', "At today's price"]] as const).map(([k, label]) => (
                 <button
                   key={k}
                   onClick={() => setTierBasis(k)}
@@ -570,7 +585,9 @@ export function DashboardV2() {
             </div>
           </div>
 
-          {data && (
+          {tierBasis === 'app' && <div className="mb-5"><TierRulesNote /></div>}
+
+          {data && currentTiers && (
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
               {TIER_META.map(t => (
                 <div key={t.key} className="flagship-card p-5">
@@ -579,7 +596,7 @@ export function DashboardV2() {
                       <span className="w-2.5 h-2.5 rounded-full" style={{ background: t.color }} />
                       {t.label} <span className="text-purple-gray">{t.threshold}</span>
                     </div>
-                    <div className="text-2xl font-bold text-lavender mt-2">{(data.current.tiers[t.key] ?? 0).toLocaleString()}</div>
+                    <div className="text-2xl font-bold text-lavender mt-2">{(currentTiers[t.key] ?? 0).toLocaleString()}</div>
                     <p className="text-xs text-purple-gray mt-1">stakers right now</p>
                   </div>
                 </div>
@@ -590,9 +607,9 @@ export function DashboardV2() {
           <div className="mb-5">
             <ChartCard
               title="Stakers by Tier, Month End"
-              subtitle={tierBasis === 'now'
-                ? "Each month's balances valued at today's LINGO price — shows accumulation without price swings"
-                : "Each month's balances valued at that month's closing price — tier membership as it actually was"}
+              subtitle={tierBasis === 'app'
+                ? "Each month's open stakes valued the way the Lingo app values them — the tiers users see in the app"
+                : "Each month's balances valued at today's LINGO price — the dashboard's view before Nov 17, 2026"}
               isLoading={isLoading}
               onExport={() => exportToCSV(tierChart, `lingo_tiers_${tierBasis}`)}
             >
@@ -610,7 +627,11 @@ export function DashboardV2() {
             </ChartCard>
           </div>
 
-          <TierGrowthTable data={tierGrowthRows} isLoading={isLoading} />
+          <TierGrowthTable
+            data={tierGrowthRows}
+            isLoading={isLoading}
+            note={tierBasis === 'app' ? <TierRulesNote compact /> : undefined}
+          />
         </section>
 
         {/* ═══ RETENTION ═══ */}

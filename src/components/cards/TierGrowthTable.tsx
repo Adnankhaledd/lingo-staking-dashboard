@@ -5,6 +5,8 @@ import type { MonthlyTierGrowthRow } from '../../hooks/useDuneQuery';
 interface TierGrowthTableProps {
   data: MonthlyTierGrowthRow[] | null;
   isLoading?: boolean;
+  /** Shown under the title, e.g. to explain a change in how tiers are counted. */
+  note?: React.ReactNode;
 }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -28,7 +30,7 @@ interface MonthlyPoint {
   holder: number;
   elite: number;
   legend: number;
-  mythic: number;
+  mythic: number | null;   // null: the data predates Mythic (the archived Dune page)
 }
 
 function normalize(rows: MonthlyTierGrowthRow[]): MonthlyPoint[] {
@@ -49,7 +51,7 @@ function normalize(rows: MonthlyTierGrowthRow[]): MonthlyPoint[] {
         holder: row['holder ($250+)'] ?? 0,
         elite:  row['elite ($1000+)'] ?? 0,
         legend: row['legend ($2500+)'] ?? 0,
-        mythic: row['mythic ($15k+ 1-yr lock)'] ?? 0,
+        mythic: row['mythic ($15k+ 1-yr lock)'] ?? null,
       };
     });
 }
@@ -79,7 +81,9 @@ function heatmapBg(pct: number | null): { background: string } {
 function HeatmapCell({ value, prev }: { value: number; prev: number | null }) {
   const delta = prev != null ? value - prev : null;
   const pct = prev != null && prev > 0 ? ((value - prev) / prev) * 100 : null;
-  const style = heatmapBg(pct);
+  // Growing from zero has no percentage, but it is still growth.
+  const fromZero = prev === 0 && value > 0;
+  const style = fromZero ? heatmapBg(25) : heatmapBg(pct);
   const isUp = (delta ?? 0) > 0;
   const isDown = (delta ?? 0) < 0;
   const Icon = isUp ? ArrowUp : isDown ? ArrowDown : Minus;
@@ -90,7 +94,13 @@ function HeatmapCell({ value, prev }: { value: number; prev: number | null }) {
       <div className="font-semibold text-lavender text-base leading-tight">
         {value.toLocaleString()}
       </div>
-      {delta == null || pct == null ? (
+      {fromZero ? (
+        <div className="text-[11px] mt-0.5 flex items-center justify-end gap-0.5 text-green1">
+          <ArrowUp className="w-2.5 h-2.5" />
+          <span className="font-semibold">+{value.toLocaleString()}</span>
+          <span className="text-purple-gray font-medium ml-1">(new)</span>
+        </div>
+      ) : delta == null || pct == null ? (
         <div className="text-[10px] text-purple-gray mt-0.5">—</div>
       ) : (
         <div className={`text-[11px] mt-0.5 flex items-center justify-end gap-0.5 ${deltaColor}`}>
@@ -103,8 +113,10 @@ function HeatmapCell({ value, prev }: { value: number; prev: number | null }) {
   );
 }
 
-export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
+export function TierGrowthTable({ data, isLoading, note }: TierGrowthTableProps) {
   const rows = useMemo(() => (data ? normalize(data) : []), [data]);
+  // Mythic only where the data has it (the archived Dune page doesn't).
+  const tiers = useMemo(() => TIERS.filter(t => t.key !== 'mythic' || !rows.length || rows.some(r => r.mythic != null)), [rows]);
 
   return (
     <div className="flagship-card rounded-2xl">
@@ -114,6 +126,7 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
           <p className="text-sm text-soft-gray mt-1">
             Cells are tinted by month-over-month change &middot; deeper green = stronger growth, deeper red = bigger drop
           </p>
+          {note && <div className="mt-3">{note}</div>}
         </div>
         {/* Legend strip */}
         <div className="flex items-center gap-2 text-[11px] text-purple-gray">
@@ -136,7 +149,7 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
               <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-6">
                 Month
               </th>
-              {TIERS.map(t => (
+              {tiers.map(t => (
                 <th
                   key={t.key}
                   className="text-right text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-4"
@@ -155,14 +168,14 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
               [...Array(4)].map((_, i) => (
                 <tr key={i} className="border-b border-white/5">
                   <td className="py-3 px-6"><div className="skeleton h-5 w-16 rounded" /></td>
-                  {TIERS.map((_t, j) => (
+                  {tiers.map((_t, j) => (
                     <td key={j} className="py-3 px-4"><div className="skeleton h-10 w-20 rounded ml-auto" /></td>
                   ))}
                 </tr>
               ))
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={TIERS.length + 1} className="py-12 text-center text-soft-gray text-sm">
+                <td colSpan={tiers.length + 1} className="py-12 text-center text-soft-gray text-sm">
                   No data available
                 </td>
               </tr>
@@ -174,11 +187,11 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
                     <td className="py-3 px-6 text-sm text-lavender font-medium whitespace-nowrap">
                       {row.label}
                     </td>
-                    {TIERS.map(t => (
+                    {tiers.map(t => (
                       <HeatmapCell
                         key={t.key}
-                        value={row[t.key]}
-                        prev={prev ? prev[t.key] : null}
+                        value={row[t.key] ?? 0}
+                        prev={prev ? prev[t.key] ?? 0 : null}
                       />
                     ))}
                   </tr>

@@ -37,10 +37,12 @@ export interface MonthlyRow {
   returningWallets: number;
   returningLingo: number;
   newWalletTiers: Record<Tier, number>;
+  newWalletTiersApp?: Record<Tier, number>;   // valued as the Lingo app does (snapshot v4+)
   lockedByBucket: Record<Bucket, number>;
   totalByBucket: Record<Bucket, number>;
   tiers: Record<Tier, number>;      // active stakers valued at that month-end's price
   tiersNow: Record<Tier, number>;   // same balances valued at today's price
+  tiersApp?: Record<Tier, number>;  // as the Lingo app computes them (snapshot v4+)
 }
 
 export interface CohortRow {
@@ -67,6 +69,7 @@ export interface StakingMetrics {
     totalStaked: number; locked: number; unlocked: number; activeStakers: number;
     byBucket: Record<Bucket, { locked: number; total: number }>;
     tiers: Record<Tier, number>;
+    tiersApp?: Record<Tier, number>;
   };
   daily: DailyRow[];
   monthly: MonthlyRow[];

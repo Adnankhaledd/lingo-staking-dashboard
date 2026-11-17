@@ -60,10 +60,11 @@ const CLOSE_TOPIC = '0x7fc4727e062e336010f2c282598ef5f14facb3de68cf8195c2f23e145
 // yesterday's numbers briefly. cacheControlMaxAge caps how long that can last.
 const SNAPSHOT_KEY = 'staking-metrics-v1.json';
 const POOL_PRICES_KEY = 'pool-prices-v1/summary.json';   // written by api/pool-prices.ts
+const POOL_HOURLY_KEY = 'pool-prices-v1/hourly.json';     // same, hourly from Feb 2026
 // Bump when the snapshot shape changes: a stored snapshot of another version
 // is treated as missing, so the next request rebuilds instead of serving a
 // shape the page no longer reads.
-const SNAPSHOT_VERSION = 3;   // 3: Mythic tier
+const SNAPSHOT_VERSION = 4;   // 3: Mythic tier · 4: tiers as the Lingo app computes them
 const MAX_REQUESTS = 160;
 const LOG_PAGE_LIMIT = 9500;
 // Lock options were sized for 2s blocks: used only to name them and to say
@@ -142,7 +143,25 @@ export type Tier = 'below' | 'member' | 'holder' | 'elite' | 'legend' | 'mythic'
 const TIERS: Tier[] = ['below', 'member', 'holder', 'elite', 'legend', 'mythic'];
 const MYTHIC_USD = 15_000;
 /** A 12-month lock or longer (24 months), by its original option. */
-const isYearLock = (duration: string) => Number(canonical(duration)) >= 15_552_000;
+const isYearLock = (duration: string) => duration !== '0' && Number(duration) * designSecondsPerBlock(duration) >= 360 * DAY;
+/**
+ * TIERS AS THE LINGO APP COMPUTES THEM (reverse-engineered from its database,
+ * 2026-11-17: the USD formula reproduces its stored stake_usd for 591 of 591
+ * recently recalculated users). A user's "USD staked" is the sum over open
+ * stakes of amount × a FIXED price per stake:
+ *   - staked before 2026-01-01:                   $0.01
+ *   - 2026-01-01 up to block 41,932,126 (Feb 9):  $0.010105 (the app's price feed was stuck)
+ *   - after:                                      the market price when staked (pool, hourly)
+ * Then the bands below, and Mythic = $15k+ of that in 12-month-or-longer lock
+ * options (by lock type, as the app's stake_by_lock.twelveMonths). Not
+ * reproduced: the app's grace (it keeps a user in a tier until the stake falls
+ * roughly 20% below it), stale per-user records, and free-box stakes (app-only).
+ */
+const APP_FLAT_UNTIL_TS = 1_767_225_600;          // 2026-01-01T00:00:00Z
+const APP_FLAT_PRICE = 0.01;
+const APP_FROZEN_UNTIL_BLOCK = 41_932_126;
+const APP_FROZEN_PRICE = 0.010105;
+
 function tierOf(usd: number, yearLockedUsd = 0): Tier {
   if (yearLockedUsd >= MYTHIC_USD) return 'mythic';
   if (usd >= 2500) return 'legend';
@@ -193,10 +212,12 @@ export interface MonthlyRow {
   returningWallets: number;     // staked this month, first staked in an earlier month
   returningLingo: number;
   newWalletTiers: Record<Tier, number>;    // new wallets by first-month stake value
+  newWalletTiersApp: Record<Tier, number>; // same, valued as the Lingo app does (see tierOf)
   lockedByBucket: Record<Bucket, number>;  // month-end, still time-locked
   totalByBucket: Record<Bucket, number>;   // month-end, locked + unlocked
   tiers: Record<Tier, number>;             // active stakers, valued at that month-end's price
   tiersNow: Record<Tier, number>;          // same balances, valued at today's price
+  tiersApp: Record<Tier, number>;          // as the Lingo app computes them (see tierOf)
 }
 
 export interface CohortRow {
@@ -224,6 +245,9 @@ export interface Snapshot {
     totalStaked: number; locked: number; unlocked: number; activeStakers: number;
     byBucket: Record<Bucket, { locked: number; total: number }>;
     tiers: Record<Tier, number>;
+    tiersApp: Record<Tier, number>;
+    /** Wallets in each app tier right now (Member and up), for checking against the app. */
+    appTierWallets: Partial<Record<Tier, string[]>>;
   };
   daily: DailyRow[];
   monthly: MonthlyRow[];
@@ -282,10 +306,12 @@ export interface ComputeInput {
   timestampsEstimated?: number;
   requests?: Record<string, number>;
   priceSource?: { poolThrough: string | null; alchemyDays: number };
+  /** [hour start, usd] from the pool, for pricing stakes the app's way (Feb 2026 on). */
+  hourlyPrices?: Array<[number, number]>;
 }
 
 /** unlockTs: when the contract releases it (real block clock). designUnlockTs: when it would have at 2s blocks. */
-interface Position { n: number; amount: bigint; duration: string; unlockTs: number; designUnlockTs: number; user: string }
+interface Position { n: number; amount: bigint; duration: string; unlockTs: number; designUnlockTs: number; user: string; appUsd: number }
 
 interface Flow {
   staked: Record<Bucket, bigint>;
@@ -326,6 +352,28 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   const todayDay = dayOf(headTs);
   const currentPrice = livePrice ?? priceAt(todayDay);
 
+  // ── The app's fixed price per stake ──
+  const hourly = new Map<number, number>(input.hourlyPrices ?? []);
+  const hourKeys = [...hourly.keys()].sort((a, b) => a - b);
+  const marketPriceAt = (ts: number): number => {
+    const hour = Math.floor(ts / 3600) * 3600;
+    const exact = hourly.get(hour);
+    if (exact != null) return exact;
+    // the last hour with trades in the 6 hours before, else that day's price
+    let lo = 0, hi = hourKeys.length - 1, best = -1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (hourKeys[mid] <= hour) { best = mid; lo = mid + 1; } else hi = mid - 1; }
+    if (best >= 0 && hour - hourKeys[best] <= 6 * 3600) return hourly.get(hourKeys[best])!;
+    return priceAt(dayOf(ts)) ?? 0;
+  };
+  const appPriceOf = (ev: { ts: number; block: number }) =>
+    ev.ts < APP_FLAT_UNTIL_TS ? APP_FLAT_PRICE : ev.block <= APP_FROZEN_UNTIL_BLOCK ? APP_FROZEN_PRICE : marketPriceAt(ev.ts);
+  const appUsd = new Map<string, number>();       // per wallet, open stakes
+  const appYearUsd = new Map<string, number>();   // of which 12-month-or-longer lock options
+  const addTo = (m: Map<string, number>, k: string, v: number) => {
+    const next = (m.get(k) ?? 0) + v;
+    if (next > 1e-9) m.set(k, next); else m.delete(k);
+  };
+
   // ── One chronological stream ──
   type Ev = { block: number; logIndex: number; ts: number; user: string; amount: bigint; close: boolean; duration: string; unlockBlock: number };
   const events: Ev[] = [];
@@ -336,6 +384,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   events.sort((a, b) => a.block - b.block || a.logIndex - b.logIndex);
 
   const positions = new Map<string, Position>();
+  const newWalletApp = new Map<string, Map<string, { usd: number; year: number }>>();   // month → wallet → first-month app USD
   const balance = new Map<string, bigint>();          // only wallets with a non-zero balance
   const firstStake = new Map<string, { month: string; ts: number }>();
   const everClosed = new Set<string>();
@@ -361,7 +410,8 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   let dayStaked = 0n, dayUnstaked = 0n;
   const monthEnds: Array<{ month: string; partial: boolean; atTs: number; price: number | null;
     total: bigint; locked: bigint; byLabel: Map<string, { locked: bigint; total: bigint; positions: number }>;
-    active: number; tiers: Record<Tier, number>; tiersNow: Record<Tier, number>; cohortActive: Map<string, number> }> = [];
+    active: number; tiers: Record<Tier, number>; tiersNow: Record<Tier, number>; tiersApp: Record<Tier, number>;
+    appWallets: Map<string, Tier> | null; cohortActive: Map<string, number> }> = [];
 
   /** Everything that depends on the state at one instant: lock status, tiers, cohort survival. */
   const snapshotAt = (month: string, atTs: number, partial: boolean) => {
@@ -383,16 +433,21 @@ export function computeMetrics(input: ComputeInput): Snapshot {
     }
     const tiers = zeroTiers();
     const tiersNow = zeroTiers();
+    const tiersApp = zeroTiers();
+    const appWallets = partial ? new Map<string, Tier>() : null;   // who is in which tier, for the head only
     const cohortActive = new Map<string, number>();
     for (const [user, bal] of balance) {
       const lingo = toLingo(bal);
       const yearLingo = toLingo(yearLocked.get(user) ?? 0n);
       if (price != null) tiers[tierOf(lingo * price, yearLingo * price)]++;
       if (currentPrice != null) tiersNow[tierOf(lingo * currentPrice, yearLingo * currentPrice)]++;
+      const at = tierOf(appUsd.get(user) ?? 0, appYearUsd.get(user) ?? 0);
+      tiersApp[at]++;
+      if (appWallets && at !== 'below') appWallets.set(user, at);
       const c = firstStake.get(user)!.month;
       cohortActive.set(c, (cohortActive.get(c) ?? 0) + 1);
     }
-    monthEnds.push({ month, partial, atTs, price, total: totalOpen, locked, byLabel, active: balance.size, tiers, tiersNow, cohortActive });
+    monthEnds.push({ month, partial, atTs, price, total: totalOpen, locked, byLabel, active: balance.size, tiers, tiersNow, tiersApp, appWallets, cohortActive });
   };
 
   const closeDay = (day: number) => {
@@ -434,8 +489,15 @@ export function computeMetrics(input: ComputeInput): Snapshot {
         f.newWallets++;
         f.firstStakeLingo += ev.amount;
       }
+      const evAppUsd = toLingo(ev.amount) * appPriceOf(ev);
       if (first.month === month) {
         f.newLingo += ev.amount;
+        let nm = newWalletApp.get(month);
+        if (!nm) { nm = new Map(); newWalletApp.set(month, nm); }
+        const nw = nm.get(ev.user) ?? { usd: 0, year: 0 };
+        nw.usd += evAppUsd;
+        if (isYearLock(ev.duration)) nw.year += evAppUsd;
+        nm.set(ev.user, nw);
         const p = priceAt(d);
         if (p != null) f.newWalletUsd.set(ev.user, (f.newWalletUsd.get(ev.user) ?? 0) + toLingo(ev.amount) * p);
         if (p != null && isYearLock(ev.duration)) f.newWalletYearLockUsd.set(ev.user, (f.newWalletYearLockUsd.get(ev.user) ?? 0) + toLingo(ev.amount) * p);
@@ -451,8 +513,11 @@ export function computeMetrics(input: ComputeInput): Snapshot {
         n: 1, amount: ev.amount, duration: ev.duration, user: ev.user,
         unlockTs: blockToTs(ev.unlockBlock),
         designUnlockTs: ev.ts + Number(ev.duration) * designSecondsPerBlock(ev.duration),
+        appUsd: evAppUsd,
       });
       balance.set(ev.user, (balance.get(ev.user) ?? 0n) + ev.amount);
+      addTo(appUsd, ev.user, evAppUsd);
+      if (isYearLock(ev.duration)) addTo(appYearUsd, ev.user, evAppUsd);
       totalOpen += ev.amount;
       dayStaked += ev.amount;
     } else {
@@ -465,8 +530,11 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       if (!pos) { closedUnmatched++; continue; }
       if (pos.duration !== '0' && pos.designUnlockTs > ev.ts) { withdrawnEarlyWei += ev.amount; withdrawnEarlyN++; }
       if (--pos.n === 0) positions.delete(key);
+      addTo(appUsd, ev.user, -pos.appUsd);
+      if (isYearLock(pos.duration)) addTo(appYearUsd, ev.user, -pos.appUsd);
       const bal = (balance.get(ev.user) ?? 0n) - ev.amount;
-      if (bal > 0n) balance.set(ev.user, bal); else balance.delete(ev.user);
+      if (bal > 0n) balance.set(ev.user, bal);
+      else { balance.delete(ev.user); appUsd.delete(ev.user); appYearUsd.delete(ev.user); }
       everClosed.add(ev.user);
       totalOpen -= ev.amount;
       dayUnstaked += ev.amount;
@@ -496,6 +564,8 @@ export function computeMetrics(input: ComputeInput): Snapshot {
     staked.total = round(stakedTotal);
     const newWalletTiers = zeroTiers();
     for (const [user, usd] of f.newWalletUsd) newWalletTiers[tierOf(usd, f.newWalletYearLockUsd.get(user) ?? 0)]++;
+    const newWalletTiersApp = zeroTiers();
+    for (const v of newWalletApp.get(month)?.values() ?? []) newWalletTiersApp[tierOf(v.usd, v.year)]++;
     return {
       month,
       partial: e?.partial ?? false,
@@ -514,10 +584,12 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       returningWallets: f.returning.size,
       returningLingo: round(toLingo(f.returningLingo)),
       newWalletTiers,
+      newWalletTiersApp,
       lockedByBucket: Object.fromEntries(BUCKETS.map(b => [b, round(lockedByBucket[b])])) as Record<Bucket, number>,
       totalByBucket: Object.fromEntries(BUCKETS.map(b => [b, round(totalByBucket[b])])) as Record<Bucket, number>,
       tiers: e?.tiers ?? zeroTiers(),
       tiersNow: e?.tiersNow ?? zeroTiers(),
+      tiersApp: e?.tiersApp ?? zeroTiers(),
     };
   });
 
@@ -669,6 +741,11 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       activeStakers: balance.size,
       byBucket,
       tiers: now.tiers,
+      tiersApp: now.tiersApp,
+      appTierWallets: [...(now.appWallets ?? new Map<string, Tier>()).entries()].reduce<Partial<Record<Tier, string[]>>>((acc, [w, t]) => {
+        (acc[t] ??= []).push(w);
+        return acc;
+      }, {}),
     },
     daily,
     monthly,
@@ -750,6 +827,12 @@ interface PoolPricesSummary { version: number; generatedAt: string; complete: bo
  * the series covers: the day it was generated, since it lists only days with
  * trades. Null if it hasn't been built or can't be read.
  */
+/** The pool's hourly prices (api/pool-prices.ts), for valuing stakes the app's way. */
+async function getPoolHourly(): Promise<Array<[number, number]>> {
+  const { data } = await readBlobJson<{ version: number; hours?: Array<[number, number]> }>(POOL_HOURLY_KEY);
+  return data?.version === 1 && Array.isArray(data.hours) ? data.hours.filter(([h, p]) => Number.isFinite(h) && p > 0) : [];
+}
+
 async function getPoolPrices(): Promise<{ days: Array<[number, number]>; throughDay: number } | null> {
   const { data } = await readBlobJson<PoolPricesSummary>(POOL_PRICES_KEY);
   if (data?.version !== 1 || !data.complete || !Array.isArray(data.days)) return null;
@@ -865,6 +948,7 @@ async function rebuild(): Promise<Snapshot> {
   // no market at all and take its first price, as they did with Alchemy's.
   const firstTs = stakes.reduce((m, s) => Math.min(m, s.ts), headTs);
   const pool = await getPoolPrices();
+  const hourlyPrices = await getPoolHourly();
   const gapFromDay = pool ? pool.throughDay + 1 : dayOf(firstTs);
   const [alchemyPrices, livePrice, balRes] = await Promise.all([
     gapFromDay <= dayOf(headTs) ? getDailyPrices(gapFromDay * DAY, headTs, budget) : Promise.resolve([]),
@@ -881,6 +965,7 @@ async function rebuild(): Promise<Snapshot> {
     stakes, closes, head, headTs, livePrice, onChainWei,
     dailyPrices: [...(pool?.days ?? []), ...fallbackPrices],
     priceSource: { poolThrough: pool ? isoDay(pool.throughDay) : null, alchemyDays: new Set(fallbackPrices.map(([ts]) => dayOf(ts))).size },
+    hourlyPrices,
     timestampsEstimated: estimated,
     requests: budget.used,
   });
