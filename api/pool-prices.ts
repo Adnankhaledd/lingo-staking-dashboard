@@ -38,7 +38,9 @@ const CLAIM_PREFIX = 'pool-prices-v1/claims/';     // one write-once file per 30
 // Hourly VWAP from Feb 2026, when the Lingo app started pricing each stake at
 // the market price of its moment (api/staking-metrics.ts values tiers the
 // app's way). Finished months write-once; the current one is recomputed.
-const HOURS_PREFIX = 'pool-prices-v1/hours/';
+// v2 ('hours-eth1h'): each hour's trades valued at that hour's ETH/USD (v1 used
+// the day's, an error of up to several percent within a day). Recomputed once.
+const HOURS_PREFIX = 'pool-prices-v1/hours-eth1h/';
 const HOURLY_KEY = 'pool-prices-v1/hourly.json';
 const HOURLY_FROM_MONTH = '2026-02';
 const HOUR = 3_600;
@@ -116,11 +118,11 @@ export function dailyVwap(swaps: SwapIn[], ethPriceAt: (day: number) => number |
     .map(([day, a]) => [isoDay(day), a.usd / a.lingo, Math.round(a.lingo)]);
 }
 
-/** An hour's LINGO/USD from the pool's trades, volume-weighted (ETH at that day's price). */
-export function hourlyVwap(swaps: SwapIn[], ethPriceAt: (day: number) => number | null): Hours {
+/** An hour's LINGO/USD from the pool's trades, volume-weighted (ETH at that hour's price). */
+export function hourlyVwap(swaps: SwapIn[], ethHourAt: (hourTs: number) => number | null): Hours {
   const acc = new Map<number, { usd: number; lingo: number }>();
   for (const s of swaps) {
-    const eth = ethPriceAt(Math.floor(s.ts / DAY));
+    const eth = ethHourAt(Math.floor(s.ts / HOUR) * HOUR);
     if (eth == null || s.lingoDelta === 0) continue;
     const hour = Math.floor(s.ts / HOUR) * HOUR;
     const a = acc.get(hour) ?? { usd: 0, lingo: 0 };
@@ -215,9 +217,20 @@ async function getAllLogs(filter: Record<string, unknown>, from: number, to: num
  * a month priced off a neighbouring chunk's ETH would be stored write-once.
  */
 async function ethDailyPrices(startTs: number, endTs: number, budget: Budget): Promise<Map<number, number>> {
+  return ethPrices(startTs, endTs, budget, '1d');
+}
+
+/** ETH/USD by hour start (unix s). The history endpoint serves 1h in windows of up to ~30 days. */
+async function ethHourlyPrices(startTs: number, endTs: number, budget: Budget): Promise<Map<number, number>> {
+  return ethPrices(startTs, endTs, budget, '1h');
+}
+
+async function ethPrices(startTs: number, endTs: number, budget: Budget, interval: '1d' | '1h'): Promise<Map<number, number>> {
+  const span = interval === '1d' ? 360 * DAY : 29 * DAY;
+  const bucket = interval === '1d' ? DAY : HOUR;
   const out = new Map<number, number>();
-  for (let from = startTs; from <= endTs; from += 360 * DAY) {
-    const to = Math.min(endTs, from + 360 * DAY);
+  for (let from = startTs; from <= endTs; from += span) {
+    const to = Math.min(endTs, from + span);
     let got = false;
     for (let attempt = 0; attempt <= RETRIES && !got; attempt++) {
       if (attempt) await sleep(400 * 2 ** attempt);
@@ -226,14 +239,14 @@ async function ethDailyPrices(startTs: number, endTs: number, budget: Budget): P
         const res = await fetch(HIST_PRICES_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ symbol: 'ETH', startTime: new Date(from * 1000).toISOString(), endTime: new Date(to * 1000).toISOString(), interval: '1d' }),
+          body: JSON.stringify({ symbol: 'ETH', startTime: new Date(from * 1000).toISOString(), endTime: new Date(to * 1000).toISOString(), interval }),
         });
         if (!res.ok) { if (isTransient(res.status, '')) continue; break; }
         const json = await res.json();
         for (const d of json?.data ?? []) {
           const v = Number(d?.value);
           const t = Date.parse(d?.timestamp ?? '');
-          if (Number.isFinite(v) && v > 0 && Number.isFinite(t)) out.set(Math.floor(t / 1000 / DAY), v);
+          if (Number.isFinite(v) && v > 0 && Number.isFinite(t)) out.set(interval === '1d' ? Math.floor(t / 1000 / DAY) : Math.floor(t / 1000 / bucket) * bucket, v);
         }
         got = true;
       } catch { /* retried */ }
@@ -260,7 +273,7 @@ const int256 = (hex: string): bigint => {
   return v >= (1n << 255n) ? v - (1n << 256n) : v;
 };
 
-interface Ctx { head: number; headTs: number; budget: Budget; ethPriceAt: (day: number) => number | null }
+interface Ctx { head: number; headTs: number; budget: Budget; ethPriceAt: (day: number) => number | null; ethHourAt: (hourTs: number) => number | null }
 
 async function computeMonth(month: string, ctx: Ctx): Promise<MonthPrices & { hours: Hours }> {
   const startTs = monthStartTs(month);
@@ -279,7 +292,8 @@ async function computeMonth(month: string, ctx: Ctx): Promise<MonthPrices & { ho
   }
   return {
     version: 1, month, computedAt: new Date().toISOString(), swaps: swaps.length,
-    days: dailyVwap(swaps, ctx.ethPriceAt), hours: hourlyVwap(swaps, ctx.ethPriceAt),
+    days: dailyVwap(swaps, ctx.ethPriceAt),
+    hours: month >= HOURLY_FROM_MONTH ? hourlyVwap(swaps, ctx.ethHourAt) : [],
   };
 }
 
@@ -390,7 +404,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const firstNeeded = [missing[0], missingHours[0], currentMonth].filter(Boolean).sort()[0] as string;
     const eth = await ethDailyPrices(monthStartTs(firstNeeded) - DAY, headTs, budget);
     if (!eth.size) throw new Error('No ETH price history');
-    const ctx: Ctx = { head, headTs, budget, ethPriceAt: makePriceAt(eth) };
+    // Hourly ETH only for the months whose hourly series is computed this run.
+    const hourStartMonth = [missingHours[0], currentMonth].filter(Boolean).sort()[0] as string;
+    const ethHourly = await ethHourlyPrices(Math.max(monthStartTs(HOURLY_FROM_MONTH), monthStartTs(hourStartMonth)) - DAY, headTs, budget);
+    const ethPriceAt = makePriceAt(eth);
+    const hourKeys = [...ethHourly.keys()].sort((a, b) => a - b);
+    const ethHourAt = (hourTs: number): number | null => {
+      const exact = ethHourly.get(hourTs);
+      if (exact != null) return exact;
+      // nearest earlier hour within 3 hours, else the day's price
+      let lo = 0, hi = hourKeys.length - 1, best = -1;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (hourKeys[mid] <= hourTs) { best = mid; lo = mid + 1; } else hi = mid - 1; }
+      if (best >= 0 && hourTs - hourKeys[best] <= 3 * HOUR) return ethHourly.get(hourKeys[best])!;
+      return ethPriceAt(Math.floor(hourTs / DAY));
+    };
+    const ctx: Ctx = { head, headTs, budget, ethPriceAt, ethHourAt };
 
     const computed: string[] = [];
     for (const m of missing) {
