@@ -13,6 +13,14 @@ import { put, list } from '@vercel/blob';
  * at any moment — exactly, and reconciled against the contract's real LINGO
  * balance. Durations are in BLOCKS: 15,552,000 blocks × 2s = 12 months.
  *
+ * LOCK STATUS. Every "locked" figure the page shows (Locked KPI, lock-duration
+ * charts, lock tiers, top stakers) treats a lock as ending when it was designed
+ * to: stake time + duration × the block time it was sized for (2s; 200ms for
+ * the ×10 re-sized options). Since Base's switch to 200ms blocks on 2026-11-05
+ * the contract releases positions ~10× sooner, but the Lingo app keeps the
+ * original lock terms, and so does this page. What the contract actually
+ * allows is reported separately in `unlockSchedule` (API only, not shown).
+ *
  * PRICES. Stakes are valued in USD (tiers) with the LINGO/WETH pool's daily
  * VWAP, read from the summary /api/pool-prices stores (its cron runs at 00:05,
  * this one at 00:10). Alchemy's LINGO price history disagreed with the pool by
@@ -220,9 +228,11 @@ export interface Snapshot {
     events: { staked: number; closed: number; closedUnmatched: number };
   };
   /**
-   * When locked LINGO becomes withdrawable. The contract unlocks at a block
-   * number (stake block + duration); durations were sized for 2s blocks, so
-   * since Base's 200ms switch every lock ends ~10× sooner than designed.
+   * ON-CHAIN view, for the team (the page doesn't read it): when the contract
+   * actually lets locked LINGO be withdrawn. It unlocks at a block number
+   * (stake block + duration); durations were sized for 2s blocks, so since
+   * Base's 200ms switch every lock ends ~10× sooner than designed. Its
+   * lockedNow is therefore lower than current.locked, which is as designed.
    */
   unlockSchedule: UnlockSchedule;
 }
@@ -230,6 +240,7 @@ export interface Snapshot {
 export interface UnlockSchedule {
   /** Head timestamp minus the block clock's estimate: ~0 while the clock is right. */
   clockDriftSec: number;
+  /** Locked by the contract right now (unlock block not reached). */
   lockedNow: number;
   /** Future unlocks by the Monday-starting UTC week they happen in. */
   weekly: Array<{ week: string; lingo: number; positions: number }>;
@@ -351,8 +362,9 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       if (!e) { e = { locked: 0n, total: 0n, positions: 0 }; byLabel.set(p.duration, e); }
       e.total += amt;
       e.positions += p.n;
-      // Flexible is never locked; everything else is locked until its unlock time.
-      if (p.duration !== '0' && p.unlockTs > atTs) { e.locked += amt; locked += amt; }
+      // Flexible is never locked; everything else is locked until its lock ends
+      // as designed (see LOCK STATUS in the header), not at the on-chain unlock block.
+      if (p.duration !== '0' && p.designUnlockTs > atTs) { e.locked += amt; locked += amt; }
     }
     const tiers = zeroTiers();
     const tiersNow = zeroTiers();
@@ -535,7 +547,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   const positionsByUser = new Map<string, number>();
   for (const p of positions.values()) {
     positionsByUser.set(p.user, (positionsByUser.get(p.user) ?? 0) + p.n);
-    if (p.duration !== '0' && p.unlockTs > headTs) lockedByUser.set(p.user, (lockedByUser.get(p.user) ?? 0n) + p.amount * BigInt(p.n));
+    if (p.duration !== '0' && p.designUnlockTs > headTs) lockedByUser.set(p.user, (lockedByUser.get(p.user) ?? 0n) + p.amount * BigInt(p.n));
   }
   const topStakers = [...balance.entries()]
     .sort((a, b) => (a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : 0))
@@ -584,7 +596,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   };
   const weeks = new Map<string, { wei: bigint; positions: number }>();
   const within = { d7: 0n, d30: 0n, d60: 0n, d90: 0n };
-  let unlockedEarlyWei = 0n, unlockedEarlyN = 0, stillEarlyWei = 0n, stillEarlyN = 0, lastUnlockTs = 0;
+  let onChainLockedWei = 0n, unlockedEarlyWei = 0n, unlockedEarlyN = 0, stillEarlyWei = 0n, stillEarlyN = 0, lastUnlockTs = 0;
   for (const p of positions.values()) {
     if (p.duration === '0') continue;
     const amt = p.amount * BigInt(p.n);
@@ -592,6 +604,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       if (p.designUnlockTs > headTs) { unlockedEarlyWei += amt; unlockedEarlyN += p.n; }
       continue;
     }
+    onChainLockedWei += amt;
     const w = weeks.get(weekOf(p.unlockTs)) ?? { wei: 0n, positions: 0 };
     w.wei += amt; w.positions += p.n;
     weeks.set(weekOf(p.unlockTs), w);
@@ -605,7 +618,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   }
   const unlockSchedule: UnlockSchedule = {
     clockDriftSec: headTs - blockToTs(head),
-    lockedNow,
+    lockedNow: round(toLingo(onChainLockedWei)),   // on-chain; current.locked is as designed
     weekly: [...weeks.entries()].sort((a, b) => a[0].localeCompare(b[0]))
       .map(([week, w]) => ({ week, lingo: round(toLingo(w.wei)), positions: w.positions })),
     within: { d7: round(toLingo(within.d7)), d30: round(toLingo(within.d30)), d60: round(toLingo(within.d60)), d90: round(toLingo(within.d90)) },
