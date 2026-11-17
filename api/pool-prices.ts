@@ -35,6 +35,13 @@ const FIRST_MONTH = '2024-12';
 const MONTH_PREFIX = 'pool-prices-v1/months/';
 const SUMMARY_KEY = 'pool-prices-v1/summary.json';
 const CLAIM_PREFIX = 'pool-prices-v1/claims/';     // one write-once file per 30-minute rebuild slot
+// Hourly VWAP from Feb 2026, when the Lingo app started pricing each stake at
+// the market price of its moment (api/staking-metrics.ts values tiers the
+// app's way). Finished months write-once; the current one is recomputed.
+const HOURS_PREFIX = 'pool-prices-v1/hours/';
+const HOURLY_KEY = 'pool-prices-v1/hourly.json';
+const HOURLY_FROM_MONTH = '2026-02';
+const HOUR = 3_600;
 const DAY = 86_400;
 const MONTH_MARGIN_SECONDS = 3_600;  // ranges over-cover; swaps are filtered by their own timestamp
 const INITIAL_CHUNK_SECONDS = 15 * DAY; // split only when a page is full or refused
@@ -75,6 +82,9 @@ export interface MonthPrices {
   days: Array<[string, number, number]>;
 }
 
+/** [hour start (unix s), LINGO/USD] for each hour with trades, ascending. */
+export type Hours = Array<[number, number]>;
+
 export interface Summary {
   version: 1;
   generatedAt: string;
@@ -104,6 +114,21 @@ export function dailyVwap(swaps: SwapIn[], ethPriceAt: (day: number) => number |
     .filter(([, a]) => a.lingo > 0)
     .sort((a, b) => a[0] - b[0])
     .map(([day, a]) => [isoDay(day), a.usd / a.lingo, Math.round(a.lingo)]);
+}
+
+/** An hour's LINGO/USD from the pool's trades, volume-weighted (ETH at that day's price). */
+export function hourlyVwap(swaps: SwapIn[], ethPriceAt: (day: number) => number | null): Hours {
+  const acc = new Map<number, { usd: number; lingo: number }>();
+  for (const s of swaps) {
+    const eth = ethPriceAt(Math.floor(s.ts / DAY));
+    if (eth == null || s.lingoDelta === 0) continue;
+    const hour = Math.floor(s.ts / HOUR) * HOUR;
+    const a = acc.get(hour) ?? { usd: 0, lingo: 0 };
+    a.usd += Math.abs(s.wethDelta) * eth;
+    a.lingo += Math.abs(s.lingoDelta);
+    acc.set(hour, a);
+  }
+  return [...acc.entries()].filter(([, a]) => a.lingo > 0).sort((a, b) => a[0] - b[0]).map(([h, a]) => [h, a.usd / a.lingo]);
 }
 
 const isoDay = (day: number) => new Date(day * DAY * 1000).toISOString().slice(0, 10);
@@ -237,7 +262,7 @@ const int256 = (hex: string): bigint => {
 
 interface Ctx { head: number; headTs: number; budget: Budget; ethPriceAt: (day: number) => number | null }
 
-async function computeMonth(month: string, ctx: Ctx): Promise<MonthPrices> {
+async function computeMonth(month: string, ctx: Ctx): Promise<MonthPrices & { hours: Hours }> {
   const startTs = monthStartTs(month);
   const endTs = Math.min(monthStartTs(nextMonth(month)), ctx.headTs + 1);
   const from = Math.min(ctx.head, tsToBlock(startTs - MONTH_MARGIN_SECONDS));
@@ -252,7 +277,10 @@ async function computeMonth(month: string, ctx: Ctx): Promise<MonthPrices> {
     const lingo = Number(int256(l.data.slice(66, 130))) / 1e18;
     swaps.push({ ts, lingoDelta: lingo, wethDelta: weth });
   }
-  return { version: 1, month, computedAt: new Date().toISOString(), swaps: swaps.length, days: dailyVwap(swaps, ctx.ethPriceAt) };
+  return {
+    version: 1, month, computedAt: new Date().toISOString(), swaps: swaps.length,
+    days: dailyVwap(swaps, ctx.ethPriceAt), hours: hourlyVwap(swaps, ctx.ethPriceAt),
+  };
 }
 
 // ─── Storage ─────────────────────────────────────────────────────────────
@@ -275,6 +303,22 @@ async function claimSlot(): Promise<boolean> {
   } catch { return false; }
 }
 
+/** Finished months' hourly prices already stored (write-once). */
+async function storedHours(): Promise<Map<string, Hours>> {
+  const out = new Map<string, Hours>();
+  const { blobs } = await list({ prefix: HOURS_PREFIX });
+  await Promise.all(blobs.map(async b => {
+    const mm = b.pathname.match(/(\d{4}-\d{2})\.json$/);
+    if (!mm) return;
+    try {
+      const r = await fetch(b.url);
+      const rec = r.ok ? await r.json() as { hours?: Hours } : null;
+      if (Array.isArray(rec?.hours)) out.set(mm[1], rec.hours);
+    } catch { /* recomputed below */ }
+  }));
+  return out;
+}
+
 /** Finished months already stored. Write-once files, so a CDN copy is never stale. */
 async function storedMonths(): Promise<Map<string, MonthPrices>> {
   const out = new Map<string, MonthPrices>();
@@ -288,6 +332,15 @@ async function storedMonths(): Promise<Map<string, MonthPrices>> {
     } catch { /* recomputed below */ }
   }));
   return out;
+}
+
+async function saveHours(month: string, hours: Hours, into: Map<string, Hours>) {
+  into.set(month, hours);
+  try {
+    await put(`${HOURS_PREFIX}${month}.json`, JSON.stringify({ version: 1, month, hours }), {
+      access: 'public', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json',
+    });
+  } catch { /* already written by an overlapping call — same content */ }
 }
 
 // ─── Handler ─────────────────────────────────────────────────────────────
@@ -329,9 +382,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (let m = FIRST_MONTH; m <= currentMonth; m = nextMonth(m)) months.push(m);
     const stored = await storedMonths();
     const missing = months.filter(m => m !== currentMonth && !stored.has(m));
+    const hourMonths = months.filter(m => m >= HOURLY_FROM_MONTH && m !== currentMonth);
+    const storedH = await storedHours();
+    const missingHours = hourMonths.filter(m => !storedH.has(m));
 
     // ETH prices only for the span being computed.
-    const firstNeeded = missing[0] ?? currentMonth;
+    const firstNeeded = [missing[0], missingHours[0], currentMonth].filter(Boolean).sort()[0] as string;
     const eth = await ethDailyPrices(monthStartTs(firstNeeded) - DAY, headTs, budget);
     if (!eth.size) throw new Error('No ETH price history');
     const ctx: Ctx = { head, headTs, budget, ethPriceAt: makePriceAt(eth) };
@@ -339,7 +395,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const computed: string[] = [];
     for (const m of missing) {
       if (Date.now() - t0 > WORK_BUDGET_MS) break;
-      const rec = await computeMonth(m, ctx);
+      const { hours, ...rec } = await computeMonth(m, ctx);
       stored.set(m, rec);
       computed.push(m);
       try {
@@ -347,6 +403,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           access: 'public', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json',
         });
       } catch { /* already written by an overlapping call — same content */ }
+      if (m >= HOURLY_FROM_MONTH && !storedH.has(m)) await saveHours(m, hours, storedH);
     }
     const stillMissing = missing.filter(m => !stored.has(m));
     if (stillMissing.length) {
@@ -372,7 +429,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await put(SUMMARY_KEY, JSON.stringify(body), {
       access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json', cacheControlMaxAge: 60,
     });
-    return res.status(200).json({ ...body, served: 'built', computedThisCall: [...computed, currentMonth], requests: budget.calls, elapsedMs: Date.now() - t0 });
+
+    // Hourly series: backfill finished months (once each), then publish with the current month.
+    for (const m of hourMonths) {
+      if (storedH.has(m) || Date.now() - t0 > WORK_BUDGET_MS) continue;
+      await saveHours(m, (await computeMonth(m, ctx)).hours, storedH);
+      computed.push(`${m} (hourly)`);
+    }
+    const hoursComplete = hourMonths.every(m => storedH.has(m));
+    const hours: Hours = [...hourMonths.flatMap(m => storedH.get(m) ?? []), ...current.hours];
+    await put(HOURLY_KEY, JSON.stringify({ version: 1, generatedAt: body.generatedAt, complete: hoursComplete, from: HOURLY_FROM_MONTH, hours }), {
+      access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json', cacheControlMaxAge: 60,
+    });
+    return res.status(200).json({
+      ...body, served: 'built', computedThisCall: [...computed, currentMonth],
+      hourly: { hours: hours.length, complete: hoursComplete }, requests: budget.calls, elapsedMs: Date.now() - t0,
+    });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error', requests: budget.calls, elapsedMs: Date.now() - t0 });
   }
