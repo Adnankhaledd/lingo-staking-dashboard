@@ -101,29 +101,33 @@ function tsToBlock(ts: number): number {
 
 export type Bucket = 'flexible' | '3mo' | '6mo' | '12mo' | 'other';
 const BUCKETS: Bucket[] = ['flexible', '3mo', '6mo', '12mo', 'other'];
+// On 2026-11-10 (block 55,595,822) the owner re-sized every lock option ×10
+// for 200ms blocks. Each new value is the same option as its 2s-era original.
+const RESIZED_FOR_200MS: Record<string, string> = {
+  '12960000': '1296000', '38880000': '3888000', '77760000': '7776000', '155520000': '15552000',
+  '302832000': '30283200', '9936000': '993600', '4320000': '432000', '864000': '86400',
+};
+/** The 2s-era option a duration stands for: re-sized values map back to their original. */
+const canonical = (duration: string) => RESIZED_FOR_200MS[duration] ?? duration;
 const BUCKET_BY_DURATION: Record<string, Bucket> = {
   '0': 'flexible', '3888000': '3mo', '7776000': '6mo', '15552000': '12mo',
-  // the same options re-sized for 200ms blocks, if the owner updates lockDurations
-  '38880000': '3mo', '77760000': '6mo', '155520000': '12mo',
 };
 /** 1-month, 24-month and odd promo/test durations are too small to chart on their own. */
-const bucketOf = (duration: string): Bucket => BUCKET_BY_DURATION[duration] ?? 'other';
+const bucketOf = (duration: string): Bucket => BUCKET_BY_DURATION[canonical(duration)] ?? 'other';
 
 // Tier labels LockBreakdownCard expects. api/stake-lock-breakdown.ts serves this snapshot's lockBreakdown as-is.
 const DURATION_LABELS: Record<string, string> = {
   '0': 'Flexible', '1296000': '1 Month', '3888000': '3 Months',
   '7776000': '6 Months', '15552000': '12 Months', '30283200': '24 Months',
-  '12960000': '1 Month', '38880000': '3 Months', '77760000': '6 Months', '155520000': '12 Months', '302832000': '24 Months',
 };
 /**
- * Seconds per block a lock length was sized for. Every option offered at 2s
- * was at most 30,283,200 blocks (24 months); anything longer, or one of the
- * ×10 values, was sized for 200ms blocks.
+ * Seconds per block a lock length was sized for: 200ms for the re-sized
+ * options (and anything past 30,283,200 blocks, the longest 2s option), else 2s.
  */
-const RESIZED_FOR_200MS = new Set(['12960000', '38880000', '77760000', '155520000', '302832000']);
 const designSecondsPerBlock = (duration: string) =>
-  RESIZED_FOR_200MS.has(duration) || Number(duration) > 30_283_200 ? 0.2 : DESIGN_SECONDS_PER_BLOCK;
-function labelOf(duration: string): string {
+  duration in RESIZED_FOR_200MS || Number(duration) > 30_283_200 ? 0.2 : DESIGN_SECONDS_PER_BLOCK;
+function labelOf(raw: string): string {
+  const duration = canonical(raw);
   const known = DURATION_LABELS[duration];
   if (known) return known;
   const days = Number(duration) * designSecondsPerBlock(duration) / DAY;
@@ -358,8 +362,9 @@ export function computeMetrics(input: ComputeInput): Snapshot {
     let locked = 0n;
     for (const p of positions.values()) {
       const amt = p.amount * BigInt(p.n);
-      let e = byLabel.get(p.duration);
-      if (!e) { e = { locked: 0n, total: 0n, positions: 0 }; byLabel.set(p.duration, e); }
+      // One row per lock option, as before the re-size (keyed by its original duration).
+      let e = byLabel.get(canonical(p.duration));
+      if (!e) { e = { locked: 0n, total: 0n, positions: 0 }; byLabel.set(canonical(p.duration), e); }
       e.total += amt;
       e.positions += p.n;
       // Flexible is never locked; everything else is locked until its lock ends

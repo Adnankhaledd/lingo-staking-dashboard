@@ -70,11 +70,17 @@ const KNOWN_DURATIONS: Record<string, string> = {
   '7776000': '6 Months',
   '15552000': '12 Months',
   '30283200': '24 Months',
-  // the same options re-sized for 200ms blocks, if the owner updates lockDurations
-  '12960000': '1 Month', '38880000': '3 Months', '77760000': '6 Months', '155520000': '12 Months', '302832000': '24 Months',
 };
 
-function durationToLabel(val: bigint): string {
+// On 2026-11-10 (block 55,595,822) the owner re-sized every lock option ×10
+// for 200ms blocks. Each new value is the same option as its 2s-era original.
+const RESIZED_FOR_200MS: Record<string, string> = {
+  '12960000': '1296000', '38880000': '3888000', '77760000': '7776000', '155520000': '15552000',
+  '302832000': '30283200', '9936000': '993600', '4320000': '432000', '864000': '86400',
+};
+
+function durationToLabel(raw: bigint): string {
+  const val = BigInt(RESIZED_FOR_200MS[raw.toString()] ?? raw.toString());
   const known = KNOWN_DURATIONS[val.toString()];
   if (known) return known;
   // Fallback: name it by the block time it was sized for (no 2s option ran past 30,283,200 blocks)

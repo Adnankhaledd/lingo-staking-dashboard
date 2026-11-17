@@ -96,8 +96,6 @@ const KNOWN_DURATIONS: Record<string, string> = {
   '7776000': '6 Months',
   '15552000': '12 Months',
   '30283200': '24 Months',
-  // the same options re-sized for 200ms blocks, if the owner updates lockDurations
-  '12960000': '1 Month', '38880000': '3 Months', '77760000': '6 Months', '155520000': '12 Months', '302832000': '24 Months',
 };
 
 const DURATION_COLORS: Record<string, number> = {
@@ -120,7 +118,15 @@ interface StakingEvent {
 
 // Lock lengths are block counts named for 2s blocks; since Base's 200ms switch
 // they elapse 10× faster. Labels keep the name the user chose in the app.
-function durationToLabel(val: bigint): string {
+// On 2026-11-10 (block 55,595,822) the owner re-sized every lock option ×10
+// for 200ms blocks. Each new value is the same option as its 2s-era original.
+const RESIZED_FOR_200MS: Record<string, string> = {
+  '12960000': '1296000', '38880000': '3888000', '77760000': '7776000', '155520000': '15552000',
+  '302832000': '30283200', '9936000': '993600', '4320000': '432000', '864000': '86400',
+};
+
+function durationToLabel(raw: bigint): string {
+  const val = BigInt(RESIZED_FOR_200MS[raw.toString()] ?? raw.toString());
   return KNOWN_DURATIONS[val.toString()] ??
     (() => { const m = Math.round(Number(val) * (Number(val) > 30_283_200 ? 0.2 : 2) / 86_400 / 30); return m > 0 ? `${m} Months` : 'Flexible'; })();
 }
