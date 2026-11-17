@@ -664,6 +664,8 @@ export interface MonthlyTierGrowthRow {
   'holder ($250+)': number;
   'elite ($1000+)': number;
   'legend ($2500+)': number;
+  /** On-chain dashboard only (the Dune query predates it). */
+  'mythic ($15k+ 1-yr lock)'?: number;
 }
 
 // Single-row snapshot of staker counts at various USD-value thresholds (Dune 7432116).

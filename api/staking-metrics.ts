@@ -63,7 +63,7 @@ const POOL_PRICES_KEY = 'pool-prices-v1/summary.json';   // written by api/pool-
 // Bump when the snapshot shape changes: a stored snapshot of another version
 // is treated as missing, so the next request rebuilds instead of serving a
 // shape the page no longer reads.
-const SNAPSHOT_VERSION = 2;
+const SNAPSHOT_VERSION = 3;   // 3: Mythic tier
 const MAX_REQUESTS = 160;
 const LOG_PAGE_LIMIT = 9500;
 // Lock options were sized for 2s blocks: used only to name them and to say
@@ -135,9 +135,16 @@ function labelOf(raw: string): string {
 }
 
 // Membership tiers, exclusive bands (same cut-offs as the app and TierGrowthTable).
-export type Tier = 'below' | 'member' | 'holder' | 'elite' | 'legend';
-const TIERS: Tier[] = ['below', 'member', 'holder', 'elite', 'legend'];
-function tierOf(usd: number): Tier {
+// Mythic is the only one with a lock condition: at least $15k of the wallet's
+// LINGO in a lock of 12 months or longer that is still running (as designed).
+// A wallet that doesn't qualify falls to its band by total staked.
+export type Tier = 'below' | 'member' | 'holder' | 'elite' | 'legend' | 'mythic';
+const TIERS: Tier[] = ['below', 'member', 'holder', 'elite', 'legend', 'mythic'];
+const MYTHIC_USD = 15_000;
+/** A 12-month lock or longer (24 months), by its original option. */
+const isYearLock = (duration: string) => Number(canonical(duration)) >= 15_552_000;
+function tierOf(usd: number, yearLockedUsd = 0): Tier {
+  if (yearLockedUsd >= MYTHIC_USD) return 'mythic';
   if (usd >= 2500) return 'legend';
   if (usd >= 1000) return 'elite';
   if (usd >= 250) return 'holder';
@@ -292,6 +299,7 @@ interface Flow {
   returning: Set<string>;
   returningLingo: bigint;
   newWalletUsd: Map<string, number>;
+  newWalletYearLockUsd: Map<string, number>;   // first-month stakes into 12-month+ locks
 }
 
 const zeroBuckets = <T>(v: () => T) => Object.fromEntries(BUCKETS.map(b => [b, v()])) as Record<Bucket, T>;
@@ -342,7 +350,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
       f = {
         staked: zeroBuckets(() => 0n), stakeEvents: 0, stakers: new Set(),
         unstaked: 0n, unstakeEvents: 0, newWallets: 0, newLingo: 0n, firstStakeLingo: 0n,
-        returning: new Set(), returningLingo: 0n, newWalletUsd: new Map(),
+        returning: new Set(), returningLingo: 0n, newWalletUsd: new Map(), newWalletYearLockUsd: new Map(),
       };
       flows.set(month, f);
     }
@@ -359,9 +367,11 @@ export function computeMetrics(input: ComputeInput): Snapshot {
   const snapshotAt = (month: string, atTs: number, partial: boolean) => {
     const price = partial ? currentPrice : priceAt(dayOf(atTs - 1));
     const byLabel = new Map<string, { locked: bigint; total: bigint; positions: number }>();
+    const yearLocked = new Map<string, bigint>();   // per wallet, for Mythic
     let locked = 0n;
     for (const p of positions.values()) {
       const amt = p.amount * BigInt(p.n);
+      if (isYearLock(p.duration) && p.designUnlockTs > atTs) yearLocked.set(p.user, (yearLocked.get(p.user) ?? 0n) + amt);
       // One row per lock option, as before the re-size (keyed by its original duration).
       let e = byLabel.get(canonical(p.duration));
       if (!e) { e = { locked: 0n, total: 0n, positions: 0 }; byLabel.set(canonical(p.duration), e); }
@@ -376,8 +386,9 @@ export function computeMetrics(input: ComputeInput): Snapshot {
     const cohortActive = new Map<string, number>();
     for (const [user, bal] of balance) {
       const lingo = toLingo(bal);
-      if (price != null) tiers[tierOf(lingo * price)]++;
-      if (currentPrice != null) tiersNow[tierOf(lingo * currentPrice)]++;
+      const yearLingo = toLingo(yearLocked.get(user) ?? 0n);
+      if (price != null) tiers[tierOf(lingo * price, yearLingo * price)]++;
+      if (currentPrice != null) tiersNow[tierOf(lingo * currentPrice, yearLingo * currentPrice)]++;
       const c = firstStake.get(user)!.month;
       cohortActive.set(c, (cohortActive.get(c) ?? 0) + 1);
     }
@@ -427,6 +438,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
         f.newLingo += ev.amount;
         const p = priceAt(d);
         if (p != null) f.newWalletUsd.set(ev.user, (f.newWalletUsd.get(ev.user) ?? 0) + toLingo(ev.amount) * p);
+        if (p != null && isYearLock(ev.duration)) f.newWalletYearLockUsd.set(ev.user, (f.newWalletYearLockUsd.get(ev.user) ?? 0) + toLingo(ev.amount) * p);
       } else {
         f.returning.add(ev.user);
         f.returningLingo += ev.amount;
@@ -483,7 +495,7 @@ export function computeMetrics(input: ComputeInput): Snapshot {
     for (const b of BUCKETS) { staked[b] = round(toLingo(f.staked[b])); stakedTotal += toLingo(f.staked[b]); }
     staked.total = round(stakedTotal);
     const newWalletTiers = zeroTiers();
-    for (const usd of f.newWalletUsd.values()) newWalletTiers[tierOf(usd)]++;
+    for (const [user, usd] of f.newWalletUsd) newWalletTiers[tierOf(usd, f.newWalletYearLockUsd.get(user) ?? 0)]++;
     return {
       month,
       partial: e?.partial ?? false,

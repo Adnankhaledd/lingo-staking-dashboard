@@ -10,14 +10,15 @@ interface TierGrowthTableProps {
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const CUTOFF_MONTH_KEY = '2026-01'; // inclusive
 
-// Only the four real engagement tiers — Total / Below-$100 intentionally hidden.
-type TierKey = 'member' | 'holder' | 'elite' | 'legend';
+// Only the engagement tiers — Total / Below-$100 intentionally hidden.
+type TierKey = 'member' | 'holder' | 'elite' | 'legend' | 'mythic';
 
 const TIERS: Array<{ key: TierKey; label: string; threshold: string; dot: string }> = [
   { key: 'member', label: 'Member', threshold: '$100+',  dot: '#C4B5D4' },
   { key: 'holder', label: 'Holder', threshold: '$250+',  dot: '#5EB851' },
   { key: 'elite',  label: 'Elite',  threshold: '$1k+',   dot: '#FF7847' },
   { key: 'legend', label: 'Legend', threshold: '$2.5k+', dot: '#FFD75E' },
+  { key: 'mythic', label: 'Mythic', threshold: '$15k+ 1-yr lock', dot: '#B26BFF' },
 ];
 
 interface MonthlyPoint {
@@ -27,6 +28,7 @@ interface MonthlyPoint {
   holder: number;
   elite: number;
   legend: number;
+  mythic: number;
 }
 
 function normalize(rows: MonthlyTierGrowthRow[]): MonthlyPoint[] {
@@ -47,6 +49,7 @@ function normalize(rows: MonthlyTierGrowthRow[]): MonthlyPoint[] {
         holder: row['holder ($250+)'] ?? 0,
         elite:  row['elite ($1000+)'] ?? 0,
         legend: row['legend ($2500+)'] ?? 0,
+        mythic: row['mythic ($15k+ 1-yr lock)'] ?? 0,
       };
     });
 }
@@ -127,7 +130,7 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
       </div>
 
       <div className="relative z-10 overflow-x-auto">
-        <table className="w-full min-w-[640px]">
+        <table className="w-full min-w-[760px]">
           <thead style={{ background: 'rgba(20, 20, 31, 0.95)' }}>
             <tr className="border-b border-white/5">
               <th className="text-left text-xs font-medium text-soft-gray uppercase tracking-wider py-3 px-6">
@@ -152,14 +155,14 @@ export function TierGrowthTable({ data, isLoading }: TierGrowthTableProps) {
               [...Array(4)].map((_, i) => (
                 <tr key={i} className="border-b border-white/5">
                   <td className="py-3 px-6"><div className="skeleton h-5 w-16 rounded" /></td>
-                  {[...Array(4)].map((__, j) => (
+                  {TIERS.map((_t, j) => (
                     <td key={j} className="py-3 px-4"><div className="skeleton h-10 w-20 rounded ml-auto" /></td>
                   ))}
                 </tr>
               ))
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-12 text-center text-soft-gray text-sm">
+                <td colSpan={TIERS.length + 1} className="py-12 text-center text-soft-gray text-sm">
                   No data available
                 </td>
               </tr>

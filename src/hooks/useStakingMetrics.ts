@@ -7,7 +7,7 @@ import type { LockBreakdown } from './useStakeLockBreakdown';
 // from the frontend build).
 
 export type Bucket = 'flexible' | '3mo' | '6mo' | '12mo' | 'other';
-export type Tier = 'below' | 'member' | 'holder' | 'elite' | 'legend';
+export type Tier = 'below' | 'member' | 'holder' | 'elite' | 'legend' | 'mythic';
 
 export interface DailyRow {
   day: string;

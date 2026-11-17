@@ -43,6 +43,7 @@ const TIER_META: Array<{ key: Exclude<Tier, 'below'>; label: string; threshold: 
   { key: 'holder', label: 'Holder', threshold: '$250+',  color: '#5EB851' },
   { key: 'elite',  label: 'Elite',  threshold: '$1k+',   color: '#FF7847' },
   { key: 'legend', label: 'Legend', threshold: '$2.5k+', color: '#FFD75E' },
+  { key: 'mythic', label: 'Mythic', threshold: '$15k+ 1-yr lock', color: '#B26BFF' },
 ];
 
 // The current month is unfinished: a flow so far is "MTD", a balance is "now".
@@ -213,6 +214,7 @@ export function DashboardV2() {
     holder: m.newWalletTiers.holder,
     elite: m.newWalletTiers.elite,
     legend: m.newWalletTiers.legend,
+    mythic: m.newWalletTiers.mythic ?? 0,
   })), [usersRange]);
 
   const byWalletType = useMemo(() => usersRange.map(m => ({
@@ -229,6 +231,7 @@ export function DashboardV2() {
     holder: m[tierKey].holder,
     elite: m[tierKey].elite,
     legend: m[tierKey].legend,
+    mythic: m[tierKey].mythic ?? 0,
   })), [monthly, tierKey]);
 
   // TierGrowthTable reads the old Dune row shape.
@@ -240,6 +243,7 @@ export function DashboardV2() {
     'holder ($250+)': m[tierKey].holder,
     'elite ($1000+)': m[tierKey].elite,
     'legend ($2500+)': m[tierKey].legend,
+    'mythic ($15k+ 1-yr lock)': m[tierKey].mythic ?? 0,
   })), [monthly, tierKey]);
 
   // ── Retention ──
@@ -567,7 +571,7 @@ export function DashboardV2() {
           </div>
 
           {data && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
               {TIER_META.map(t => (
                 <div key={t.key} className="flagship-card p-5">
                   <div className="relative z-10">
@@ -575,7 +579,7 @@ export function DashboardV2() {
                       <span className="w-2.5 h-2.5 rounded-full" style={{ background: t.color }} />
                       {t.label} <span className="text-purple-gray">{t.threshold}</span>
                     </div>
-                    <div className="text-2xl font-bold text-lavender mt-2">{data.current.tiers[t.key].toLocaleString()}</div>
+                    <div className="text-2xl font-bold text-lavender mt-2">{(data.current.tiers[t.key] ?? 0).toLocaleString()}</div>
                     <p className="text-xs text-purple-gray mt-1">stakers right now</p>
                   </div>
                 </div>
