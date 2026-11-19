@@ -3,11 +3,25 @@ import { put, list, del } from '@vercel/blob';
 
 /**
  * /api/lingo-buys — watches the buy-and-stake wallet for incoming USDC and
- * posts each buy to Slack (#lingo-buys) with the day's, month's and average
- * totals.
+ * posts each buy to Slack (#lingo-buys) with the day's, month's, last 30 days'
+ * and all-time totals, the average buy, and the average LINGO price paid
+ * ("$26,327.51 @ $0.0147").
  *
  * Cron: every 2 minutes (vercel.json). Each run is one eth_blockNumber plus one
  * eth_getLogs (~85 CU). The LINGO price is only fetched when a buy is posted.
+ *
+ * PRICES. The app pins each direct buy at CoinGecko's LINGO price the moment the
+ * USDC lands (staking-api otc.service.ts → lingoMarketDataService), so every
+ * buy is priced from CoinGecko too: the live price when it is claimed within
+ * minutes of landing (Alchemy's price if CoinGecko is down), and CoinGecko's
+ * history at the moment it landed when it is picked up late (after a stall) or
+ * when totals are rebuilt from the chain. That history matched the app's pinned
+ * price on all 327 buys to Nov 19 2026 within 0.08% (median); the pool's own
+ * hourly VWAP ran ~0.6% high. The average price is the true average cost: total
+ * USDC ÷ total LINGO bought over the buys that have a price, so "$X @ $p" means
+ * X/p LINGO (a buy no price could be found for still counts in $X, just not in
+ * the average). The app's admin panel shows a USDC-weighted mean of prices
+ * instead, which reads ~1.6% higher.
  *
  * GENUINE USDC ONLY. This wallet is already targeted by address poisoning: a
  * lookalike "UṢDC" token (0x6c9458b7…, with a dotted Ṣ) sent minutes after each
@@ -68,6 +82,26 @@ function tsToBlock(ts: number): number {
   return Math.max(0, s.block + Math.floor(((ts - s.ts) * 1000) / s.msPerBlock));
 }
 const PRICES_URL = `https://api.g.alchemy.com/prices/v1/${ALCHEMY_API_KEY}/tokens/by-address`;
+// CoinGecko's public API (no key). The app's own price comes from CoinGecko.
+const COINGECKO_URL = 'https://api.coingecko.com/api/v3';
+const COINGECKO_ID = 'lingo';
+const PRICE_TIMEOUT_MS = 8_000;
+const LIVE_PRICE_MAX_AGE_S = 30 * 60;     // an older CoinGecko quote falls back to Alchemy
+// market_chart/range answers hourly for ranges up to 90 days (daily beyond), so
+// history is fetched in chunks just under that. The public API keeps 365 days.
+const HISTORY_CHUNK_S = 89 * 86_400;
+const HISTORY_MAX_AGE_S = 360 * 86_400;   // older buys stay unpriced (left out of the averages)
+const HISTORY_MAX_GAP_S = 3 * 3_600;      // a buy further than this from any price point stays unpriced
+// `priced: 1` on a state = its price totals were built for every buy it counts
+// (one no price could be found for is left out of the averages). A state
+// without it (anything written before prices were added) is backfilled from
+// CoinGecko's history once, in place — never by a cold start, which would
+// silently absorb any buy that landed in between.
+const PRICED_VERSION = 1;
+const PRICE_BACKFILL_RETRY_S = 30 * 60;
+// A buy claimed this long after it landed (the job stalled: Blob, RPC or cron
+// down) is priced at CoinGecko's history for its landing time, not today's quote.
+const LATE_CLAIM_S = 10 * 60;
 const SLACK_URL = process.env.LINGO_BUYS_SLACK_WEBHOOK_URL || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
@@ -120,13 +154,28 @@ const LOG_PAGE_LIMIT = 9500;
 const MAX_REQUESTS = 60;
 const SEND_TIMEOUT_MS = 10_000; // a channel gets this long to accept a message
 
-interface Agg { micro: number; count: number } // micro = USDC in 6-decimal units (exact)
+interface Agg {
+  micro: number;   // USDC in 6-decimal units (exact)
+  count: number;
+  /** USDC (micro) of the buys in here that have a price, and the LINGO they
+   *  bought (USDC ÷ price). Average price = pMicro / 1e6 / lingo. A buy whose
+   *  price could not be fetched is left out of these two, never of micro/count. */
+  pMicro?: number;
+  lingo?: number;
+}
 interface BuysState {
   lastBlock: number;
   seen: string[];
   /** key → channels that already have it. Missing = delivered everywhere
    *  (state written before multi-channel, or by a single-channel run). */
   delivered?: Record<string, string[]>;
+  /** key → the LINGO price recorded when the buy was claimed, so a retry shows
+   *  the same price as the first post and a backfill keeps live prices. */
+  prices?: Record<string, number>;
+  /** PRICED_VERSION once pMicro/lingo cover every counted buy. */
+  priced?: number;
+  /** Unix seconds before which a failed price backfill isn't retried. */
+  pricedRetryAfter?: number;
   days: Record<string, Agg>;
   months: Record<string, Agg>;
   total: Agg;
@@ -231,7 +280,8 @@ async function saveState(state: BuysState, seq: number): Promise<number> {
   const seen = state.seen.slice(-SEEN_LIMIT);
   const keep = new Set(seen);
   const delivered = Object.fromEntries(Object.entries(state.delivered ?? {}).filter(([k]) => keep.has(k)));
-  await put(seqName(next), JSON.stringify({ ...state, seen, delivered, updatedAt: new Date().toISOString() }), {
+  const prices = Object.fromEntries(Object.entries(state.prices ?? {}).filter(([k]) => keep.has(k)));
+  await put(seqName(next), JSON.stringify({ ...state, seen, delivered, prices, updatedAt: new Date().toISOString() }), {
     access: 'public', addRandomSuffix: false, allowOverwrite: false, contentType: 'application/json',
   });
   return next;
@@ -323,19 +373,100 @@ async function getBuys(from: number, to: number, budget: { left: number }, inclu
   return buys.sort((a, b) => a.block - b.block || a.logIndex - b.logIndex);
 }
 
-async function getLingoPriceUsd(): Promise<number | null> {
+// ─── Prices ──────────────────────────────────────────────────────────────
+
+const validPrice = (v: unknown): number | null => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/** CoinGecko's current LINGO price — the feed the app pins buys at. */
+async function getCoinGeckoPrice(): Promise<number | null> {
+  try {
+    const res = await fetch(`${COINGECKO_URL}/simple/price?ids=${COINGECKO_ID}&vs_currencies=usd&include_last_updated_at=true`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(PRICE_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const quote = json?.[COINGECKO_ID];
+    const updated = Number(quote?.last_updated_at);
+    if (Number.isFinite(updated) && Date.now() / 1000 - updated > LIVE_PRICE_MAX_AGE_S) return null;
+    return validPrice(quote?.usd);
+  } catch { return null; }
+}
+
+/** Alchemy's current LINGO price — the fallback (within ~0.1% of CoinGecko). */
+async function getAlchemyPrice(): Promise<number | null> {
   try {
     const res = await fetch(PRICES_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ addresses: [{ network: 'base-mainnet', address: LINGO_TOKEN }] }),
+      // Bounded like every other outbound call: a hung fetch must not run the
+      // instance into maxDuration mid-run.
+      signal: AbortSignal.timeout(PRICE_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const json = await res.json();
     const usd = (json?.data?.[0]?.prices ?? []).find((p: { currency?: string }) => p?.currency === 'usd');
-    const price = Number(usd?.value);
-    return Number.isFinite(price) && price > 0 ? price : null;
+    const updated = Date.parse(usd?.lastUpdatedAt ?? '');
+    if (Number.isFinite(updated) && Date.now() / 1000 - updated / 1000 > LIVE_PRICE_MAX_AGE_S) return null;
+    return validPrice(usd?.value);
   } catch { return null; }
+}
+
+/** The price a buy landing now is recorded at. */
+async function getLingoPriceUsd(): Promise<number | null> {
+  return (await getCoinGeckoPrice()) ?? (await getAlchemyPrice());
+}
+
+type PriceAt = (ts: number) => number | null;
+
+/**
+ * CoinGecko's hourly LINGO price over [fromTs, toTs], as a lookup: the last
+ * point at or before a time, else the first one after it, if within
+ * HISTORY_MAX_GAP_S. Null if any chunk can't be fetched — a partly priced
+ * history would skew the averages, so callers price nothing instead.
+ */
+async function getPriceHistory(fromTs: number, toTs: number): Promise<PriceAt | null> {
+  const points: Array<[number, number]> = [];
+  // Asking past the public API's 365 days fails the whole request.
+  const start = Math.max(fromTs - HISTORY_MAX_GAP_S, Math.floor(Date.now() / 1000) - HISTORY_MAX_AGE_S);
+  for (let lo = start; lo <= toTs; lo += HISTORY_CHUNK_S) {
+    const hi = Math.min(lo + HISTORY_CHUNK_S, toTs + HISTORY_MAX_GAP_S);
+    try {
+      const res = await fetch(`${COINGECKO_URL}/coins/${COINGECKO_ID}/market_chart/range?vs_currency=usd&from=${lo}&to=${hi}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(PRICE_TIMEOUT_MS),
+      });
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (!Array.isArray(json?.prices)) return null;
+      for (const pt of json.prices) {
+        const ts = Math.floor(Number(pt?.[0]) / 1000);
+        const price = validPrice(pt?.[1]);
+        if (Number.isFinite(ts) && price) points.push([ts, price]);
+      }
+    } catch { return null; }
+  }
+  if (!points.length) return null;
+  points.sort((a, b) => a[0] - b[0]);
+  return (ts: number) => {
+    let lo = 0, hi = points.length - 1, best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (points[mid][0] <= ts) { best = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    if (best >= 0 && ts - points[best][0] <= HISTORY_MAX_GAP_S) return points[best][1];
+    const next = points[best + 1];
+    return next && next[0] - ts <= HISTORY_MAX_GAP_S ? next[1] : null;
+  };
+}
+
+/** CoinGecko's history covering these buys (oldest first), or null. */
+async function historyPricer(buys: Buy[]): Promise<PriceAt | null> {
+  return buys.length ? getPriceHistory(buys[0].ts, buys[buys.length - 1].ts) : null;
 }
 
 // ─── Aggregates + message ────────────────────────────────────────────────
@@ -343,42 +474,132 @@ async function getLingoPriceUsd(): Promise<number | null> {
 const dayKey = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 10);
 const monthKey = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 7);
 
-function emptyState(lastBlock: number): BuysState {
-  return { lastBlock, seen: [], days: {}, months: {}, total: { micro: 0, count: 0 } };
+function emptyState(lastBlock: number, priced: boolean): BuysState {
+  return { lastBlock, seen: [], days: {}, months: {}, total: { micro: 0, count: 0 }, ...(priced ? { priced: PRICED_VERSION } : {}) };
 }
 
-/** Returns a NEW state with the buy added — the caller commits it only once posted. */
-function withBuy(st: BuysState, b: Buy): BuysState {
-  const add = (a: Agg | undefined): Agg => ({ micro: (a?.micro ?? 0) + b.micro, count: (a?.count ?? 0) + 1 });
+/** An aggregate with one more buy, priced at `price` if there is one. */
+function addTo(a: Agg | undefined, micro: number, price: number | null): Agg {
+  const out: Agg = { micro: (a?.micro ?? 0) + micro, count: (a?.count ?? 0) + 1 };
+  const pMicro = (a?.pMicro ?? 0) + (price ? micro : 0);
+  const lingo = (a?.lingo ?? 0) + (price ? micro / 1e6 / price : 0);
+  return pMicro > 0 ? { ...out, pMicro, lingo } : out;
+}
+
+/**
+ * Returns a NEW state with the buy added — the caller commits it only once
+ * posted. `price` is the LINGO price the buy is recorded at (null = unknown:
+ * it still counts, it just isn't in the average price).
+ */
+function withBuy(st: BuysState, b: Buy, price: number | null): BuysState {
   return {
     ...st,
     seen: [...st.seen, b.key],
-    days: { ...st.days, [dayKey(b.ts)]: add(st.days[dayKey(b.ts)]) },
-    months: { ...st.months, [monthKey(b.ts)]: add(st.months[monthKey(b.ts)]) },
-    total: add(st.total),
+    ...(price ? { prices: { ...(st.prices ?? {}), [b.key]: price } } : {}),
+    days: { ...st.days, [dayKey(b.ts)]: addTo(st.days[dayKey(b.ts)], b.micro, price) },
+    months: { ...st.months, [monthKey(b.ts)]: addTo(st.months[monthKey(b.ts)], b.micro, price) },
+    total: addTo(st.total, b.micro, price),
   };
+}
+
+/**
+ * Rebuild the price totals (pMicro/lingo) of every day, month and the total
+ * from `counted` — the buys this state already counts — leaving micro/count,
+ * seen and delivery untouched. A buy whose day or month the state doesn't have
+ * is skipped rather than invented. Returns the new state and what it covered.
+ */
+function repriced(st: BuysState, counted: Buy[], priceOf: (b: Buy) => number | null) {
+  const strip = (a: Agg): Agg => ({ micro: a.micro, count: a.count });
+  const days: Record<string, Agg> = Object.fromEntries(Object.entries(st.days).map(([k, a]) => [k, strip(a)]));
+  const months: Record<string, Agg> = Object.fromEntries(Object.entries(st.months).map(([k, a]) => [k, strip(a)]));
+  let total = strip(st.total);
+  let priced = 0, unpriced = 0, skipped = 0, micro = 0;
+  const addPrice = (a: Agg, m: number, p: number): Agg =>
+    ({ ...a, pMicro: (a.pMicro ?? 0) + m, lingo: (a.lingo ?? 0) + m / 1e6 / p });
+  for (const b of counted) {
+    const d = dayKey(b.ts), mo = monthKey(b.ts);
+    if (!days[d] || !months[mo]) { skipped++; continue; }
+    micro += b.micro;
+    const p = priceOf(b);
+    if (!p) { unpriced++; continue; }
+    days[d] = addPrice(days[d], b.micro, p);
+    months[mo] = addPrice(months[mo], b.micro, p);
+    total = addPrice(total, b.micro, p);
+    priced++;
+  }
+  return {
+    state: { ...st, days, months, total, priced: PRICED_VERSION, pricedRetryAfter: undefined } as BuysState,
+    report: {
+      counted: counted.length, priced, unpriced, skipped,
+      // Should equal the stored totals; a gap means the chain and the state
+      // disagree on what was counted (only the averages are affected).
+      chainUsd: micro / 1e6, storedUsd: st.total.micro / 1e6,
+    },
+  };
+}
+
+/** Average price paid: total USDC ÷ total LINGO, over the buys with a price. */
+const avgPrice = (a: Agg | undefined): number | null =>
+  a?.pMicro && a.lingo ? a.pMicro / 1e6 / a.lingo : null;
+
+/** The 30 UTC days ending on the buy's day (that day included). */
+function last30Days(st: BuysState, ts: number): Agg {
+  let out: Agg = { micro: 0, count: 0 };
+  const end = Date.parse(`${dayKey(ts)}T00:00:00Z`);
+  for (let i = 0; i < 30; i++) {
+    const a = st.days[new Date(end - i * 86_400_000).toISOString().slice(0, 10)];
+    if (!a) continue;
+    out = {
+      micro: out.micro + a.micro, count: out.count + a.count,
+      ...(a.pMicro || out.pMicro ? { pMicro: (out.pMicro ?? 0) + (a.pMicro ?? 0), lingo: (out.lingo ?? 0) + (a.lingo ?? 0) } : {}),
+    };
+  }
+  return out;
 }
 
 const usd = (micro: number) =>
   '$' + (micro / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function buildMessage(b: Buy, st: BuysState, priceUsd: number | null) {
-  const day = st.days[dayKey(b.ts)] ?? { micro: 0, count: 0 };
-  const month = st.months[monthKey(b.ts)] ?? { micro: 0, count: 0 };
-  const avg = st.total.count ? st.total.micro / st.total.count : 0;
-  const lingo = priceUsd ? (b.micro / 1e6) / priceUsd : null;
-  const plural = (n: number) => `${n} buy${n === 1 ? '' : 's'}`;
-  const when = new Date(b.ts * 1000).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
-  });
+/** Three significant digits, at least four decimals: $0.0162, $0.00162. */
+const fmtPrice = (p: number) => '$' + p.toFixed(Math.min(12, Math.max(4, 2 - Math.floor(Math.log10(p)))));
 
+/** Everything both channels show, worked out once. */
+function summarize(b: Buy, st: BuysState, priceUsd: number | null) {
+  const zero: Agg = { micro: 0, count: 0 };
+  // Averages only once the state's price totals cover all its history: before
+  // that they'd describe just the buys since prices were added.
+  const at = (a: Agg) => {
+    const p = st.priced === PRICED_VERSION ? avgPrice(a) : null;
+    return p ? ` @ ${fmtPrice(p)}` : '';
+  };
+  const plural = (n: number) => `${n} buy${n === 1 ? '' : 's'}`;
+  const day = st.days[dayKey(b.ts)] ?? zero;
+  const month = st.months[monthKey(b.ts)] ?? zero;
+  const recent = last30Days(st, b.ts);
+  const avgMicro = st.total.count ? st.total.micro / st.total.count : 0;
+  const lingo = priceUsd ? (b.micro / 1e6) / priceUsd : null;
+  return {
+    when: new Date(b.ts * 1000).toLocaleString('en-US', {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
+    }),
+    amount: `${usd(b.micro)} ${b.token}`,
+    bought: lingo ? `≈ ${Math.round(lingo).toLocaleString('en-US')} LINGO @ ${fmtPrice(priceUsd!)}` : '',
+    rows: [
+      ['Today (UTC)', `${usd(day.micro)}${at(day)} · ${plural(day.count)}`],
+      ['This month', `${usd(month.micro)}${at(month)} · ${plural(month.count)}`],
+      ['Last 30 days', `${usd(recent.micro)}${at(recent)} · ${plural(recent.count)}`],
+      ['Average buy', `${usd(avgMicro)}${at(st.total)} · across ${plural(st.total.count)}`],
+      ['All-time', `${usd(st.total.micro)}${at(st.total)}`],
+    ] as Array<[string, string]>,
+  };
+}
+
+function buildMessage(b: Buy, st: BuysState, priceUsd: number | null) {
+  const s = summarize(b, st, priceUsd);
   const fields = [
-    { type: 'mrkdwn', text: `*Amount:*\n${usd(b.micro)} ${b.token}${lingo ? `\n≈ ${Math.round(lingo).toLocaleString()} LINGO @ $${priceUsd!.toFixed(5)}` : ''}` },
-    { type: 'mrkdwn', text: `*Transaction:*\n<https://basescan.org/tx/${b.txHash}|View on BaseScan> · ${when} UTC` },
-    { type: 'mrkdwn', text: `*Today (UTC):*\n${usd(day.micro)} · ${plural(day.count)}` },
-    { type: 'mrkdwn', text: `*This month:*\n${usd(month.micro)} · ${plural(month.count)}` },
-    { type: 'mrkdwn', text: `*Average buy:*\n${usd(avg)} · across ${plural(st.total.count)}` },
-    { type: 'mrkdwn', text: `*All-time:*\n${usd(st.total.micro)}` },
+    { type: 'mrkdwn', text: `*Amount:*\n${s.amount}${s.bought ? `\n${s.bought}` : ''}` },
+    { type: 'mrkdwn', text: `*Transaction:*\n<https://basescan.org/tx/${b.txHash}|View on BaseScan> · ${s.when} UTC` },
+    ...s.rows.map(([label, value]) => ({ type: 'mrkdwn', text: `*${label}:*\n${value}` })),
   ];
 
   return {
@@ -390,8 +611,7 @@ function buildMessage(b: Buy, st: BuysState, priceUsd: number | null) {
         ? '*Buyer:* not visible — USDC was minted straight to the wallet (Circle CCTP bridge)'
         : `*Buyer:* <https://basescan.org/address/${b.from}|\`${b.from}\`>` } },
       { type: 'section', fields },
-      { type: 'context', elements: [{ type: 'mrkdwn', text: 'Genuine USDC only — lookalike tokens are ignored. Always compare the FULL buyer address.' }] },
-    ],
+    ] as Array<Record<string, unknown>>,
   };
 }
 
@@ -409,35 +629,25 @@ const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 
 /** Same content as the Slack card, in Telegram HTML. */
 function buildTelegramText(b: Buy, st: BuysState, priceUsd: number | null, test = false, backfill = false): string {
-  const day = st.days[dayKey(b.ts)] ?? { micro: 0, count: 0 };
-  const month = st.months[monthKey(b.ts)] ?? { micro: 0, count: 0 };
-  const avg = st.total.count ? st.total.micro / st.total.count : 0;
-  const lingo = priceUsd ? (b.micro / 1e6) / priceUsd : null;
-  const plural = (n: number) => `${n} buy${n === 1 ? '' : 's'}`;
-  const when = new Date(b.ts * 1000).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
-  });
+  const s = summarize(b, st, priceUsd);
   const buyer = b.from === ZERO_ADDRESS
     ? 'not visible — USDC was minted straight to the wallet (Circle CCTP bridge)'
     : `<a href="https://basescan.org/address/${esc(b.from)}"><code>${esc(b.from)}</code></a>`;
+  const note = test
+    ? '<i>Test message only — not a new buy, and NOT counted in the totals.</i>'
+    : backfill
+      ? '<i>Backfill of an earlier buy — already counted, shown with the totals as they stood then.</i>'
+      : null;
 
   return [
     test ? '🧪 <b>TEST — this is how a buy alert will look</b>' : `🟢 <b>New LINGO buy — ${esc(usd(b.micro))}</b>`,
     '',
     `<b>Buyer:</b> ${buyer}`,
-    `<b>Amount:</b> ${esc(usd(b.micro))} ${esc(b.token)}${lingo ? ` (≈ ${Math.round(lingo).toLocaleString()} LINGO @ $${priceUsd!.toFixed(5)})` : ''}`,
-    `<b>When:</b> ${esc(when)} UTC · <a href="https://basescan.org/tx/${esc(b.txHash)}">transaction</a>`,
+    `<b>Amount:</b> ${esc(s.amount)}${s.bought ? ` (${esc(s.bought)})` : ''}`,
+    `<b>When:</b> ${esc(s.when)} UTC · <a href="https://basescan.org/tx/${esc(b.txHash)}">transaction</a>`,
     '',
-    `<b>Today (UTC):</b> ${esc(usd(day.micro))} · ${plural(day.count)}`,
-    `<b>This month:</b> ${esc(usd(month.micro))} · ${plural(month.count)}`,
-    `<b>Average buy:</b> ${esc(usd(avg))} · across ${plural(st.total.count)}`,
-    `<b>All-time:</b> ${esc(usd(st.total.micro))}`,
-    '',
-    test
-      ? '<i>Test message only — not a new buy, and NOT counted in the totals.</i>'
-      : backfill
-        ? '<i>Backfill of an earlier buy — already counted, shown with the totals as they stood then.</i>'
-        : '<i>Genuine USDC only — lookalike tokens are ignored. Always compare the FULL buyer address.</i>',
+    ...s.rows.map(([label, value]) => `<b>${esc(label)}:</b> ${esc(value)}`),
+    ...(note ? ['', note] : []),
   ].join('\n');
 }
 
@@ -469,20 +679,23 @@ function destinations(): Destination[] {
     out.push({
       id: 'slack',
       send: (b, st, price) => postSlack(buildMessage(b, st, price)),
+      // The live card has no footer; test and backfill posts add one saying what they are.
       sendTest: (b, st, price) => {
         const real = buildMessage(b, st, price);
-        const blocks = real.blocks.map(blk => {
-          if (blk.type === 'header') return { type: 'header', text: { type: 'plain_text', text: '🧪 TEST — this is how a buy alert will look', emoji: true } };
-          if (blk.type === 'context') return { type: 'context', elements: [{ type: 'mrkdwn', text: '*Test message only* — not a new buy, and NOT counted in the totals.' }] };
-          return blk;
-        });
+        const blocks = [
+          ...real.blocks.map(blk => blk.type === 'header'
+            ? { type: 'header', text: { type: 'plain_text', text: '🧪 TEST — this is how a buy alert will look', emoji: true } }
+            : blk),
+          { type: 'context', elements: [{ type: 'mrkdwn', text: '*Test message only* — not a new buy, and NOT counted in the totals.' }] },
+        ];
         return postSlack({ text: `TEST — ${real.text}`, blocks });
       },
       sendBackfill: (b, st, price) => {
         const real = buildMessage(b, st, price);
-        const blocks = real.blocks.map(blk => blk.type === 'context'
-          ? { type: 'context', elements: [{ type: 'mrkdwn', text: '_Backfill of an earlier buy — already counted._' }] }
-          : blk);
+        const blocks = [
+          ...real.blocks,
+          { type: 'context', elements: [{ type: 'mrkdwn', text: '_Backfill of an earlier buy — already counted._' }] },
+        ];
         return postSlack({ text: real.text, blocks });
       },
     });
@@ -542,15 +755,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const all = await getBuys(START_BLOCK, head, budget);
       if (!all) return res.status(200).json({ error: 'Log budget exhausted' });
-      const price = await getLingoPriceUsd();
+      // Each buy at CoinGecko's price for its own hour, not today's price.
+      const pricer = await historyPricer(all);
 
       // Walk from the start so each message shows the totals as they stood at
       // that buy — the same numbers the live alert would have carried.
-      let st = emptyState(head);
+      let st = emptyState(head, !!pricer);
       const sent: Array<{ tx: string; usd: number; ok: boolean }> = [];
       let skipped = 0;
       for (const b of all) {
-        st = withBuy(st, b);
+        const price = pricer?.(b.ts) ?? null;
+        st = withBuy(st, b, price);
         if (b.ts < sinceTs) { skipped++; continue; }
         if (sent.length >= cap) { skipped++; continue; }
         let ok = true;
@@ -564,6 +779,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         replay: true,
         channels: targets.map(d => d.id),
         totalBuys: all.length,
+        priced: !!pricer,
         sent: sent.length,
         skipped,
         stateTouched: false,
@@ -587,9 +803,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         micro: 100_000_000, ts: Math.floor(Date.now() / 1000), block: head, logIndex: 0,
       };
       const { state } = await readState();
-      // Totals shown are what they WOULD be — the stored state is not written.
-      const hypothetical = withBuy(state ?? emptyState(head), sample);
       const price = await getLingoPriceUsd();
+      // Totals shown are what they WOULD be — the stored state is not written.
+      const hypothetical = withBuy(state ?? emptyState(head, false), sample, price);
       const results: Record<string, boolean> = {};
       for (const d of dests) results[d.id] = await d.sendTest(sample, hypothetical, price);
       const ok = Object.values(results).some(Boolean);
@@ -601,14 +817,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (dryRun) {
       const buys = await getBuys(START_BLOCK, head, budget);
       if (!buys) return res.status(200).json({ error: 'Log budget exhausted' });
-      let st = emptyState(head);
-      for (const b of buys) st = withBuy(st, b);
+      const pricer = await historyPricer(buys);
+      let st = emptyState(head, !!pricer);
+      for (const b of buys) st = withBuy(st, b, pricer?.(b.ts) ?? null);
       const latest = buys[buys.length - 1];
+      const stored = await readState();
       return res.status(200).json({
         dryRun: true,
-        buys: buys.map(b => ({ when: new Date(b.ts * 1000).toISOString(), usd: b.micro / 1e6, token: b.token, from: b.from, tx: b.txHash })),
-        totals: { count: st.total.count, usd: st.total.micro / 1e6, avg: st.total.count ? st.total.micro / st.total.count / 1e6 : 0 },
-        message: latest ? buildMessage(latest, st, await getLingoPriceUsd()) : null,
+        buys: buys.map(b => ({ when: new Date(b.ts * 1000).toISOString(), usd: b.micro / 1e6, price: pricer?.(b.ts) ?? null, token: b.token, from: b.from, tx: b.txHash })),
+        totals: {
+          count: st.total.count, usd: st.total.micro / 1e6, avg: st.total.count ? st.total.micro / st.total.count / 1e6 : 0,
+          avgPrice: avgPrice(st.total), pricedUsd: (st.total.pMicro ?? 0) / 1e6, priced: !!pricer,
+        },
+        // What the live job is working from, to check the stored totals against the chain.
+        stored: stored.state ? {
+          seq: stored.seq, lastBlock: stored.state.lastBlock, priced: stored.state.priced ?? null,
+          count: stored.state.total.count, usd: stored.state.total.micro / 1e6,
+          avgPrice: avgPrice(stored.state.total), pricedUsd: (stored.state.total.pMicro ?? 0) / 1e6,
+        } : null,
+        message: latest ? buildMessage(latest, st, pricer?.(latest.ts) ?? null) : null,
         requestsUsed: MAX_REQUESTS - budget.left,
       });
     }
@@ -623,8 +850,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!state || typeof state.lastBlock !== 'number') {
       const buys = await getBuys(START_BLOCK, head, budget);
       if (!buys) return res.status(200).json({ error: 'Log budget exhausted on cold start' });
-      let st = emptyState(head);
-      for (const b of buys) st = withBuy(st, b);
+      // Without CoinGecko the seed is unpriced, and the backfill below prices it later.
+      const pricer = await historyPricer(buys);
+      let st = emptyState(head, !!pricer);
+      for (const b of buys) st = withBuy(st, b, pricer?.(b.ts) ?? null);
       try {
         seq = await saveState(st, seq);
       } catch {
@@ -633,23 +862,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: `Cold start — seeded ${buys.length} historical buys, posted nothing`, lastBlock: head });
     }
 
-    const seen = new Set(state.seen);
+    // ── One-time price backfill, IN PLACE ──
+    // A state written before prices were added has no price totals. Rebuild
+    // them from the chain for exactly the buys it already counts (everything up
+    // to lastBlock, plus any claimed beyond it), keeping its counts, `seen` and
+    // delivery as they are — a cold start would instead silently absorb any buy
+    // that landed meanwhile. CoinGecko is asked first so an outage costs no log
+    // scan, and a failure waits PRICE_BACKFILL_RETRY_S before trying again so
+    // it can't turn every run into a full-history scan.
+    let current: BuysState = state;
+    let backfill: Record<string, unknown> | undefined;
+    let history: Buy[] | null = null;
+    const nowS = Math.floor(Date.now() / 1000);
+    if (current.priced !== PRICED_VERSION && !((current.pricedRetryAfter ?? 0) > nowS)) {
+      const pricer = await getPriceHistory(blockToTs(START_BLOCK), blockToTs(head));
+      const scanned = pricer ? await getBuys(START_BLOCK, head, { left: MAX_REQUESTS }) : null;
+      let next: BuysState;
+      if (pricer && scanned) {
+        const seenSet = new Set(current.seen);
+        const counted = scanned.filter(b => b.block <= current.lastBlock || seenSet.has(b.key));
+        const recorded = current.prices ?? {};
+        const r = repriced(current, counted, b => recorded[b.key] ?? pricer(b.ts));
+        next = r.state;
+        backfill = { done: true, ...r.report };
+        history = scanned;
+      } else {
+        next = { ...current, pricedRetryAfter: nowS + PRICE_BACKFILL_RETRY_S };
+        backfill = { done: false, error: pricer ? 'log budget exhausted' : 'CoinGecko history unavailable', retryAfter: next.pricedRetryAfter };
+      }
+      try {
+        seq = await saveState(next, seq);
+      } catch {
+        return res.status(502).json({ error: 'Another run saved first — nothing posted', backfill });
+      }
+      current = next;
+    }
+
+    const seen = new Set(current.seen);
     const destIds = dests.map(d => d.id);
-    const fresh = await getBuys(state.lastBlock + 1, head, budget);
-    if (!fresh) return res.status(200).json({ error: 'Log budget exhausted' });
+    // The backfill already scanned to head; reuse it rather than scan again.
+    const fresh = history
+      ? history.filter(b => b.block > current.lastBlock)
+      : await getBuys(current.lastBlock + 1, head, budget);
+    if (!fresh) return res.status(200).json({ error: 'Log budget exhausted', ...(backfill ? { backfill } : {}) });
 
     // Already counted, but a channel still owes it — retry just that channel.
     const retries = fresh.filter(b => seen.has(b.key)
-      && (state.delivered?.[b.key] ?? destIds).length < destIds.length);
+      && (current.delivered?.[b.key] ?? destIds).length < destIds.length);
     const buys = fresh.filter(b => !seen.has(b.key));
 
-    let st: BuysState = { ...state, lastBlock: state.lastBlock, delivered: { ...(state.delivered ?? {}) } };
+    let st: BuysState = { ...current, lastBlock: current.lastBlock, delivered: { ...(current.delivered ?? {}) } };
     let posted = 0;
     let failed: string | null = null;
     // A buy that reached some channels but not all must stay inside the scan
     // window, or the pointer moves past it and the retry never happens.
     let incomplete = false;
     const price = (buys.length || retries.length) ? await getLingoPriceUsd() : null;
+    // Buys that sat unclaimed through a stall get the price from when they
+    // landed, as the app pinned them — one history call, only after a stall.
+    const late = buys.filter(b => nowS - b.ts > LATE_CLAIM_S);
+    const landed = late.length ? await historyPricer(late) : null;
+    const priceFor = (b: Buy) => (nowS - b.ts > LATE_CLAIM_S ? landed?.(b.ts) : null) ?? price;
 
     // Record each channel the moment it accepts, so a write that fails after a
     // successful send costs at most a repeat on that ONE channel — not on all
@@ -657,7 +930,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const sendAndRecord = async (b: Buy, done: Set<string>): Promise<boolean> => {
       for (const d of dests) {
         if (done.has(d.id)) continue;
-        if (!(await d.send(b, st, price))) continue;
+        if (!(await d.send(b, st, st.prices?.[b.key] ?? price))) continue;
         done.add(d.id);
         st = { ...st, delivered: { ...st.delivered, [b.key]: [...done] } };
         try {
@@ -685,7 +958,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // `seen` with an empty `delivered`, which the retry pass above picks up
       // and sends. saveState throwing here means another run already took this
       // number, so this run must post nothing at all.
-      const claimed: BuysState = { ...withBuy(st, b), delivered: { ...st.delivered, [b.key]: [] } };
+      const claimed: BuysState = { ...withBuy(st, b, priceFor(b)), delivered: { ...st.delivered, [b.key]: [] } };
       try {
         seq = await saveState(claimed, seq);
       } catch {
@@ -716,8 +989,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       channels: destIds,
       retried: retries.length,
       pending: buys.length - posted,
-      fromBlock: state.lastBlock + 1,
+      fromBlock: current.lastBlock + 1,
       toBlock: head,
+      ...(backfill ? { backfill } : {}),
       ...(failed ? { error: `${failed} — will retry next run` }
         : incomplete ? { error: 'a channel did not accept every buy — retrying the missing one next run' } : {}),
     });
